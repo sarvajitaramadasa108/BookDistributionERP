@@ -4,7 +4,10 @@ function routeRequest_(request) {
   const routes = {
     "system.setup": setupDatabase,
     "dashboard.summary": getDashboardSummary_,
-    "books.list": function () { return readObjects_("Books"); },
+    "books.list": function () { return readObjects_("Books").map(mapBook_); },
+    "books.create": function () { return createBook_(payload); },
+    "books.update": function () { return updateBook_(payload); },
+    "books.delete": function () { return deleteBook_(payload); },
     "warehouses.list": function () { return readObjects_("Warehouses"); },
     "activities.list": function () { return readObjects_("Activities"); },
     "documents.create": function () { return createDocument_(payload); },
@@ -15,6 +18,118 @@ function routeRequest_(request) {
     throw new Error("Unknown action: " + action);
   }
   return routes[action]();
+}
+
+function createBook_(payload) {
+  validateBook_(payload);
+  const now = new Date();
+  const book = {
+    "Book ID": nextId_("BK", "Books", "Book ID"),
+    "Book Name": payload.name,
+    "Language": payload.language,
+    "MRP": Number(payload.mrp || 0),
+    "Distributor Price": Number(payload.distributorPrice || 0),
+    "Category": payload.category || "",
+    "Active": payload.active !== false,
+    "Created At": now,
+    "Updated At": now
+  };
+  appendObject_("Books", book);
+  logAudit_("books.create", "Books", book["Book ID"], JSON.stringify(book));
+  return mapBook_(book);
+}
+
+function updateBook_(payload) {
+  if (!payload.bookId) {
+    throw new Error("Book ID is required");
+  }
+  validateBook_(payload);
+
+  const sheet = getSheet_("Books");
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0];
+  const bookIdIndex = headers.indexOf("Book ID");
+  const rowIndex = values.findIndex(function (row, index) {
+    return index > 0 && row[bookIdIndex] === payload.bookId;
+  });
+
+  if (rowIndex === -1) {
+    throw new Error("Book not found");
+  }
+
+  const current = {};
+  headers.forEach(function (header, index) {
+    current[header] = values[rowIndex][index];
+  });
+
+  const updated = {
+    "Book ID": payload.bookId,
+    "Book Name": payload.name,
+    "Language": payload.language,
+    "MRP": Number(payload.mrp || 0),
+    "Distributor Price": Number(payload.distributorPrice || 0),
+    "Category": payload.category || "",
+    "Active": payload.active !== false,
+    "Created At": current["Created At"] || new Date(),
+    "Updated At": new Date()
+  };
+
+  sheet.getRange(rowIndex + 1, 1, 1, headers.length).setValues([headers.map(function (header) {
+    return updated[header] === undefined ? "" : updated[header];
+  })]);
+  logAudit_("books.update", "Books", payload.bookId, JSON.stringify(updated));
+  return mapBook_(updated);
+}
+
+function deleteBook_(payload) {
+  if (!payload.bookId) {
+    throw new Error("Book ID is required");
+  }
+
+  const rows = readObjects_("Books");
+  const book = rows.find(function (row) {
+    return row["Book ID"] === payload.bookId;
+  });
+  if (!book) {
+    throw new Error("Book not found");
+  }
+
+  return updateBook_({
+    bookId: payload.bookId,
+    name: book["Book Name"],
+    language: book.Language,
+    mrp: book.MRP,
+    distributorPrice: book["Distributor Price"],
+    category: book.Category,
+    active: false
+  });
+}
+
+function validateBook_(payload) {
+  if (!payload.name) {
+    throw new Error("Book name is required");
+  }
+  if (!payload.language) {
+    throw new Error("Language is required");
+  }
+  if (Number(payload.mrp || 0) < 0) {
+    throw new Error("MRP cannot be negative");
+  }
+  if (Number(payload.distributorPrice || 0) < 0) {
+    throw new Error("Distributor price cannot be negative");
+  }
+}
+
+function mapBook_(row) {
+  return {
+    bookId: row["Book ID"],
+    name: row["Book Name"],
+    language: row.Language,
+    mrp: row.MRP,
+    distributorPrice: row["Distributor Price"],
+    category: row.Category,
+    active: row.Active === true || row.Active === "TRUE" || row.Active === "true"
+  };
 }
 
 function getDashboardSummary_() {
@@ -162,4 +277,3 @@ function logAudit_(action, entity, entityId, details) {
     "Details": details || ""
   });
 }
-

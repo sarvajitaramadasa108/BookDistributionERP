@@ -1,7 +1,7 @@
 (function () {
   const config = window.ERP_CONFIG || {};
 
-  const mockData = {
+  const mockSeed = {
     dashboard: {
       todaySales: 18500,
       todayBooks: 342,
@@ -35,9 +35,11 @@
     ]
   };
 
+  const mockData = loadMockData();
+
   async function request(action, payload) {
     if (config.mockMode || !config.apiBaseUrl) {
-      return mockResponse(action);
+      return mockResponse(action, payload || {});
     }
 
     const response = await fetch(config.apiBaseUrl, {
@@ -53,17 +55,88 @@
     return result.data;
   }
 
-  async function mockResponse(action) {
+  async function mockResponse(action, payload) {
     await new Promise((resolve) => setTimeout(resolve, 160));
     const routes = {
       "dashboard.summary": mockData.dashboard,
       "books.list": mockData.books,
+      "books.create": () => createMockBook(payload),
+      "books.update": () => updateMockBook(payload),
+      "books.delete": () => deleteMockBook(payload),
       "warehouses.list": mockData.warehouses,
       "activities.list": mockData.activities
     };
-    return routes[action] || [];
+    const handler = routes[action];
+    return typeof handler === "function" ? handler() : handler || [];
+  }
+
+  function loadMockData() {
+    try {
+      const saved = window.localStorage.getItem("hkm-book-erp-mock-data");
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (error) {
+      console.warn("Could not read mock data", error);
+    }
+    return JSON.parse(JSON.stringify(mockSeed));
+  }
+
+  function saveMockData() {
+    try {
+      window.localStorage.setItem("hkm-book-erp-mock-data", JSON.stringify(mockData));
+    } catch (error) {
+      console.warn("Could not save mock data", error);
+    }
+  }
+
+  function createMockBook(payload) {
+    const book = normalizeMockBook(payload);
+    book.bookId = nextMockId("BK", mockData.books, "bookId");
+    mockData.books.push(book);
+    saveMockData();
+    return book;
+  }
+
+  function updateMockBook(payload) {
+    const index = mockData.books.findIndex((book) => book.bookId === payload.bookId);
+    if (index === -1) {
+      throw new Error("Book not found");
+    }
+    mockData.books[index] = { ...mockData.books[index], ...normalizeMockBook(payload), bookId: payload.bookId };
+    saveMockData();
+    return mockData.books[index];
+  }
+
+  function deleteMockBook(payload) {
+    const book = mockData.books.find((item) => item.bookId === payload.bookId);
+    if (!book) {
+      throw new Error("Book not found");
+    }
+    book.active = false;
+    saveMockData();
+    return book;
+  }
+
+  function normalizeMockBook(payload) {
+    return {
+      bookId: payload.bookId || "",
+      name: String(payload.name || "").trim(),
+      language: String(payload.language || "").trim(),
+      mrp: Number(payload.mrp || 0),
+      distributorPrice: Number(payload.distributorPrice || 0),
+      category: String(payload.category || "").trim(),
+      active: payload.active !== false
+    };
+  }
+
+  function nextMockId(prefix, rows, key) {
+    const max = rows.reduce((highest, row) => {
+      const number = Number(String(row[key] || "").replace(`${prefix}-`, ""));
+      return Number.isNaN(number) ? highest : Math.max(highest, number);
+    }, 0);
+    return `${prefix}-${String(max + 1).padStart(3, "0")}`;
   }
 
   window.erpApi = { request };
 })();
-

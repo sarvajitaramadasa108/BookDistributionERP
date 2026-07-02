@@ -1,5 +1,10 @@
 (function () {
-  const state = { view: "dashboard" };
+  const state = {
+    view: "dashboard",
+    books: [],
+    bookSearch: "",
+    bookStatus: "active"
+  };
 
   const views = {
     dashboard: ["Home", "Daily view of distribution, stock, and active service.", renderDashboard],
@@ -17,6 +22,7 @@
   const sidebar = document.getElementById("sidebar");
   const loadingOverlay = document.getElementById("loadingOverlay");
   const toastStack = document.getElementById("toastStack");
+  const modalRoot = document.getElementById("modalRoot");
 
   document.getElementById("menuButton").addEventListener("click", () => {
     sidebar.classList.toggle("open");
@@ -73,16 +79,77 @@
   }
 
   async function renderBooks() {
-    const rows = await window.erpApi.request("books.list");
-    return tableSection("Book Master", "Add Book", ["Book ID", "Name", "Language", "MRP", "Distributor Price", "Category", "Status"], rows.map((row) => [
-      row.bookId,
-      row.name,
-      row.language,
-      money(row.mrp),
-      money(row.distributorPrice),
-      row.category,
-      status(row.active ? "Active" : "Inactive", row.active ? "good" : "warn")
-    ]));
+    state.books = await window.erpApi.request("books.list");
+    return renderBooksMarkup();
+  }
+
+  function renderBooksMarkup() {
+    const rows = getFilteredBooks();
+    return `
+      <section class="card">
+        <div class="panel-header">
+          <h2>Book Master</h2>
+          <button class="button" type="button" onclick="window.erpApp.openBookForm()">Add Book</button>
+        </div>
+        <div class="panel-body">
+          <div class="toolbar">
+            <label class="field compact-field">
+              <span>Search</span>
+              <input type="search" value="${escapeAttribute(state.bookSearch)}" placeholder="Search name, language, category" oninput="window.erpApp.setBookSearch(this.value)">
+            </label>
+            <label class="field compact-field">
+              <span>Status</span>
+              <select onchange="window.erpApp.setBookStatus(this.value)">
+                <option value="active" ${state.bookStatus === "active" ? "selected" : ""}>Active books</option>
+                <option value="all" ${state.bookStatus === "all" ? "selected" : ""}>All books</option>
+                <option value="inactive" ${state.bookStatus === "inactive" ? "selected" : ""}>Inactive books</option>
+              </select>
+            </label>
+          </div>
+          ${rows.length ? booksTable(rows) : '<div class="empty-state">No books found.</div>'}
+        </div>
+      </section>
+    `;
+  }
+
+  function booksTable(rows) {
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Book ID</th>
+              <th>Name</th>
+              <th>Language</th>
+              <th>MRP</th>
+              <th>Distributor Price</th>
+              <th>Category</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.bookId)}</td>
+                <td><strong>${escapeHtml(row.name)}</strong></td>
+                <td>${escapeHtml(row.language)}</td>
+                <td>${money(row.mrp)}</td>
+                <td>${money(row.distributorPrice)}</td>
+                <td>${escapeHtml(row.category || "-")}</td>
+                <td>${status(row.active ? "Active" : "Inactive", row.active ? "good" : "warn")}</td>
+                <td>
+                  <div class="row-actions">
+                    <button class="small-button" type="button" onclick="window.erpApp.openBookForm('${escapeAttribute(row.bookId)}')">Edit</button>
+                    ${row.active ? `<button class="small-button danger" type="button" onclick="window.erpApp.deactivateBook('${escapeAttribute(row.bookId)}')">Deactivate</button>` : ""}
+                  </div>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
   }
 
   async function renderWarehouses() {
@@ -180,6 +247,140 @@
     `;
   }
 
+  function getFilteredBooks() {
+    const query = state.bookSearch.trim().toLowerCase();
+    return state.books.filter((book) => {
+      const matchesStatus =
+        state.bookStatus === "all" ||
+        (state.bookStatus === "active" && book.active) ||
+        (state.bookStatus === "inactive" && !book.active);
+
+      const haystack = [book.bookId, book.name, book.language, book.category].join(" ").toLowerCase();
+      return matchesStatus && (!query || haystack.includes(query));
+    });
+  }
+
+  function setBookSearch(value) {
+    state.bookSearch = value;
+    content.innerHTML = renderBooksMarkup();
+  }
+
+  function setBookStatus(value) {
+    state.bookStatus = value;
+    content.innerHTML = renderBooksMarkup();
+  }
+
+  function openBookForm(bookId) {
+    const book = state.books.find((item) => item.bookId === bookId) || {
+      bookId: "",
+      name: "",
+      language: "",
+      mrp: "",
+      distributorPrice: "",
+      category: "",
+      active: true
+    };
+    const isEdit = Boolean(book.bookId);
+
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="bookFormTitle">
+        <div class="modal-header">
+          <h2 id="bookFormTitle">${isEdit ? "Edit Book" : "Add Book"}</h2>
+          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+        </div>
+        <form class="form-grid" id="bookForm">
+          <input type="hidden" name="bookId" value="${escapeAttribute(book.bookId)}">
+          <label class="field wide-field">
+            <span>Book Name</span>
+            <input name="name" required value="${escapeAttribute(book.name)}" placeholder="Bhagavad Gita As It Is">
+          </label>
+          <label class="field">
+            <span>Language</span>
+            <input name="language" required value="${escapeAttribute(book.language)}" placeholder="English">
+          </label>
+          <label class="field">
+            <span>Category</span>
+            <input name="category" value="${escapeAttribute(book.category)}" placeholder="Main / Small / Set">
+          </label>
+          <label class="field">
+            <span>MRP</span>
+            <input name="mrp" type="number" min="0" step="0.01" required value="${escapeAttribute(book.mrp)}">
+          </label>
+          <label class="field">
+            <span>Distributor Price</span>
+            <input name="distributorPrice" type="number" min="0" step="0.01" required value="${escapeAttribute(book.distributorPrice)}">
+          </label>
+          <label class="check-field">
+            <input name="active" type="checkbox" ${book.active ? "checked" : ""}>
+            <span>Active</span>
+          </label>
+          <div class="form-actions">
+            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+            <button class="button" type="submit">${isEdit ? "Save Changes" : "Create Book"}</button>
+          </div>
+        </form>
+      </section>
+    `;
+
+    document.getElementById("bookForm").addEventListener("submit", saveBook);
+  }
+
+  async function saveBook(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const payload = {
+      bookId: data.get("bookId"),
+      name: data.get("name").trim(),
+      language: data.get("language").trim(),
+      category: data.get("category").trim(),
+      mrp: Number(data.get("mrp")),
+      distributorPrice: Number(data.get("distributorPrice")),
+      active: data.get("active") === "on"
+    };
+
+    if (!payload.name || !payload.language) {
+      showToast("Book name and language are required");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await window.erpApi.request(payload.bookId ? "books.update" : "books.create", payload);
+      closeModal();
+      content.innerHTML = await renderBooks();
+      showToast(payload.bookId ? "Book updated" : "Book created");
+    } catch (error) {
+      showToast(error.message || "Could not save book");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deactivateBook(bookId) {
+    const book = state.books.find((item) => item.bookId === bookId);
+    if (!book) {
+      showToast("Book not found");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await window.erpApi.request("books.delete", { bookId });
+      content.innerHTML = await renderBooks();
+      showToast("Book deactivated");
+    } catch (error) {
+      showToast(error.message || "Could not deactivate book");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function closeModal() {
+    modalRoot.innerHTML = "";
+  }
+
   function metric(label, value, note) {
     return `
       <article class="card metric-card">
@@ -231,7 +432,18 @@
       .replace(/'/g, "&#039;");
   }
 
-  window.erpApp = { toast: showToast, navigate };
+  function escapeAttribute(value) {
+    return escapeHtml(value).replace(/`/g, "&#096;");
+  }
+
+  window.erpApp = {
+    toast: showToast,
+    navigate,
+    setBookSearch,
+    setBookStatus,
+    openBookForm,
+    deactivateBook,
+    closeModal
+  };
   navigate(state.view);
 })();
-
