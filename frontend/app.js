@@ -14,7 +14,9 @@
     issueDraft: {},
     issueLines: [],
     receiveDraft: {},
-    receiveLines: []
+    receiveLines: [],
+    transferDraft: {},
+    transferLines: []
   };
 
   const views = {
@@ -335,6 +337,7 @@
           <h2>Stock Documents</h2>
           <div class="row-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Receive Books</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Books</button>
             <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Books</button>
           </div>
         </div>
@@ -1212,6 +1215,181 @@
     }
   }
 
+  function openTransferForm() {
+    state.transferDraft = {
+      documentDate: new Date().toISOString().slice(0, 10),
+      fromWarehouseId: "",
+      toWarehouseId: "",
+      notes: ""
+    };
+    state.transferLines = [blankTransferLine()];
+    renderTransferModal();
+  }
+
+  function blankTransferLine() {
+    return { bookId: "", quantity: 1, rate: 0 };
+  }
+
+  function renderTransferModal() {
+    const activeBooks = state.books.filter((book) => book.active !== false);
+    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
+    const draft = state.transferDraft;
+
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+      <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="transferFormTitle">
+        <div class="modal-header">
+          <h2 id="transferFormTitle">Transfer Books</h2>
+          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+        </div>
+        <form class="form-grid" id="transferForm">
+          <label class="field">
+            <span>Transfer Date</span>
+            <input name="documentDate" type="date" value="${escapeAttribute(draft.documentDate)}" required>
+          </label>
+          <label class="field">
+            <span>From Warehouse</span>
+            <select name="fromWarehouseId" required>
+              <option value="">Select warehouse</option>
+              ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.fromWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>To Warehouse</span>
+            <select name="toWarehouseId" required>
+              <option value="">Select warehouse</option>
+              ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.toWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field wide-field">
+            <span>Notes</span>
+            <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Vehicle, person, or transfer reference">
+          </label>
+          <div class="wide-field">
+            <div class="line-editor-header">
+              <h3>Books</h3>
+              <button class="small-button" type="button" onclick="window.erpApp.addTransferLine()">Add Line</button>
+            </div>
+            ${activeBooks.length ? transferLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before transferring stock.</div>'}
+          </div>
+          <div class="form-actions">
+            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+            <button class="button" type="submit" ${activeBooks.length ? "" : "disabled"}>Post Transfer</button>
+          </div>
+        </form>
+      </section>
+    `;
+
+    document.getElementById("transferForm").addEventListener("submit", saveTransferDocument);
+  }
+
+  function transferLinesMarkup(activeBooks) {
+    return `
+      <div class="line-table">
+        ${state.transferLines.map((line, index) => `
+          <div class="line-row">
+            <label class="field">
+              <span>Book</span>
+              <select onchange="window.erpApp.updateTransferLine(${index}, 'bookId', this.value)" required>
+                <option value="">Select book</option>
+                ${activeBooks.map((book) => `<option value="${escapeAttribute(book.bookId)}" ${line.bookId === book.bookId ? "selected" : ""}>${escapeHtml(book.name)} - ${escapeHtml(book.language)}</option>`).join("")}
+              </select>
+            </label>
+            <label class="field">
+              <span>Qty</span>
+              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateTransferLine(${index}, 'quantity', this.value)" required>
+            </label>
+            <label class="field">
+              <span>Rate</span>
+              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.rate)}" onchange="window.erpApp.updateTransferLine(${index}, 'rate', this.value)">
+            </label>
+            <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeTransferLine(${index})">Remove</button>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function addTransferLine() {
+    syncTransferDraft();
+    state.transferLines.push(blankTransferLine());
+    renderTransferModal();
+  }
+
+  function removeTransferLine(index) {
+    syncTransferDraft();
+    state.transferLines.splice(index, 1);
+    if (!state.transferLines.length) {
+      state.transferLines.push(blankTransferLine());
+    }
+    renderTransferModal();
+  }
+
+  function updateTransferLine(index, key, value) {
+    if (!state.transferLines[index]) return;
+    state.transferLines[index][key] = key === "bookId" ? value : Number(value || 0);
+  }
+
+  function syncTransferDraft() {
+    const form = document.getElementById("transferForm");
+    if (!form) return;
+    const data = new FormData(form);
+    state.transferDraft = {
+      documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
+      fromWarehouseId: data.get("fromWarehouseId") || "",
+      toWarehouseId: data.get("toWarehouseId") || "",
+      notes: data.get("notes") || ""
+    };
+  }
+
+  async function saveTransferDocument(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const fromWarehouseId = data.get("fromWarehouseId");
+    const toWarehouseId = data.get("toWarehouseId");
+
+    if (fromWarehouseId === toWarehouseId) {
+      showToast("Choose two different warehouses");
+      return;
+    }
+
+    const lines = state.transferLines
+      .filter((line) => line.bookId && Number(line.quantity || 0) > 0)
+      .map((line) => ({
+        bookId: line.bookId,
+        quantity: Number(line.quantity),
+        rate: Number(line.rate || 0)
+      }));
+
+    if (!lines.length) {
+      showToast("Add at least one book line");
+      return;
+    }
+
+    const payload = {
+      documentType: "TRANSFER",
+      documentDate: data.get("documentDate"),
+      fromWarehouseId,
+      toWarehouseId,
+      status: "Posted",
+      notes: data.get("notes").trim(),
+      lines
+    };
+
+    setLoading(true);
+    try {
+      const result = await window.erpApi.request("documents.create", payload);
+      closeModal();
+      content.innerHTML = await renderDocuments();
+      showToast(`Transfer posted: ${result.documentId}`);
+    } catch (error) {
+      showToast(error.message || "Could not post transfer");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function toInputDate(value) {
     if (!value) return "";
     const date = new Date(value);
@@ -1304,6 +1482,10 @@
     addReceiveLine,
     removeReceiveLine,
     updateReceiveLine,
+    openTransferForm,
+    addTransferLine,
+    removeTransferLine,
+    updateTransferLine,
     closeModal
   };
   navigate(state.view);
