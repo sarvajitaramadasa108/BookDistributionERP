@@ -67,7 +67,10 @@
       "warehouses.create": () => createMockWarehouse(payload),
       "warehouses.update": () => updateMockWarehouse(payload),
       "warehouses.delete": () => deleteMockWarehouse(payload),
-      "activities.list": mockData.activities
+      "activities.list": mockData.activities,
+      "activities.create": () => createMockActivity(payload),
+      "activities.update": () => updateMockActivity(payload),
+      "activities.delete": () => deleteMockActivity(payload)
     };
     const handler = routes[action];
     return typeof handler === "function" ? handler() : handler || [];
@@ -177,6 +180,47 @@
       spoc: String(payload.spoc || "").trim(),
       mobile: String(payload.mobile || "").trim(),
       active: payload.active !== false
+    };
+  }
+
+  function createMockActivity(payload) {
+    const activity = normalizeMockActivity(payload);
+    activity.activityId = nextMockId("ACT", mockData.activities, "activityId");
+    mockData.activities.push(activity);
+    saveMockData();
+    return activity;
+  }
+
+  function updateMockActivity(payload) {
+    const index = mockData.activities.findIndex((activity) => activity.activityId === payload.activityId);
+    if (index === -1) {
+      throw new Error("Activity not found");
+    }
+    mockData.activities[index] = { ...mockData.activities[index], ...normalizeMockActivity(payload), activityId: payload.activityId };
+    saveMockData();
+    return mockData.activities[index];
+  }
+
+  function deleteMockActivity(payload) {
+    const activity = mockData.activities.find((item) => item.activityId === payload.activityId);
+    if (!activity) {
+      throw new Error("Activity not found");
+    }
+    activity.status = "Cancelled";
+    saveMockData();
+    return activity;
+  }
+
+  function normalizeMockActivity(payload) {
+    return {
+      activityId: payload.activityId || "",
+      name: String(payload.name || "").trim(),
+      type: String(payload.type || "Stall").trim(),
+      startDate: payload.startDate || "",
+      endDate: payload.endDate || "",
+      warehouseId: payload.warehouseId || payload.warehouse || "",
+      spoc: String(payload.spoc || "").trim(),
+      status: payload.status || "Draft"
     };
   }
 

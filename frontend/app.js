@@ -6,7 +6,10 @@
     bookStatus: "active",
     warehouses: [],
     warehouseSearch: "",
-    warehouseStatus: "active"
+    warehouseStatus: "active",
+    activities: [],
+    activitySearch: "",
+    activityStatus: "open"
   };
 
   const views = {
@@ -228,14 +231,85 @@
   }
 
   async function renderActivities() {
-    const rows = await window.erpApi.request("activities.list");
-    return tableSection("Activities", "Create Activity", ["Activity ID", "Name", "Type", "Warehouse", "Status"], rows.map((row) => [
-      row.activityId || row["Activity ID"],
-      row.name || row.Name,
-      row.type || row.Type,
-      row.warehouse || row.warehouseId || row["Warehouse ID"] || "-",
-      status(row.status || row.Status || "-", (row.status || row.Status) === "Running" ? "good" : "warn")
-    ]));
+    const [activities, warehouses] = await Promise.all([
+      window.erpApi.request("activities.list"),
+      window.erpApi.request("warehouses.list")
+    ]);
+    state.activities = activities.map(normalizeActivity);
+    state.warehouses = warehouses.map(normalizeWarehouse);
+    return renderActivitiesMarkup();
+  }
+
+  function renderActivitiesMarkup() {
+    const rows = getFilteredActivities();
+    return `
+      <section class="card">
+        <div class="panel-header">
+          <h2>Activities</h2>
+          <button class="button" type="button" onclick="window.erpApp.openActivityForm()">Create Activity</button>
+        </div>
+        <div class="panel-body">
+          <div class="toolbar">
+            <label class="field compact-field">
+              <span>Search</span>
+              <input type="search" value="${escapeAttribute(state.activitySearch)}" placeholder="Search name, type, warehouse" oninput="window.erpApp.setActivitySearch(this.value)">
+            </label>
+            <label class="field compact-field">
+              <span>Status</span>
+              <select onchange="window.erpApp.setActivityStatus(this.value)">
+                <option value="open" ${state.activityStatus === "open" ? "selected" : ""}>Open activities</option>
+                <option value="all" ${state.activityStatus === "all" ? "selected" : ""}>All activities</option>
+                <option value="Draft" ${state.activityStatus === "Draft" ? "selected" : ""}>Draft</option>
+                <option value="Running" ${state.activityStatus === "Running" ? "selected" : ""}>Running</option>
+                <option value="Completed" ${state.activityStatus === "Completed" ? "selected" : ""}>Completed</option>
+                <option value="Cancelled" ${state.activityStatus === "Cancelled" ? "selected" : ""}>Cancelled</option>
+              </select>
+            </label>
+          </div>
+          ${rows.length ? activitiesTable(rows) : '<div class="empty-state">No activities found.</div>'}
+        </div>
+      </section>
+    `;
+  }
+
+  function activitiesTable(rows) {
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Activity ID</th>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Dates</th>
+              <th>Warehouse</th>
+              <th>SPOC</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.activityId)}</td>
+                <td><strong>${escapeHtml(row.name)}</strong></td>
+                <td>${escapeHtml(row.type)}</td>
+                <td>${escapeHtml(formatDateRange(row.startDate, row.endDate))}</td>
+                <td>${escapeHtml(getWarehouseName(row.warehouseId))}</td>
+                <td>${escapeHtml(row.spoc || "-")}</td>
+                <td>${status(row.status, row.status === "Running" ? "good" : row.status === "Cancelled" ? "bad" : "warn")}</td>
+                <td>
+                  <div class="row-actions">
+                    <button class="small-button" type="button" onclick="window.erpApp.openActivityForm('${escapeAttribute(row.activityId)}')">Edit</button>
+                    ${row.status !== "Cancelled" ? `<button class="small-button danger" type="button" onclick="window.erpApp.cancelActivity('${escapeAttribute(row.activityId)}')">Cancel</button>` : ""}
+                  </div>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
   }
 
   async function renderDocuments() {
@@ -583,6 +657,175 @@
     };
   }
 
+  function getFilteredActivities() {
+    const query = state.activitySearch.trim().toLowerCase();
+    return state.activities.filter((activity) => {
+      const matchesStatus =
+        state.activityStatus === "all" ||
+        (state.activityStatus === "open" && activity.status !== "Completed" && activity.status !== "Cancelled") ||
+        activity.status === state.activityStatus;
+      const haystack = [activity.activityId, activity.name, activity.type, activity.spoc, getWarehouseName(activity.warehouseId)].join(" ").toLowerCase();
+      return matchesStatus && (!query || haystack.includes(query));
+    });
+  }
+
+  function setActivitySearch(value) {
+    state.activitySearch = value;
+    content.innerHTML = renderActivitiesMarkup();
+  }
+
+  function setActivityStatus(value) {
+    state.activityStatus = value;
+    content.innerHTML = renderActivitiesMarkup();
+  }
+
+  function openActivityForm(activityId) {
+    const activity = state.activities.find((item) => item.activityId === activityId) || {
+      activityId: "",
+      name: "",
+      type: "Stall",
+      startDate: new Date().toISOString().slice(0, 10),
+      endDate: "",
+      warehouseId: state.warehouses.find((warehouse) => warehouse.active)?.warehouseId || "",
+      spoc: "",
+      status: "Draft"
+    };
+    const isEdit = Boolean(activity.activityId);
+    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active || warehouse.warehouseId === activity.warehouseId);
+
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="activityFormTitle">
+        <div class="modal-header">
+          <h2 id="activityFormTitle">${isEdit ? "Edit Activity" : "Create Activity"}</h2>
+          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+        </div>
+        <form class="form-grid" id="activityForm">
+          <input type="hidden" name="activityId" value="${escapeAttribute(activity.activityId)}">
+          <label class="field wide-field">
+            <span>Activity Name</span>
+            <input name="name" required value="${escapeAttribute(activity.name)}" placeholder="Simhachalam Stall">
+          </label>
+          <label class="field">
+            <span>Type</span>
+            <select name="type" required>
+              ${["Stall", "Daily", "Event", "Marathon", "Festival"].map((type) => `<option value="${type}" ${activity.type === type ? "selected" : ""}>${type}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>Warehouse</span>
+            <select name="warehouseId" required>
+              <option value="">Select warehouse</option>
+              ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${activity.warehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>Start Date</span>
+            <input name="startDate" type="date" value="${escapeAttribute(toInputDate(activity.startDate))}">
+          </label>
+          <label class="field">
+            <span>End Date</span>
+            <input name="endDate" type="date" value="${escapeAttribute(toInputDate(activity.endDate))}">
+          </label>
+          <label class="field">
+            <span>SPOC</span>
+            <input name="spoc" value="${escapeAttribute(activity.spoc)}" placeholder="Person responsible">
+          </label>
+          <label class="field">
+            <span>Status</span>
+            <select name="status">
+              ${["Draft", "Running", "Completed", "Cancelled"].map((item) => `<option value="${item}" ${activity.status === item ? "selected" : ""}>${item}</option>`).join("")}
+            </select>
+          </label>
+          <div class="form-actions">
+            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+            <button class="button" type="submit">${isEdit ? "Save Changes" : "Create Activity"}</button>
+          </div>
+        </form>
+      </section>
+    `;
+
+    document.getElementById("activityForm").addEventListener("submit", saveActivity);
+  }
+
+  async function saveActivity(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const payload = {
+      activityId: data.get("activityId"),
+      name: data.get("name").trim(),
+      type: data.get("type"),
+      startDate: data.get("startDate"),
+      endDate: data.get("endDate"),
+      warehouseId: data.get("warehouseId"),
+      spoc: data.get("spoc").trim(),
+      status: data.get("status")
+    };
+
+    if (!payload.name || !payload.type || !payload.warehouseId) {
+      showToast("Activity name, type, and warehouse are required");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await window.erpApi.request(payload.activityId ? "activities.update" : "activities.create", payload);
+      closeModal();
+      content.innerHTML = await renderActivities();
+      showToast(payload.activityId ? "Activity updated" : "Activity created");
+    } catch (error) {
+      showToast(error.message || "Could not save activity");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function cancelActivity(activityId) {
+    setLoading(true);
+    try {
+      await window.erpApi.request("activities.delete", { activityId });
+      content.innerHTML = await renderActivities();
+      showToast("Activity cancelled");
+    } catch (error) {
+      showToast(error.message || "Could not cancel activity");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function normalizeActivity(row) {
+    return {
+      activityId: row.activityId || row["Activity ID"] || "",
+      name: row.name || row.Name || "",
+      type: row.type || row.Type || "",
+      startDate: row.startDate || row["Start Date"] || "",
+      endDate: row.endDate || row["End Date"] || "",
+      warehouseId: row.warehouseId || row["Warehouse ID"] || "",
+      spoc: row.spoc || row.SPOC || "",
+      status: row.status || row.Status || "Draft"
+    };
+  }
+
+  function getWarehouseName(warehouseId) {
+    const warehouse = state.warehouses.find((item) => item.warehouseId === warehouseId);
+    return warehouse ? warehouse.name : warehouseId || "-";
+  }
+
+  function toInputDate(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+    return date.toISOString().slice(0, 10);
+  }
+
+  function formatDateRange(startDate, endDate) {
+    const start = toInputDate(startDate);
+    const end = toInputDate(endDate);
+    if (start && end) return `${start} to ${end}`;
+    return start || end || "-";
+  }
+
   function metric(label, value, note) {
     return `
       <article class="card metric-card">
@@ -649,6 +892,10 @@
     setWarehouseStatus,
     openWarehouseForm,
     deactivateWarehouse,
+    setActivitySearch,
+    setActivityStatus,
+    openActivityForm,
+    cancelActivity,
     closeModal
   };
   navigate(state.view);

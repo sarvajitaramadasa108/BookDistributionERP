@@ -13,6 +13,9 @@ function routeRequest_(request) {
     "warehouses.update": function () { return updateWarehouse_(payload); },
     "warehouses.delete": function () { return deleteWarehouse_(payload); },
     "activities.list": function () { return readObjects_("Activities").map(mapActivity_); },
+    "activities.create": function () { return createActivity_(payload); },
+    "activities.update": function () { return updateActivity_(payload); },
+    "activities.delete": function () { return deleteActivity_(payload); },
     "documents.create": function () { return createDocument_(payload); },
     "stock.current": getCurrentStock_
   };
@@ -248,6 +251,109 @@ function mapActivity_(row) {
     spoc: row.SPOC,
     status: row.Status
   };
+}
+
+function createActivity_(payload) {
+  validateActivity_(payload);
+  const now = new Date();
+  const activity = {
+    "Activity ID": nextId_("ACT", "Activities", "Activity ID"),
+    "Name": payload.name,
+    "Type": payload.type || "Stall",
+    "Start Date": payload.startDate ? new Date(payload.startDate) : "",
+    "End Date": payload.endDate ? new Date(payload.endDate) : "",
+    "Warehouse ID": payload.warehouseId,
+    "SPOC": payload.spoc || "",
+    "Status": payload.status || "Draft",
+    "Created At": now,
+    "Updated At": now
+  };
+  appendObject_("Activities", activity);
+  logAudit_("activities.create", "Activities", activity["Activity ID"], JSON.stringify(activity));
+  return mapActivity_(activity);
+}
+
+function updateActivity_(payload) {
+  if (!payload.activityId) {
+    throw new Error("Activity ID is required");
+  }
+  validateActivity_(payload);
+
+  const sheet = getSheet_("Activities");
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0];
+  const idIndex = headers.indexOf("Activity ID");
+  const rowIndex = values.findIndex(function (row, index) {
+    return index > 0 && row[idIndex] === payload.activityId;
+  });
+
+  if (rowIndex === -1) {
+    throw new Error("Activity not found");
+  }
+
+  const current = {};
+  headers.forEach(function (header, index) {
+    current[header] = values[rowIndex][index];
+  });
+
+  const updated = {
+    "Activity ID": payload.activityId,
+    "Name": payload.name,
+    "Type": payload.type || "Stall",
+    "Start Date": payload.startDate ? new Date(payload.startDate) : "",
+    "End Date": payload.endDate ? new Date(payload.endDate) : "",
+    "Warehouse ID": payload.warehouseId,
+    "SPOC": payload.spoc || "",
+    "Status": payload.status || "Draft",
+    "Created At": current["Created At"] || new Date(),
+    "Updated At": new Date()
+  };
+
+  sheet.getRange(rowIndex + 1, 1, 1, headers.length).setValues([headers.map(function (header) {
+    return updated[header] === undefined ? "" : updated[header];
+  })]);
+  logAudit_("activities.update", "Activities", payload.activityId, JSON.stringify(updated));
+  return mapActivity_(updated);
+}
+
+function deleteActivity_(payload) {
+  if (!payload.activityId) {
+    throw new Error("Activity ID is required");
+  }
+
+  const activity = readObjects_("Activities").find(function (row) {
+    return row["Activity ID"] === payload.activityId;
+  });
+  if (!activity) {
+    throw new Error("Activity not found");
+  }
+
+  return updateActivity_({
+    activityId: payload.activityId,
+    name: activity.Name,
+    type: activity.Type,
+    startDate: activity["Start Date"],
+    endDate: activity["End Date"],
+    warehouseId: activity["Warehouse ID"],
+    spoc: activity.SPOC,
+    status: "Cancelled"
+  });
+}
+
+function validateActivity_(payload) {
+  if (!payload.name) {
+    throw new Error("Activity name is required");
+  }
+  if (!payload.type) {
+    throw new Error("Activity type is required");
+  }
+  if (!payload.warehouseId) {
+    throw new Error("Warehouse is required");
+  }
+  const allowedStatuses = ["Draft", "Running", "Completed", "Cancelled"];
+  if (payload.status && allowedStatuses.indexOf(payload.status) === -1) {
+    throw new Error("Invalid activity status");
+  }
 }
 
 function getDashboardSummary_() {

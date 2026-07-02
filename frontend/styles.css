@@ -350,6 +350,11 @@ th {
   color: #9a5500;
 }
 
+.status.bad {
+  background: #fee4e2;
+  color: #b42318;
+}
+
 .empty-state {
   border: 1px dashed var(--line);
   border-radius: 8px;
