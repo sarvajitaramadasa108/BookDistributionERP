@@ -64,6 +64,9 @@
       "books.update": () => updateMockBook(payload),
       "books.delete": () => deleteMockBook(payload),
       "warehouses.list": mockData.warehouses,
+      "warehouses.create": () => createMockWarehouse(payload),
+      "warehouses.update": () => updateMockWarehouse(payload),
+      "warehouses.delete": () => deleteMockWarehouse(payload),
       "activities.list": mockData.activities
     };
     const handler = routes[action];
@@ -136,6 +139,45 @@
       return Number.isNaN(number) ? highest : Math.max(highest, number);
     }, 0);
     return `${prefix}-${String(max + 1).padStart(3, "0")}`;
+  }
+
+  function createMockWarehouse(payload) {
+    const warehouse = normalizeMockWarehouse(payload);
+    warehouse.warehouseId = nextMockId("WH", mockData.warehouses, "warehouseId");
+    mockData.warehouses.push(warehouse);
+    saveMockData();
+    return warehouse;
+  }
+
+  function updateMockWarehouse(payload) {
+    const index = mockData.warehouses.findIndex((warehouse) => warehouse.warehouseId === payload.warehouseId);
+    if (index === -1) {
+      throw new Error("Warehouse not found");
+    }
+    mockData.warehouses[index] = { ...mockData.warehouses[index], ...normalizeMockWarehouse(payload), warehouseId: payload.warehouseId };
+    saveMockData();
+    return mockData.warehouses[index];
+  }
+
+  function deleteMockWarehouse(payload) {
+    const warehouse = mockData.warehouses.find((item) => item.warehouseId === payload.warehouseId);
+    if (!warehouse) {
+      throw new Error("Warehouse not found");
+    }
+    warehouse.active = false;
+    saveMockData();
+    return warehouse;
+  }
+
+  function normalizeMockWarehouse(payload) {
+    return {
+      warehouseId: payload.warehouseId || "",
+      name: String(payload.name || "").trim(),
+      type: String(payload.type || "Event").trim(),
+      spoc: String(payload.spoc || "").trim(),
+      mobile: String(payload.mobile || "").trim(),
+      active: payload.active !== false
+    };
   }
 
   window.erpApi = { request };

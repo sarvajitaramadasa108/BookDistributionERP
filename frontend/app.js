@@ -3,7 +3,10 @@
     view: "dashboard",
     books: [],
     bookSearch: "",
-    bookStatus: "active"
+    bookStatus: "active",
+    warehouses: [],
+    warehouseSearch: "",
+    warehouseStatus: "active"
   };
 
   const views = {
@@ -153,25 +156,85 @@
   }
 
   async function renderWarehouses() {
-    const rows = await window.erpApi.request("warehouses.list");
-    return tableSection("Warehouse Master", "Add Warehouse", ["Warehouse ID", "Name", "Type", "SPOC", "Mobile", "Status"], rows.map((row) => [
-      row.warehouseId,
-      row.name,
-      row.type,
-      row.spoc || "-",
-      row.mobile || "-",
-      status(row.active ? "Active" : "Inactive", row.active ? "good" : "warn")
-    ]));
+    state.warehouses = (await window.erpApi.request("warehouses.list")).map(normalizeWarehouse);
+    return renderWarehousesMarkup();
+  }
+
+  function renderWarehousesMarkup() {
+    const rows = getFilteredWarehouses();
+    return `
+      <section class="card">
+        <div class="panel-header">
+          <h2>Warehouse Master</h2>
+          <button class="button" type="button" onclick="window.erpApp.openWarehouseForm()">Add Warehouse</button>
+        </div>
+        <div class="panel-body">
+          <div class="toolbar">
+            <label class="field compact-field">
+              <span>Search</span>
+              <input type="search" value="${escapeAttribute(state.warehouseSearch)}" placeholder="Search name, type, SPOC" oninput="window.erpApp.setWarehouseSearch(this.value)">
+            </label>
+            <label class="field compact-field">
+              <span>Status</span>
+              <select onchange="window.erpApp.setWarehouseStatus(this.value)">
+                <option value="active" ${state.warehouseStatus === "active" ? "selected" : ""}>Active warehouses</option>
+                <option value="all" ${state.warehouseStatus === "all" ? "selected" : ""}>All warehouses</option>
+                <option value="inactive" ${state.warehouseStatus === "inactive" ? "selected" : ""}>Inactive warehouses</option>
+              </select>
+            </label>
+          </div>
+          ${rows.length ? warehousesTable(rows) : '<div class="empty-state">No warehouses found.</div>'}
+        </div>
+      </section>
+    `;
+  }
+
+  function warehousesTable(rows) {
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Warehouse ID</th>
+              <th>Name</th>
+              <th>Type</th>
+              <th>SPOC</th>
+              <th>Mobile</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.warehouseId)}</td>
+                <td><strong>${escapeHtml(row.name)}</strong></td>
+                <td>${escapeHtml(row.type)}</td>
+                <td>${escapeHtml(row.spoc || "-")}</td>
+                <td>${escapeHtml(row.mobile || "-")}</td>
+                <td>${status(row.active ? "Active" : "Inactive", row.active ? "good" : "warn")}</td>
+                <td>
+                  <div class="row-actions">
+                    <button class="small-button" type="button" onclick="window.erpApp.openWarehouseForm('${escapeAttribute(row.warehouseId)}')">Edit</button>
+                    ${row.active ? `<button class="small-button danger" type="button" onclick="window.erpApp.deactivateWarehouse('${escapeAttribute(row.warehouseId)}')">Deactivate</button>` : ""}
+                  </div>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
   }
 
   async function renderActivities() {
     const rows = await window.erpApi.request("activities.list");
     return tableSection("Activities", "Create Activity", ["Activity ID", "Name", "Type", "Warehouse", "Status"], rows.map((row) => [
-      row.activityId,
-      row.name,
-      row.type,
-      row.warehouse,
-      status(row.status, row.status === "Running" ? "good" : "warn")
+      row.activityId || row["Activity ID"],
+      row.name || row.Name,
+      row.type || row.Type,
+      row.warehouse || row.warehouseId || row["Warehouse ID"] || "-",
+      status(row.status || row.Status || "-", (row.status || row.Status) === "Running" ? "good" : "warn")
     ]));
   }
 
@@ -381,6 +444,145 @@
     modalRoot.innerHTML = "";
   }
 
+  function getFilteredWarehouses() {
+    const query = state.warehouseSearch.trim().toLowerCase();
+    return state.warehouses.filter((warehouse) => {
+      const matchesStatus =
+        state.warehouseStatus === "all" ||
+        (state.warehouseStatus === "active" && warehouse.active) ||
+        (state.warehouseStatus === "inactive" && !warehouse.active);
+
+      const haystack = [warehouse.warehouseId, warehouse.name, warehouse.type, warehouse.spoc, warehouse.mobile].join(" ").toLowerCase();
+      return matchesStatus && (!query || haystack.includes(query));
+    });
+  }
+
+  function setWarehouseSearch(value) {
+    state.warehouseSearch = value;
+    content.innerHTML = renderWarehousesMarkup();
+  }
+
+  function setWarehouseStatus(value) {
+    state.warehouseStatus = value;
+    content.innerHTML = renderWarehousesMarkup();
+  }
+
+  function openWarehouseForm(warehouseId) {
+    const warehouse = state.warehouses.find((item) => item.warehouseId === warehouseId) || {
+      warehouseId: "",
+      name: "",
+      type: "Event",
+      spoc: "",
+      mobile: "",
+      active: true
+    };
+    const isEdit = Boolean(warehouse.warehouseId);
+
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="warehouseFormTitle">
+        <div class="modal-header">
+          <h2 id="warehouseFormTitle">${isEdit ? "Edit Warehouse" : "Add Warehouse"}</h2>
+          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+        </div>
+        <form class="form-grid" id="warehouseForm">
+          <input type="hidden" name="warehouseId" value="${escapeAttribute(warehouse.warehouseId)}">
+          <label class="field wide-field">
+            <span>Warehouse Name</span>
+            <input name="name" required value="${escapeAttribute(warehouse.name)}" placeholder="GMB Main">
+          </label>
+          <label class="field">
+            <span>Type</span>
+            <select name="type" required>
+              <option value="Main" ${warehouse.type === "Main" ? "selected" : ""}>Main</option>
+              <option value="Event" ${warehouse.type === "Event" ? "selected" : ""}>Event</option>
+              <option value="Temporary" ${warehouse.type === "Temporary" ? "selected" : ""}>Temporary</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>SPOC</span>
+            <input name="spoc" value="${escapeAttribute(warehouse.spoc)}" placeholder="Person responsible">
+          </label>
+          <label class="field">
+            <span>Mobile</span>
+            <input name="mobile" value="${escapeAttribute(warehouse.mobile)}" placeholder="Contact number">
+          </label>
+          <label class="check-field">
+            <input name="active" type="checkbox" ${warehouse.active ? "checked" : ""}>
+            <span>Active</span>
+          </label>
+          <div class="form-actions">
+            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+            <button class="button" type="submit">${isEdit ? "Save Changes" : "Create Warehouse"}</button>
+          </div>
+        </form>
+      </section>
+    `;
+
+    document.getElementById("warehouseForm").addEventListener("submit", saveWarehouse);
+  }
+
+  async function saveWarehouse(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const payload = {
+      warehouseId: data.get("warehouseId"),
+      name: data.get("name").trim(),
+      type: data.get("type"),
+      spoc: data.get("spoc").trim(),
+      mobile: data.get("mobile").trim(),
+      active: data.get("active") === "on"
+    };
+
+    if (!payload.name || !payload.type) {
+      showToast("Warehouse name and type are required");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await window.erpApi.request(payload.warehouseId ? "warehouses.update" : "warehouses.create", payload);
+      closeModal();
+      content.innerHTML = await renderWarehouses();
+      showToast(payload.warehouseId ? "Warehouse updated" : "Warehouse created");
+    } catch (error) {
+      showToast(error.message || "Could not save warehouse");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deactivateWarehouse(warehouseId) {
+    const warehouse = state.warehouses.find((item) => item.warehouseId === warehouseId);
+    if (!warehouse) {
+      showToast("Warehouse not found");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await window.erpApi.request("warehouses.delete", { warehouseId });
+      content.innerHTML = await renderWarehouses();
+      showToast("Warehouse deactivated");
+    } catch (error) {
+      showToast(error.message || "Could not deactivate warehouse");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function normalizeWarehouse(row) {
+    return {
+      warehouseId: row.warehouseId || row["Warehouse ID"] || "",
+      name: row.name || row["Warehouse Name"] || "",
+      type: row.type || row.Type || "",
+      spoc: row.spoc || row.SPOC || "",
+      mobile: row.mobile || row.Mobile || "",
+      active: row.active === true || row.active === "TRUE" || row.Active === true || row.Active === "TRUE" || row.Active === "true"
+    };
+  }
+
   function metric(label, value, note) {
     return `
       <article class="card metric-card">
@@ -393,13 +595,13 @@
 
   function activityList(rows) {
     return rows.map((row) => `
-      <p><strong>${escapeHtml(row.name)}</strong><br><span class="metric-note">${escapeHtml(row.warehouse)} - ${escapeHtml(row.status)}</span></p>
+      <p><strong>${escapeHtml(row.name || row.Name || "-")}</strong><br><span class="metric-note">${escapeHtml(row.warehouse || row.warehouseId || row["Warehouse ID"] || "-")} - ${escapeHtml(row.status || row.Status || "-")}</span></p>
     `).join("");
   }
 
   function documentList(rows) {
     return rows.map((row) => `
-      <p><strong>${escapeHtml(row.type)} ${escapeHtml(row.ref)}</strong><br><span class="metric-note">${escapeHtml(row.warehouse)} - ${row.qty} books</span></p>
+      <p><strong>${escapeHtml(row.type || row["Document Type"] || "-")} ${escapeHtml(row.ref || row["Document ID"] || "")}</strong><br><span class="metric-note">${escapeHtml(row.warehouse || row["From Warehouse ID"] || row["To Warehouse ID"] || "-")} - ${escapeHtml(row.qty || row.Quantity || 0)} books</span></p>
     `).join("");
   }
 
@@ -443,6 +645,10 @@
     setBookStatus,
     openBookForm,
     deactivateBook,
+    setWarehouseSearch,
+    setWarehouseStatus,
+    openWarehouseForm,
+    deactivateWarehouse,
     closeModal
   };
   navigate(state.view);

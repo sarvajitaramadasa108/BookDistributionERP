@@ -8,8 +8,11 @@ function routeRequest_(request) {
     "books.create": function () { return createBook_(payload); },
     "books.update": function () { return updateBook_(payload); },
     "books.delete": function () { return deleteBook_(payload); },
-    "warehouses.list": function () { return readObjects_("Warehouses"); },
-    "activities.list": function () { return readObjects_("Activities"); },
+    "warehouses.list": function () { return readObjects_("Warehouses").map(mapWarehouse_); },
+    "warehouses.create": function () { return createWarehouse_(payload); },
+    "warehouses.update": function () { return updateWarehouse_(payload); },
+    "warehouses.delete": function () { return deleteWarehouse_(payload); },
+    "activities.list": function () { return readObjects_("Activities").map(mapActivity_); },
     "documents.create": function () { return createDocument_(payload); },
     "stock.current": getCurrentStock_
   };
@@ -129,6 +132,121 @@ function mapBook_(row) {
     distributorPrice: row["Distributor Price"],
     category: row.Category,
     active: row.Active === true || row.Active === "TRUE" || row.Active === "true"
+  };
+}
+
+function createWarehouse_(payload) {
+  validateWarehouse_(payload);
+  const now = new Date();
+  const warehouse = {
+    "Warehouse ID": nextId_("WH", "Warehouses", "Warehouse ID"),
+    "Warehouse Name": payload.name,
+    "Type": payload.type || "Event",
+    "SPOC": payload.spoc || "",
+    "Mobile": payload.mobile || "",
+    "Active": payload.active !== false,
+    "Created At": now,
+    "Updated At": now
+  };
+  appendObject_("Warehouses", warehouse);
+  logAudit_("warehouses.create", "Warehouses", warehouse["Warehouse ID"], JSON.stringify(warehouse));
+  return mapWarehouse_(warehouse);
+}
+
+function updateWarehouse_(payload) {
+  if (!payload.warehouseId) {
+    throw new Error("Warehouse ID is required");
+  }
+  validateWarehouse_(payload);
+
+  const sheet = getSheet_("Warehouses");
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0];
+  const idIndex = headers.indexOf("Warehouse ID");
+  const rowIndex = values.findIndex(function (row, index) {
+    return index > 0 && row[idIndex] === payload.warehouseId;
+  });
+
+  if (rowIndex === -1) {
+    throw new Error("Warehouse not found");
+  }
+
+  const current = {};
+  headers.forEach(function (header, index) {
+    current[header] = values[rowIndex][index];
+  });
+
+  const updated = {
+    "Warehouse ID": payload.warehouseId,
+    "Warehouse Name": payload.name,
+    "Type": payload.type || "Event",
+    "SPOC": payload.spoc || "",
+    "Mobile": payload.mobile || "",
+    "Active": payload.active !== false,
+    "Created At": current["Created At"] || new Date(),
+    "Updated At": new Date()
+  };
+
+  sheet.getRange(rowIndex + 1, 1, 1, headers.length).setValues([headers.map(function (header) {
+    return updated[header] === undefined ? "" : updated[header];
+  })]);
+  logAudit_("warehouses.update", "Warehouses", payload.warehouseId, JSON.stringify(updated));
+  return mapWarehouse_(updated);
+}
+
+function deleteWarehouse_(payload) {
+  if (!payload.warehouseId) {
+    throw new Error("Warehouse ID is required");
+  }
+
+  const rows = readObjects_("Warehouses");
+  const warehouse = rows.find(function (row) {
+    return row["Warehouse ID"] === payload.warehouseId;
+  });
+  if (!warehouse) {
+    throw new Error("Warehouse not found");
+  }
+
+  return updateWarehouse_({
+    warehouseId: payload.warehouseId,
+    name: warehouse["Warehouse Name"],
+    type: warehouse.Type,
+    spoc: warehouse.SPOC,
+    mobile: warehouse.Mobile,
+    active: false
+  });
+}
+
+function validateWarehouse_(payload) {
+  if (!payload.name) {
+    throw new Error("Warehouse name is required");
+  }
+  if (!payload.type) {
+    throw new Error("Warehouse type is required");
+  }
+}
+
+function mapWarehouse_(row) {
+  return {
+    warehouseId: row["Warehouse ID"],
+    name: row["Warehouse Name"],
+    type: row.Type,
+    spoc: row.SPOC,
+    mobile: row.Mobile,
+    active: row.Active === true || row.Active === "TRUE" || row.Active === "true"
+  };
+}
+
+function mapActivity_(row) {
+  return {
+    activityId: row["Activity ID"],
+    name: row.Name,
+    type: row.Type,
+    startDate: row["Start Date"],
+    endDate: row["End Date"],
+    warehouseId: row["Warehouse ID"],
+    spoc: row.SPOC,
+    status: row.Status
   };
 }
 
