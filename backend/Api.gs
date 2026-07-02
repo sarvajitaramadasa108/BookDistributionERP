@@ -16,6 +16,7 @@ function routeRequest_(request) {
     "activities.create": function () { return createActivity_(payload); },
     "activities.update": function () { return updateActivity_(payload); },
     "activities.delete": function () { return deleteActivity_(payload); },
+    "documents.list": function () { return readObjects_("Documents").map(mapDocument_); },
     "documents.create": function () { return createDocument_(payload); },
     "stock.current": getCurrentStock_
   };
@@ -426,6 +427,22 @@ function createDocument_(payload) {
 
   logAudit_("documents.create", "Documents", documentId, JSON.stringify(payload));
   return { documentId: documentId };
+}
+
+function mapDocument_(row) {
+  return {
+    documentId: row["Document ID"],
+    documentType: row["Document Type"],
+    documentDate: row["Document Date"],
+    fromWarehouseId: row["From Warehouse ID"],
+    toWarehouseId: row["To Warehouse ID"],
+    activityId: row["Activity ID"],
+    volunteerId: row["Volunteer ID"],
+    status: row.Status,
+    notes: row.Notes,
+    createdAt: row["Created At"],
+    createdBy: row["Created By"]
+  };
 }
 
 function appendLedgerRows_(documentId, lineId, documentType, documentDate, payload, line, quantity, rate, amount, now) {

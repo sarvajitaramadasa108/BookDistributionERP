@@ -9,7 +9,10 @@
     warehouseStatus: "active",
     activities: [],
     activitySearch: "",
-    activityStatus: "open"
+    activityStatus: "open",
+    documents: [],
+    issueDraft: {},
+    issueLines: []
   };
 
   const views = {
@@ -313,11 +316,22 @@
   }
 
   async function renderDocuments() {
+    const [documents, books, warehouses, activities] = await Promise.all([
+      window.erpApi.request("documents.list"),
+      window.erpApi.request("books.list"),
+      window.erpApi.request("warehouses.list"),
+      window.erpApi.request("activities.list")
+    ]);
+    state.documents = documents.map(normalizeDocument);
+    state.books = books;
+    state.warehouses = warehouses.map(normalizeWarehouse);
+    state.activities = activities.map(normalizeActivity);
+
     return `
       <section class="card">
         <div class="panel-header">
-          <h2>Stock Document Flow</h2>
-          <button class="button" type="button" onclick="window.erpApp.toast('Document entry screen comes next')">New Document</button>
+          <h2>Stock Documents</h2>
+          <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Books</button>
         </div>
         <div class="panel-body">
           <div class="grid metrics">
@@ -326,8 +340,44 @@
             ${metric("Sale", "Out", "Books distributed and amount recorded")}
             ${metric("Return", "In", "Returned books restored or marked damaged")}
           </div>
+          <div class="section-gap">
+            ${state.documents.length ? documentsTable(state.documents) : '<div class="empty-state">No stock documents found.</div>'}
+          </div>
         </div>
       </section>
+    `;
+  }
+
+  function documentsTable(rows) {
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Document ID</th>
+              <th>Type</th>
+              <th>Date</th>
+              <th>From</th>
+              <th>Activity</th>
+              <th>Status</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.slice().reverse().map((row) => `
+              <tr>
+                <td>${escapeHtml(row.documentId)}</td>
+                <td>${status(row.documentType, row.documentType === "ISSUE" ? "warn" : "good")}</td>
+                <td>${escapeHtml(toInputDate(row.documentDate) || "-")}</td>
+                <td>${escapeHtml(getWarehouseName(row.fromWarehouseId))}</td>
+                <td>${escapeHtml(getActivityName(row.activityId))}</td>
+                <td>${escapeHtml(row.status || "-")}</td>
+                <td>${escapeHtml(row.notes || "-")}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
     `;
   }
 
@@ -807,9 +857,195 @@
     };
   }
 
+  function normalizeDocument(row) {
+    return {
+      documentId: row.documentId || row["Document ID"] || "",
+      documentType: row.documentType || row["Document Type"] || "",
+      documentDate: row.documentDate || row["Document Date"] || "",
+      fromWarehouseId: row.fromWarehouseId || row["From Warehouse ID"] || "",
+      toWarehouseId: row.toWarehouseId || row["To Warehouse ID"] || "",
+      activityId: row.activityId || row["Activity ID"] || "",
+      status: row.status || row.Status || "",
+      notes: row.notes || row.Notes || ""
+    };
+  }
+
   function getWarehouseName(warehouseId) {
     const warehouse = state.warehouses.find((item) => item.warehouseId === warehouseId);
     return warehouse ? warehouse.name : warehouseId || "-";
+  }
+
+  function getActivityName(activityId) {
+    const activity = state.activities.find((item) => item.activityId === activityId);
+    return activity ? activity.name : activityId || "-";
+  }
+
+  function openIssueForm() {
+    state.issueDraft = {
+      documentDate: new Date().toISOString().slice(0, 10),
+      fromWarehouseId: "",
+      activityId: "",
+      notes: ""
+    };
+    state.issueLines = [blankIssueLine()];
+    renderIssueModal();
+  }
+
+  function blankIssueLine() {
+    return { bookId: "", quantity: 1, rate: 0 };
+  }
+
+  function renderIssueModal() {
+    const activeBooks = state.books.filter((book) => book.active !== false);
+    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
+    const openActivities = state.activities.filter((activity) => activity.status !== "Completed" && activity.status !== "Cancelled");
+    const draft = state.issueDraft;
+
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+      <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="issueFormTitle">
+        <div class="modal-header">
+          <h2 id="issueFormTitle">Issue Books</h2>
+          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+        </div>
+        <form class="form-grid" id="issueForm">
+          <label class="field">
+            <span>Issue Date</span>
+            <input name="documentDate" type="date" value="${escapeAttribute(draft.documentDate)}" required>
+          </label>
+          <label class="field">
+            <span>From Warehouse</span>
+            <select name="fromWarehouseId" required>
+              <option value="">Select warehouse</option>
+              ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.fromWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field wide-field">
+            <span>Activity</span>
+            <select name="activityId" required>
+              <option value="">Select activity</option>
+              ${openActivities.map((activity) => `<option value="${escapeAttribute(activity.activityId)}" ${draft.activityId === activity.activityId ? "selected" : ""}>${escapeHtml(activity.name)} (${escapeHtml(getWarehouseName(activity.warehouseId))})</option>`).join("")}
+            </select>
+          </label>
+          <label class="field wide-field">
+            <span>Notes</span>
+            <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Optional issue note">
+          </label>
+          <div class="wide-field">
+            <div class="line-editor-header">
+              <h3>Books</h3>
+              <button class="small-button" type="button" onclick="window.erpApp.addIssueLine()">Add Line</button>
+            </div>
+            ${activeBooks.length ? issueLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before issuing stock.</div>'}
+          </div>
+          <div class="form-actions">
+            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+            <button class="button" type="submit" ${activeBooks.length ? "" : "disabled"}>Post Issue</button>
+          </div>
+        </form>
+      </section>
+    `;
+
+    document.getElementById("issueForm").addEventListener("submit", saveIssueDocument);
+  }
+
+  function issueLinesMarkup(activeBooks) {
+    return `
+      <div class="line-table">
+        ${state.issueLines.map((line, index) => `
+          <div class="line-row">
+            <label class="field">
+              <span>Book</span>
+              <select onchange="window.erpApp.updateIssueLine(${index}, 'bookId', this.value)" required>
+                <option value="">Select book</option>
+                ${activeBooks.map((book) => `<option value="${escapeAttribute(book.bookId)}" ${line.bookId === book.bookId ? "selected" : ""}>${escapeHtml(book.name)} - ${escapeHtml(book.language)}</option>`).join("")}
+              </select>
+            </label>
+            <label class="field">
+              <span>Qty</span>
+              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateIssueLine(${index}, 'quantity', this.value)" required>
+            </label>
+            <label class="field">
+              <span>Rate</span>
+              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.rate)}" onchange="window.erpApp.updateIssueLine(${index}, 'rate', this.value)">
+            </label>
+            <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeIssueLine(${index})">Remove</button>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function addIssueLine() {
+    syncIssueDraft();
+    state.issueLines.push(blankIssueLine());
+    renderIssueModal();
+  }
+
+  function removeIssueLine(index) {
+    syncIssueDraft();
+    state.issueLines.splice(index, 1);
+    if (!state.issueLines.length) {
+      state.issueLines.push(blankIssueLine());
+    }
+    renderIssueModal();
+  }
+
+  function updateIssueLine(index, key, value) {
+    if (!state.issueLines[index]) return;
+    state.issueLines[index][key] = key === "bookId" ? value : Number(value || 0);
+  }
+
+  function syncIssueDraft() {
+    const form = document.getElementById("issueForm");
+    if (!form) return;
+    const data = new FormData(form);
+    state.issueDraft = {
+      documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
+      fromWarehouseId: data.get("fromWarehouseId") || "",
+      activityId: data.get("activityId") || "",
+      notes: data.get("notes") || ""
+    };
+  }
+
+  async function saveIssueDocument(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const lines = state.issueLines
+      .filter((line) => line.bookId && Number(line.quantity || 0) > 0)
+      .map((line) => ({
+        bookId: line.bookId,
+        quantity: Number(line.quantity),
+        rate: Number(line.rate || 0)
+      }));
+
+    if (!lines.length) {
+      showToast("Add at least one book line");
+      return;
+    }
+
+    const payload = {
+      documentType: "ISSUE",
+      documentDate: data.get("documentDate"),
+      fromWarehouseId: data.get("fromWarehouseId"),
+      activityId: data.get("activityId"),
+      status: "Posted",
+      notes: data.get("notes").trim(),
+      lines
+    };
+
+    setLoading(true);
+    try {
+      const result = await window.erpApi.request("documents.create", payload);
+      closeModal();
+      content.innerHTML = await renderDocuments();
+      showToast(`Issue posted: ${result.documentId}`);
+    } catch (error) {
+      showToast(error.message || "Could not post issue");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function toInputDate(value) {
@@ -896,6 +1132,10 @@
     setActivityStatus,
     openActivityForm,
     cancelActivity,
+    openIssueForm,
+    addIssueLine,
+    removeIssueLine,
+    updateIssueLine,
     closeModal
   };
   navigate(state.view);

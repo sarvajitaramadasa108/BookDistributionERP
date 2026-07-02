@@ -32,7 +32,8 @@
     activities: [
       { activityId: "ACT-001", name: "Simhachalam Stall", type: "Stall", warehouse: "Simhachalam", status: "Running" },
       { activityId: "ACT-002", name: "Annavaram Daily Stall", type: "Daily", warehouse: "Annavaram", status: "Running" }
-    ]
+    ],
+    documents: []
   };
 
   const mockData = loadMockData();
@@ -70,7 +71,9 @@
       "activities.list": mockData.activities,
       "activities.create": () => createMockActivity(payload),
       "activities.update": () => updateMockActivity(payload),
-      "activities.delete": () => deleteMockActivity(payload)
+      "activities.delete": () => deleteMockActivity(payload),
+      "documents.list": mockData.documents,
+      "documents.create": () => createMockDocument(payload)
     };
     const handler = routes[action];
     return typeof handler === "function" ? handler() : handler || [];
@@ -222,6 +225,26 @@
       spoc: String(payload.spoc || "").trim(),
       status: payload.status || "Draft"
     };
+  }
+
+  function createMockDocument(payload) {
+    const documentId = nextMockId("DOC", mockData.documents, "documentId");
+    const document = {
+      documentId,
+      documentType: payload.documentType,
+      documentDate: payload.documentDate || new Date().toISOString().slice(0, 10),
+      fromWarehouseId: payload.fromWarehouseId || "",
+      toWarehouseId: payload.toWarehouseId || "",
+      activityId: payload.activityId || "",
+      volunteerId: payload.volunteerId || "",
+      status: payload.status || "Posted",
+      notes: payload.notes || "",
+      lineCount: (payload.lines || []).length,
+      totalQuantity: (payload.lines || []).reduce((sum, line) => sum + Number(line.quantity || 0), 0)
+    };
+    mockData.documents.push(document);
+    saveMockData();
+    return { documentId };
   }
 
   window.erpApi = { request };
