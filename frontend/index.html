@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HKM Visakhapatnam Book Distribution ERP</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand">
+          <div class="brand-mark">HKM</div>
+          <div>
+            <div class="brand-name">Book Distribution</div>
+            <div class="brand-subtitle">Visakhapatnam</div>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="Main navigation">
+          <button class="nav-item active" data-view="dashboard">Home</button>
+          <button class="nav-item" data-view="books">Books</button>
+          <button class="nav-item" data-view="warehouses">Warehouses</button>
+          <button class="nav-item" data-view="activities">Activities</button>
+          <button class="nav-item" data-view="documents">Stock Documents</button>
+          <button class="nav-item" data-view="reports">Reports</button>
+          <button class="nav-item" data-view="settings">Settings</button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <button class="icon-button mobile-only" id="menuButton" aria-label="Open menu">Menu</button>
+          <div>
+            <h1 id="pageTitle">Home</h1>
+            <p id="pageSubtitle">Daily view of distribution, stock, and active service.</p>
+          </div>
+          <div class="user-chip">Admin</div>
+        </header>
+
+        <section class="content" id="content" aria-live="polite"></section>
+      </main>
+    </div>
+
+    <div class="loading-overlay hidden" id="loadingOverlay">
+      <div class="loader"></div>
+      <span>Loading</span>
+    </div>
+
+    <div class="toast-stack" id="toastStack"></div>
+    <div class="modal-root" id="modalRoot"></div>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
+
