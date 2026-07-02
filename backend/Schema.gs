@@ -1,6 +1,6 @@
 const ERP_SCHEMA = {
   Settings: ["Key", "Value", "Updated At", "Updated By"],
-  Books: ["Book ID", "Book Name", "Language", "MRP", "Distributor Price", "Category", "Active", "Created At", "Updated At"],
+  Books: ["ERP Code", "Book Name", "Language", "Book Type", "Purchase Price", "Sale Price", "Active", "Created At", "Updated At"],
   Warehouses: ["Warehouse ID", "Warehouse Name", "Type", "SPOC", "Mobile", "Active", "Created At", "Updated At"],
   Activities: ["Activity ID", "Name", "Type", "Start Date", "End Date", "Warehouse ID", "SPOC", "Status", "Created At", "Updated At"],
   Volunteers: ["Volunteer ID", "Name", "Mobile", "Default Warehouse ID", "Active", "Created At", "Updated At"],
