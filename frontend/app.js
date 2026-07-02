@@ -333,22 +333,26 @@
     state.activities = activities.map(normalizeActivity);
 
     return `
-      <section class="card">
-        <div class="panel-header">
-          <h2>Stock Documents</h2>
-          <div class="row-actions">
-            <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Receive Books</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Books</button>
-            <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Books</button>
-          </div>
-        </div>
-        <div class="panel-body">
-          <div class="grid metrics">
-            ${metric("Issue", "Out", "Books sent from warehouse to activity or location")}
-            ${metric("Receive", "In", "Balance stock received back")}
-            ${metric("Sale", "Out", "Books distributed and amount recorded")}
-            ${metric("Return", "In", "Returned books restored or marked damaged")}
-          </div>
+            <section class="card">
+              <div class="panel-header">
+                <h2>Stock Documents</h2>
+                <div class="row-actions">
+                  <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Receive Books</button>
+                  <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Books</button>
+                  <button class="button secondary" type="button" onclick="window.erpApp.openReturnForm()">Return Books</button>
+                  <button class="button secondary" type="button" onclick="window.erpApp.openAdjustForm()">Adjust Stock</button>
+                  <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Books</button>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div class="grid metrics">
+                  ${metric("Issue", "Out", "Books sent from warehouse to activity or location")}
+                  ${metric("Receive", "In", "Balance stock received back")}
+                  ${metric("Sale", "Out", "Books distributed and amount recorded")}
+                  ${metric("Return", "In", "Returned books restored or marked damaged")}
+                  ${metric("Adjust", "Adj", "Manual stock corrections / opening stock")}
+                  ${metric("Transfer", "Move", "Stock moved between warehouses")}
+                </div>
           <div class="section-gap">
             ${state.documents.length ? documentsTable(state.documents) : '<div class="empty-state">No stock documents found.</div>'}
           </div>
@@ -953,11 +957,18 @@
   }
 
   function getBookName(bookId) {
-    const book = getBook(bookId);
-    return book.name || book["Book Name"] || bookId || "-";
-  }
+      const book = getBook(bookId);
+      return book.name || book["Book Name"] || bookId || "-";
+    }
 
-  function getActivityName(activityId) {
+    function getAvailableStock(warehouseId, bookId) {
+      const stockRow = state.currentStock.find(
+        (row) => row.warehouseId === warehouseId && row.bookId === bookId
+      );
+      return stockRow ? Number(stockRow.quantity || 0) : 0;
+    }
+
+    function getActivityName(activityId) {
     const activity = state.activities.find((item) => item.activityId === activityId);
     return activity ? activity.name : activityId || "-";
   }
@@ -977,86 +988,173 @@
     return { bookId: "", quantity: 1, rate: 0 };
   }
 
+
+
+
+
+
   function renderIssueModal() {
-    const activeBooks = state.books.filter((book) => book.active !== false);
-    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
-    const openActivities = state.activities.filter((activity) => activity.status !== "Completed" && activity.status !== "Cancelled");
-    const draft = state.issueDraft;
+      const activeBooks = state.books.filter((book) => book.active !== false);
+      const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
+      const openActivities = state.activities.filter((activity) => activity.status !== "Completed" && activity.status !== "Cancelled");
+      const draft = state.issueDraft;
+      const fromWarehouseId = draft.fromWarehouseId || "";
+      const booksWithStock = fromWarehouseId
+        ? activeBooks.filter((book) => getAvailableStock(fromWarehouseId, book.bookId) > 0)
+        : activeBooks;
 
-    modalRoot.innerHTML = `
-      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
-      <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="issueFormTitle">
-        <div class="modal-header">
-          <h2 id="issueFormTitle">Issue Books</h2>
-          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
-        </div>
-        <form class="form-grid" id="issueForm">
-          <label class="field">
-            <span>Issue Date</span>
-            <input name="documentDate" type="date" value="${escapeAttribute(draft.documentDate)}" required>
-          </label>
-          <label class="field">
-            <span>From Warehouse</span>
-            <select name="fromWarehouseId" required>
-              <option value="">Select warehouse</option>
-              ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.fromWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
-            </select>
-          </label>
-          <label class="field wide-field">
-            <span>Activity</span>
-            <select name="activityId" required>
-              <option value="">Select activity</option>
-              ${openActivities.map((activity) => `<option value="${escapeAttribute(activity.activityId)}" ${draft.activityId === activity.activityId ? "selected" : ""}>${escapeHtml(activity.name)} (${escapeHtml(getWarehouseName(activity.warehouseId))})</option>`).join("")}
-            </select>
-          </label>
-          <label class="field wide-field">
-            <span>Notes</span>
-            <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Optional issue note">
-          </label>
-          <div class="wide-field">
-            <div class="line-editor-header">
-              <h3>Books</h3>
-              <button class="small-button" type="button" onclick="window.erpApp.addIssueLine()">Add Line</button>
-            </div>
-            ${activeBooks.length ? issueLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before issuing stock.</div>'}
+      modalRoot.innerHTML = `
+        <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+        <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="issueFormTitle">
+          <div class="modal-header">
+            <h2 id="issueFormTitle">Issue Books</h2>
+            <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
           </div>
-          <div class="form-actions">
-            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit" ${activeBooks.length ? "" : "disabled"}>Post Issue</button>
-          </div>
-        </form>
-      </section>
-    `;
-
-    document.getElementById("issueForm").addEventListener("submit", saveIssueDocument);
-  }
-
-  function issueLinesMarkup(activeBooks) {
-    return `
-      <div class="line-table">
-        ${state.issueLines.map((line, index) => `
-          <div class="line-row">
+          <form class="form-grid" id="issueForm">
             <label class="field">
-              <span>Book</span>
-              <select onchange="window.erpApp.updateIssueLine(${index}, 'bookId', this.value)" required>
-                <option value="">Select book</option>
-                ${activeBooks.map((book) => `<option value="${escapeAttribute(book.bookId)}" ${line.bookId === book.bookId ? "selected" : ""}>${escapeHtml(book.name)} - ${escapeHtml(book.language)}</option>`).join("")}
+              <span>Issue Date</span>
+              <input name="documentDate" type="date" value="${escapeAttribute(draft.documentDate)}" required>
+            </label>
+            <label class="field">
+              <span>From Warehouse</span>
+              <select name="fromWarehouseId" required onchange="window.erpApp.onIssueWarehouseChange(this.value)">
+                <option value="">Select warehouse</option>
+                ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.fromWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
               </select>
             </label>
-            <label class="field">
-              <span>Qty</span>
-              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateIssueLine(${index}, 'quantity', this.value)" required>
+            <label class="field wide-field">
+              <span>Activity</span>
+              <select name="activityId" required>
+                <option value="">Select activity</option>
+                ${openActivities.map((activity) => `<option value="${escapeAttribute(activity.activityId)}" ${draft.activityId === activity.activityId ? "selected" : ""}>${escapeHtml(activity.name)} (${escapeHtml(getWarehouseName(activity.warehouseId))})</option>`).join("")}
+              </select>
             </label>
-            <label class="field">
-              <span>Rate</span>
-              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.rate)}" onchange="window.erpApp.updateIssueLine(${index}, 'rate', this.value)">
+            <label class="field wide-field">
+              <span>Notes</span>
+              <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Optional issue note">
             </label>
-            <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeIssueLine(${index})">Remove</button>
-          </div>
-        `).join("")}
-      </div>
-    `;
-  }
+            <div class="wide-field">
+              <div class="line-editor-header">
+                <h3>Books${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}</h3>
+                <button class="small-button" type="button" onclick="window.erpApp.addIssueLine()">Add Line</button>
+              </div>
+              ${booksWithStock.length ? issueLinesMarkup(booksWithStock, fromWarehouseId) : '<div class="empty-state">' + (fromWarehouseId ? `No books with available stock at ${getWarehouseName(fromWarehouseId)}.` : "Select a warehouse to see available books.") + '</div>'}
+            </div>
+            <div class="form-actions">
+              <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+              <button class="button" type="submit" ${booksWithStock.length ? "" : "disabled"}>Post Issue</button>
+            </div>
+          </form>
+        </section>
+      `;
+
+      document.getElementById("issueForm").addEventListener("submit", saveIssueDocument);
+    }
+
+    function issueLinesMarkup(booksWithStock, fromWarehouseId) {
+      return `
+        <div class="line-table">
+          ${state.issueLines.map((line, index) => `
+            <div class="line-row">
+              <label class="field">
+                <span>Book</span>
+                <select onchange="window.erpApp.updateIssueLine(${index}, 'bookId', this.value)" required>
+                  <option value="">Select book</option>
+                  ${booksWithStock.map((book) => {
+                    const available = fromWarehouseId ? getAvailableStock(fromWarehouseId, book.bookId) : 0;
+                    return `<option value="${escapeAttribute(book.bookId)}" ${line.bookId === book.bookId ? "selected" : ""} data-stock="${available}">${escapeHtml(book.name)} - ${escapeHtml(book.language)}${available > 0 ? ` (Avail: ${available})` : ""}</option>`;
+                  }).join("")}
+                </select>
+              </label>
+              <label class="field">
+                <span>Qty</span>
+                <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateIssueLine(${index}, 'quantity', this.value)" required>
+              </label>
+              <label class="field">
+                <span>Rate</span>
+                <input type="number" min="0" step="0.01" value="${escapeAttribute(line.rate)}" onchange="window.erpApp.updateIssueLine(${index}, 'rate', this.value)">
+              </label>
+              <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeIssueLine(${index})">Remove</button>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   function addIssueLine() {
     syncIssueDraft();
