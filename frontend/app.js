@@ -1,4 +1,5 @@
 (function () {
+  const appConfig = window.ERP_CONFIG || {};
   const state = {
     view: "dashboard",
     books: [],
@@ -22,7 +23,7 @@
 
   const views = {
     dashboard: ["Home", "Daily view of distribution, stock, and active service.", renderDashboard],
-    books: ["Books", "Book master with prices, language, category, and status.", renderBooks],
+    books: ["Books", "Book master with ERP codes, book type, sale price, and status.", renderBooks],
     warehouses: ["Warehouses", "Main and event stock locations.", renderWarehouses],
     activities: ["Activities", "Daily stalls, marathons, events, and closing workflow.", renderActivities],
     documents: ["Stock Documents", "Issue, receive, sale, return, transfer, and adjustment entries.", renderDocuments],
@@ -93,7 +94,7 @@
   }
 
   async function renderBooks() {
-    state.books = await window.erpApi.request("books.list");
+    state.books = await window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list");
     return renderBooksMarkup();
   }
 
@@ -103,13 +104,13 @@
       <section class="card">
         <div class="panel-header">
           <h2>Book Master</h2>
-          <button class="button" type="button" onclick="window.erpApp.openBookForm()">Add Book</button>
+          ${isMainAdmin() ? '<button class="button" type="button" onclick="window.erpApp.openBookForm()">Add Book</button>' : ""}
         </div>
         <div class="panel-body">
           <div class="toolbar">
             <label class="field compact-field">
               <span>Search</span>
-              <input type="search" value="${escapeAttribute(state.bookSearch)}" placeholder="Search name, language, category" oninput="window.erpApp.setBookSearch(this.value)">
+              <input type="search" value="${escapeAttribute(state.bookSearch)}" placeholder="Search code, name, or type" oninput="window.erpApp.setBookSearch(this.value)">
             </label>
             <label class="field compact-field">
               <span>Status</span>
@@ -132,32 +133,30 @@
         <table>
           <thead>
             <tr>
-              <th>Book ID</th>
+              <th>ERP Code</th>
               <th>Name</th>
-              <th>Language</th>
-              <th>MRP</th>
-              <th>Distributor Price</th>
-              <th>Category</th>
+              <th>Book Type</th>
+              <th>Sale Price</th>
+              ${isMainAdmin() ? "<th>Purchase Price</th>" : ""}
               <th>Status</th>
-              <th>Actions</th>
+              ${isMainAdmin() ? "<th>Actions</th>" : ""}
             </tr>
           </thead>
           <tbody>
             ${rows.map((row) => `
               <tr>
-                <td>${escapeHtml(row.bookId)}</td>
+                <td>${escapeHtml(row.erpCode || row.bookId)}</td>
                 <td><strong>${escapeHtml(row.name)}</strong></td>
-                <td>${escapeHtml(row.language)}</td>
-                <td>${money(row.mrp)}</td>
-                <td>${money(row.distributorPrice)}</td>
-                <td>${escapeHtml(row.category || "-")}</td>
+                <td>${escapeHtml(row.bookType || row.category || "-")}</td>
+                <td>${money(row.salePrice || row.mrp)}</td>
+                ${isMainAdmin() ? `<td>${money(row.purchasePrice || row.distributorPrice)}</td>` : ""}
                 <td>${status(row.active ? "Active" : "Inactive", row.active ? "good" : "warn")}</td>
-                <td>
+                ${isMainAdmin() ? `<td>
                   <div class="row-actions">
-                    <button class="small-button" type="button" onclick="window.erpApp.openBookForm('${escapeAttribute(row.bookId)}')">Edit</button>
-                    ${row.active ? `<button class="small-button danger" type="button" onclick="window.erpApp.deactivateBook('${escapeAttribute(row.bookId)}')">Deactivate</button>` : ""}
+                    <button class="small-button" type="button" onclick="window.erpApp.openBookForm('${escapeAttribute(row.erpCode || row.bookId)}')">Edit</button>
+                    ${row.active ? `<button class="small-button danger" type="button" onclick="window.erpApp.deactivateBook('${escapeAttribute(row.erpCode || row.bookId)}')">Deactivate</button>` : ""}
                   </div>
-                </td>
+                </td>` : ""}
               </tr>
             `).join("")}
           </tbody>
@@ -323,7 +322,7 @@
   async function renderDocuments() {
     const [documents, books, warehouses, activities] = await Promise.all([
       window.erpApi.request("documents.list"),
-      window.erpApi.request("books.list"),
+      window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
       window.erpApi.request("warehouses.list"),
       window.erpApi.request("activities.list")
     ]);
@@ -395,7 +394,7 @@
   async function renderReports() {
     const [stock, books, warehouses] = await Promise.all([
       window.erpApi.request("stock.current"),
-      window.erpApi.request("books.list"),
+      window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
       window.erpApi.request("warehouses.list")
     ]);
     state.currentStock = stock.map(normalizeStockRow);
@@ -433,7 +432,7 @@
             <tr>
               <th>Warehouse</th>
               <th>Book</th>
-              <th>Language</th>
+              <th>Book Type</th>
               <th>Quantity</th>
               <th>Value</th>
             </tr>
@@ -445,12 +444,14 @@
               .map((row) => {
                 const book = getBook(row.bookId);
                 const quantity = Number(row.quantity || 0);
-                const rate = Number(book.distributorPrice || book["Distributor Price"] || 0);
+                const rate = isMainAdmin()
+                  ? Number(book.purchasePrice || book.distributorPrice || book["Purchase Price"] || book["Distributor Price"] || 0)
+                  : Number(book.salePrice || book.mrp || book["Sale Price"] || 0);
                 return `
                   <tr>
                     <td>${escapeHtml(getWarehouseName(row.warehouseId))}</td>
                     <td>${escapeHtml(getBookName(row.bookId))}</td>
-                    <td>${escapeHtml(book.language || book.Language || "-")}</td>
+                    <td>${escapeHtml(getBookType(book))}</td>
                     <td>${quantity}</td>
                     <td>${money(quantity * rate)}</td>
                   </tr>
@@ -507,7 +508,7 @@
         (state.bookStatus === "active" && book.active) ||
         (state.bookStatus === "inactive" && !book.active);
 
-      const haystack = [book.bookId, book.name, book.language, book.category].join(" ").toLowerCase();
+      const haystack = [book.erpCode, book.bookId, book.name, book.bookType, book.category].join(" ").toLowerCase();
       return matchesStatus && (!query || haystack.includes(query));
     });
   }
@@ -523,16 +524,19 @@
   }
 
   function openBookForm(bookId) {
-    const book = state.books.find((item) => item.bookId === bookId) || {
+    const book = state.books.find((item) => item.bookId === bookId || item.erpCode === bookId) || {
       bookId: "",
+      erpCode: "",
       name: "",
-      language: "",
-      mrp: "",
-      distributorPrice: "",
+      bookType: "",
+      salePrice: "",
+      purchasePrice: "",
       category: "",
       active: true
     };
-    const isEdit = Boolean(book.bookId);
+    const isEdit = Boolean(book.erpCode || book.bookId);
+    const erpCode = book.erpCode || book.bookId || "";
+    const bookType = book.bookType || book.category || "";
 
     modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
@@ -542,27 +546,26 @@
           <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
         </div>
         <form class="form-grid" id="bookForm">
-          <input type="hidden" name="bookId" value="${escapeAttribute(book.bookId)}">
+          <label class="field">
+            <span>ERP Code</span>
+            <input name="erpCode" required value="${escapeAttribute(erpCode)}" placeholder="PRB-00074" ${isEdit ? "readonly" : ""}>
+          </label>
           <label class="field wide-field">
             <span>Book Name</span>
             <input name="name" required value="${escapeAttribute(book.name)}" placeholder="Bhagavad Gita As It Is">
           </label>
           <label class="field">
-            <span>Language</span>
-            <input name="language" required value="${escapeAttribute(book.language)}" placeholder="English">
+            <span>Book Type</span>
+            <input name="bookType" required value="${escapeAttribute(bookType)}" placeholder="Maha Big Books">
           </label>
           <label class="field">
-            <span>Category</span>
-            <input name="category" value="${escapeAttribute(book.category)}" placeholder="Main / Small / Set">
+            <span>Sale Price</span>
+            <input name="salePrice" type="number" min="0" step="0.01" required value="${escapeAttribute(book.salePrice || book.mrp || "")}">
           </label>
-          <label class="field">
-            <span>MRP</span>
-            <input name="mrp" type="number" min="0" step="0.01" required value="${escapeAttribute(book.mrp)}">
-          </label>
-          <label class="field">
-            <span>Distributor Price</span>
-            <input name="distributorPrice" type="number" min="0" step="0.01" required value="${escapeAttribute(book.distributorPrice)}">
-          </label>
+          ${isMainAdmin() ? `<label class="field">
+            <span>Purchase Price</span>
+            <input name="purchasePrice" type="number" min="0" step="0.01" required value="${escapeAttribute(book.purchasePrice || book.distributorPrice || "")}">
+          </label>` : ""}
           <label class="check-field">
             <input name="active" type="checkbox" ${book.active ? "checked" : ""}>
             <span>Active</span>
@@ -583,26 +586,26 @@
     const form = event.currentTarget;
     const data = new FormData(form);
     const payload = {
-      bookId: data.get("bookId"),
+      erpCode: data.get("erpCode").trim(),
       name: data.get("name").trim(),
-      language: data.get("language").trim(),
-      category: data.get("category").trim(),
-      mrp: Number(data.get("mrp")),
-      distributorPrice: Number(data.get("distributorPrice")),
+      bookType: data.get("bookType").trim(),
+      salePrice: Number(data.get("salePrice")),
+      purchasePrice: isMainAdmin() ? Number(data.get("purchasePrice")) : 0,
       active: data.get("active") === "on"
     };
 
-    if (!payload.name || !payload.language) {
-      showToast("Book name and language are required");
+    if (!payload.erpCode || !payload.name || !payload.bookType) {
+      showToast("ERP code, book name, and book type are required");
       return;
     }
 
     setLoading(true);
     try {
-      await window.erpApi.request(payload.bookId ? "books.update" : "books.create", payload);
+      const existing = state.books.some((book) => (book.erpCode || book.bookId) === payload.erpCode);
+      await window.erpApi.request(existing ? "books.update" : "books.create", payload);
       closeModal();
       content.innerHTML = await renderBooks();
-      showToast(payload.bookId ? "Book updated" : "Book created");
+      showToast(existing ? "Book updated" : "Book created");
     } catch (error) {
       showToast(error.message || "Could not save book");
     } finally {
@@ -611,7 +614,7 @@
   }
 
   async function deactivateBook(bookId) {
-    const book = state.books.find((item) => item.bookId === bookId);
+    const book = state.books.find((item) => item.bookId === bookId || item.erpCode === bookId);
     if (!book) {
       showToast("Book not found");
       return;
@@ -619,7 +622,7 @@
 
     setLoading(true);
     try {
-      await window.erpApi.request("books.delete", { bookId });
+      await window.erpApi.request("books.delete", { erpCode: bookId });
       content.innerHTML = await renderBooks();
       showToast("Book deactivated");
     } catch (error) {
@@ -949,12 +952,24 @@
   }
 
   function getBook(bookId) {
-    return state.books.find((item) => item.bookId === bookId || item["Book ID"] === bookId) || {};
+    return state.books.find((item) => item.bookId === bookId || item.erpCode === bookId || item["ERP Code"] === bookId || item["Book ID"] === bookId) || {};
   }
 
   function getBookName(bookId) {
     const book = getBook(bookId);
     return book.name || book["Book Name"] || bookId || "-";
+  }
+
+  function getBookType(book) {
+    return book.bookType || book.category || book["Book Type"] || "-";
+  }
+
+  function getBookOptionLabel(book) {
+    return `${book.name || book["Book Name"] || "-"} - ${getBookType(book)}`;
+  }
+
+  function isMainAdmin() {
+    return appConfig.currentUserRole === "mainAdmin";
   }
 
   function getActivityName(activityId) {
@@ -1040,7 +1055,7 @@
               <span>Book</span>
               <select onchange="window.erpApp.updateIssueLine(${index}, 'bookId', this.value)" required>
                 <option value="">Select book</option>
-                ${activeBooks.map((book) => `<option value="${escapeAttribute(book.bookId)}" ${line.bookId === book.bookId ? "selected" : ""}>${escapeHtml(book.name)} - ${escapeHtml(book.language)}</option>`).join("")}
+                ${activeBooks.map((book) => `<option value="${escapeAttribute(book.erpCode || book.bookId)}" ${line.bookId === (book.erpCode || book.bookId) ? "selected" : ""}>${escapeHtml(getBookOptionLabel(book))}</option>`).join("")}
               </select>
             </label>
             <label class="field">
@@ -1199,7 +1214,7 @@
               <span>Book</span>
               <select onchange="window.erpApp.updateReceiveLine(${index}, 'bookId', this.value)" required>
                 <option value="">Select book</option>
-                ${activeBooks.map((book) => `<option value="${escapeAttribute(book.bookId)}" ${line.bookId === book.bookId ? "selected" : ""}>${escapeHtml(book.name)} - ${escapeHtml(book.language)}</option>`).join("")}
+                ${activeBooks.map((book) => `<option value="${escapeAttribute(book.erpCode || book.bookId)}" ${line.bookId === (book.erpCode || book.bookId) ? "selected" : ""}>${escapeHtml(getBookOptionLabel(book))}</option>`).join("")}
               </select>
             </label>
             <label class="field">
@@ -1364,7 +1379,7 @@
               <span>Book</span>
               <select onchange="window.erpApp.updateTransferLine(${index}, 'bookId', this.value)" required>
                 <option value="">Select book</option>
-                ${activeBooks.map((book) => `<option value="${escapeAttribute(book.bookId)}" ${line.bookId === book.bookId ? "selected" : ""}>${escapeHtml(book.name)} - ${escapeHtml(book.language)}</option>`).join("")}
+                ${activeBooks.map((book) => `<option value="${escapeAttribute(book.erpCode || book.bookId)}" ${line.bookId === (book.erpCode || book.bookId) ? "selected" : ""}>${escapeHtml(getBookOptionLabel(book))}</option>`).join("")}
               </select>
             </label>
             <label class="field">

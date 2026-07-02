@@ -19,9 +19,9 @@
       ]
     },
     books: [
-      { bookId: "BK-001", name: "Bhagavad Gita As It Is", language: "English", mrp: 350, distributorPrice: 210, category: "Main", active: true },
-      { bookId: "BK-002", name: "Beyond Birth and Death", language: "English", mrp: 80, distributorPrice: 45, category: "Small", active: true },
-      { bookId: "BK-003", name: "Perfection of Yoga", language: "Telugu", mrp: 60, distributorPrice: 35, category: "Small", active: true }
+      { bookId: "PRB-00074", erpCode: "PRB-00074", name: "Tel - Bhagavad Gita", bookType: "Maha Big Books", salePrice: 350, purchasePrice: 197.56, active: true },
+      { bookId: "PRB-00072", erpCode: "PRB-00072", name: "Tel - Beyond Birth and Death", bookType: "Small Books", salePrice: 20, purchasePrice: 12.5, active: true },
+      { bookId: "PRB-00069", erpCode: "PRB-00069", name: "Tel - Bhagavad Jyothi", bookType: "Medium Books", salePrice: 55, purchasePrice: 30, active: true }
     ],
     warehouses: [
       { warehouseId: "WH-001", name: "GMB Main", type: "Main", spoc: "Admin", mobile: "", active: true },
@@ -61,9 +61,11 @@
     const routes = {
       "dashboard.summary": mockData.dashboard,
       "books.list": mockData.books,
+      "books.adminList": mockData.books,
       "books.create": () => createMockBook(payload),
       "books.update": () => updateMockBook(payload),
       "books.delete": () => deleteMockBook(payload),
+      "books.bulkUpsert": () => bulkUpsertMockBooks(payload),
       "warehouses.list": mockData.warehouses,
       "warehouses.create": () => createMockWarehouse(payload),
       "warehouses.update": () => updateMockWarehouse(payload),
@@ -102,24 +104,26 @@
 
   function createMockBook(payload) {
     const book = normalizeMockBook(payload);
-    book.bookId = nextMockId("BK", mockData.books, "bookId");
+    book.bookId = book.erpCode;
     mockData.books.push(book);
     saveMockData();
     return book;
   }
 
   function updateMockBook(payload) {
-    const index = mockData.books.findIndex((book) => book.bookId === payload.bookId);
+    const erpCode = payload.erpCode || payload.bookId;
+    const index = mockData.books.findIndex((book) => book.erpCode === erpCode || book.bookId === erpCode);
     if (index === -1) {
       throw new Error("Book not found");
     }
-    mockData.books[index] = { ...mockData.books[index], ...normalizeMockBook(payload), bookId: payload.bookId };
+    mockData.books[index] = { ...mockData.books[index], ...normalizeMockBook(payload), bookId: erpCode, erpCode };
     saveMockData();
     return mockData.books[index];
   }
 
   function deleteMockBook(payload) {
-    const book = mockData.books.find((item) => item.bookId === payload.bookId);
+    const erpCode = payload.erpCode || payload.bookId;
+    const book = mockData.books.find((item) => item.erpCode === erpCode || item.bookId === erpCode);
     if (!book) {
       throw new Error("Book not found");
     }
@@ -128,14 +132,34 @@
     return book;
   }
 
+  function bulkUpsertMockBooks(payload) {
+    const result = { created: 0, updated: 0, total: (payload.books || []).length };
+    (payload.books || []).forEach((item) => {
+      const erpCode = item.erpCode || item["ERP Code"];
+      const existing = mockData.books.some((book) => book.erpCode === erpCode || book.bookId === erpCode);
+      if (existing) {
+        updateMockBook({ ...item, erpCode });
+        result.updated += 1;
+      } else {
+        createMockBook({ ...item, erpCode });
+        result.created += 1;
+      }
+    });
+    return result;
+  }
+
   function normalizeMockBook(payload) {
+    const erpCode = String(payload.erpCode || payload.bookId || payload["ERP Code"] || "").trim();
     return {
-      bookId: payload.bookId || "",
-      name: String(payload.name || "").trim(),
-      language: String(payload.language || "").trim(),
-      mrp: Number(payload.mrp || 0),
-      distributorPrice: Number(payload.distributorPrice || 0),
-      category: String(payload.category || "").trim(),
+      bookId: erpCode,
+      erpCode,
+      name: String(payload.name || payload["Book Name"] || "").trim(),
+      bookType: String(payload.bookType || payload.category || payload["Book Type"] || "").trim(),
+      salePrice: Number(payload.salePrice || payload.mrp || payload["Sale Price"] || 0),
+      purchasePrice: Number(payload.purchasePrice || payload.distributorPrice || payload["Purchase Price"] || 0),
+      category: String(payload.bookType || payload.category || payload["Book Type"] || "").trim(),
+      mrp: Number(payload.salePrice || payload.mrp || payload["Sale Price"] || 0),
+      distributorPrice: Number(payload.purchasePrice || payload.distributorPrice || payload["Purchase Price"] || 0),
       active: payload.active !== false
     };
   }

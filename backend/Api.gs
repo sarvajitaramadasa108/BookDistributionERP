@@ -4,10 +4,12 @@ function routeRequest_(request) {
   const routes = {
     "system.setup": setupDatabase,
     "dashboard.summary": getDashboardSummary_,
-    "books.list": function () { return readObjects_("Books").map(mapBook_); },
+    "books.list": function () { return readObjects_("Books").map(function (row) { return mapBook_(row, false); }); },
+    "books.adminList": function () { return readObjects_("Books").map(function (row) { return mapBook_(row, true); }); },
     "books.create": function () { return createBook_(payload); },
     "books.update": function () { return updateBook_(payload); },
     "books.delete": function () { return deleteBook_(payload); },
+    "books.bulkUpsert": function () { return bulkUpsertBooks_(payload); },
     "warehouses.list": function () { return readObjects_("Warehouses").map(mapWarehouse_); },
     "warehouses.create": function () { return createWarehouse_(payload); },
     "warehouses.update": function () { return updateWarehouse_(payload); },
@@ -31,33 +33,34 @@ function createBook_(payload) {
   validateBook_(payload);
   const now = new Date();
   const book = {
-    "Book ID": nextId_("BK", "Books", "Book ID"),
+    "ERP Code": payload.erpCode,
     "Book Name": payload.name,
-    "Language": payload.language,
-    "MRP": Number(payload.mrp || 0),
-    "Distributor Price": Number(payload.distributorPrice || 0),
-    "Category": payload.category || "",
+    "Book Type": payload.bookType || payload.category || "",
+    "Purchase Price": Number(payload.purchasePrice || payload.distributorPrice || 0),
+    "Sale Price": Number(payload.salePrice || payload.mrp || 0),
     "Active": payload.active !== false,
     "Created At": now,
     "Updated At": now
   };
   appendObject_("Books", book);
-  logAudit_("books.create", "Books", book["Book ID"], JSON.stringify(book));
-  return mapBook_(book);
+  logAudit_("books.create", "Books", book["ERP Code"], JSON.stringify(book));
+  return mapBook_(book, true);
 }
 
 function updateBook_(payload) {
-  if (!payload.bookId) {
-    throw new Error("Book ID is required");
+  const erpCode = payload.erpCode || payload.bookId;
+  if (!erpCode) {
+    throw new Error("ERP Code is required");
   }
+  payload.erpCode = erpCode;
   validateBook_(payload);
 
   const sheet = getSheet_("Books");
   const values = sheet.getDataRange().getValues();
   const headers = values[0];
-  const bookIdIndex = headers.indexOf("Book ID");
+  const erpCodeIndex = headers.indexOf("ERP Code");
   const rowIndex = values.findIndex(function (row, index) {
-    return index > 0 && row[bookIdIndex] === payload.bookId;
+    return index > 0 && row[erpCodeIndex] === erpCode;
   });
 
   if (rowIndex === -1) {
@@ -70,12 +73,11 @@ function updateBook_(payload) {
   });
 
   const updated = {
-    "Book ID": payload.bookId,
+    "ERP Code": erpCode,
     "Book Name": payload.name,
-    "Language": payload.language,
-    "MRP": Number(payload.mrp || 0),
-    "Distributor Price": Number(payload.distributorPrice || 0),
-    "Category": payload.category || "",
+    "Book Type": payload.bookType || payload.category || "",
+    "Purchase Price": Number(payload.purchasePrice || payload.distributorPrice || 0),
+    "Sale Price": Number(payload.salePrice || payload.mrp || 0),
     "Active": payload.active !== false,
     "Created At": current["Created At"] || new Date(),
     "Updated At": new Date()
@@ -84,59 +86,99 @@ function updateBook_(payload) {
   sheet.getRange(rowIndex + 1, 1, 1, headers.length).setValues([headers.map(function (header) {
     return updated[header] === undefined ? "" : updated[header];
   })]);
-  logAudit_("books.update", "Books", payload.bookId, JSON.stringify(updated));
-  return mapBook_(updated);
+  logAudit_("books.update", "Books", erpCode, JSON.stringify(updated));
+  return mapBook_(updated, true);
 }
 
 function deleteBook_(payload) {
-  if (!payload.bookId) {
-    throw new Error("Book ID is required");
+  const erpCode = payload.erpCode || payload.bookId;
+  if (!erpCode) {
+    throw new Error("ERP Code is required");
   }
 
   const rows = readObjects_("Books");
   const book = rows.find(function (row) {
-    return row["Book ID"] === payload.bookId;
+    return row["ERP Code"] === erpCode;
   });
   if (!book) {
     throw new Error("Book not found");
   }
 
   return updateBook_({
-    bookId: payload.bookId,
+    erpCode: erpCode,
     name: book["Book Name"],
-    language: book.Language,
-    mrp: book.MRP,
-    distributorPrice: book["Distributor Price"],
-    category: book.Category,
+    bookType: book["Book Type"],
+    purchasePrice: book["Purchase Price"],
+    salePrice: book["Sale Price"],
     active: false
   });
 }
 
+function bulkUpsertBooks_(payload) {
+  const books = payload.books || [];
+  if (!books.length) {
+    throw new Error("No books supplied");
+  }
+
+  const result = { created: 0, updated: 0, total: books.length };
+  books.forEach(function (book) {
+    const normalized = {
+      erpCode: book.erpCode || book["ERP Code"],
+      name: book.name || book["Book Name"],
+      bookType: book.bookType || book["Book Type"],
+      purchasePrice: book.purchasePrice || book["Purchase Price"],
+      salePrice: book.salePrice || book["Sale Price"],
+      active: book.active !== false
+    };
+    const existing = readObjects_("Books").some(function (row) {
+      return row["ERP Code"] === normalized.erpCode;
+    });
+    if (existing) {
+      updateBook_(normalized);
+      result.updated += 1;
+    } else {
+      createBook_(normalized);
+      result.created += 1;
+    }
+  });
+  logAudit_("books.bulkUpsert", "Books", "bulk", JSON.stringify(result));
+  return result;
+}
+
 function validateBook_(payload) {
+  if (!payload.erpCode) {
+    throw new Error("ERP Code is required");
+  }
   if (!payload.name) {
     throw new Error("Book name is required");
   }
-  if (!payload.language) {
-    throw new Error("Language is required");
+  if (!payload.bookType && !payload.category) {
+    throw new Error("Book type is required");
   }
-  if (Number(payload.mrp || 0) < 0) {
-    throw new Error("MRP cannot be negative");
+  if (Number(payload.salePrice || payload.mrp || 0) < 0) {
+    throw new Error("Sale price cannot be negative");
   }
-  if (Number(payload.distributorPrice || 0) < 0) {
-    throw new Error("Distributor price cannot be negative");
+  if (Number(payload.purchasePrice || payload.distributorPrice || 0) < 0) {
+    throw new Error("Purchase price cannot be negative");
   }
 }
 
-function mapBook_(row) {
-  return {
-    bookId: row["Book ID"],
+function mapBook_(row, includeInternal) {
+  const book = {
+    bookId: row["ERP Code"],
+    erpCode: row["ERP Code"],
     name: row["Book Name"],
-    language: row.Language,
-    mrp: row.MRP,
-    distributorPrice: row["Distributor Price"],
-    category: row.Category,
+    bookType: row["Book Type"],
+    category: row["Book Type"],
+    salePrice: row["Sale Price"],
+    mrp: row["Sale Price"],
     active: row.Active === true || row.Active === "TRUE" || row.Active === "true"
   };
+  if (includeInternal) {
+    book.purchasePrice = row["Purchase Price"];
+    book.distributorPrice = row["Purchase Price"];
+  }
+  return book;
 }
 
 function createWarehouse_(payload) {
