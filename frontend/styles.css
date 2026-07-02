@@ -465,6 +465,10 @@ th {
   margin-top: 18px;
 }
 
+.compact-header {
+  padding-bottom: 10px;
+}
+
 .line-editor-header {
   display: flex;
   align-items: center;

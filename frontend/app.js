@@ -16,7 +16,8 @@
     receiveDraft: {},
     receiveLines: [],
     transferDraft: {},
-    transferLines: []
+    transferLines: [],
+    currentStock: []
   };
 
   const views = {
@@ -392,18 +393,72 @@
   }
 
   async function renderReports() {
+    const [stock, books, warehouses] = await Promise.all([
+      window.erpApi.request("stock.current"),
+      window.erpApi.request("books.list"),
+      window.erpApi.request("warehouses.list")
+    ]);
+    state.currentStock = stock.map(normalizeStockRow);
+    state.books = books;
+    state.warehouses = warehouses.map(normalizeWarehouse);
+    const totalQuantity = state.currentStock.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+    const activeWarehouses = new Set(state.currentStock.filter((row) => Number(row.quantity || 0) !== 0).map((row) => row.warehouseId)).size;
+
     return `
       <section class="card">
         <div class="panel-header"><h2>Reports</h2></div>
         <div class="panel-body">
           <div class="grid metrics">
-            ${metric("Current Stock", "Ready", "Calculated from stock ledger")}
-            ${metric("Warehouse Stock", "Ready", "Stock by location")}
+            ${metric("Current Stock", totalQuantity, "Books available across warehouses")}
+            ${metric("Warehouse Stock", activeWarehouses, "Warehouses with non-zero stock")}
             ${metric("Activity Summary", "Ready", "Issued, sold, returned, balance")}
             ${metric("Book-wise Sales", "Ready", "Quantity and amount by book")}
           </div>
+          <div class="section-gap">
+            <div class="panel-header compact-header">
+              <h2>Current Stock</h2>
+            </div>
+            ${state.currentStock.length ? currentStockTable(state.currentStock) : '<div class="empty-state">No stock ledger entries yet.</div>'}
+          </div>
         </div>
       </section>
+    `;
+  }
+
+  function currentStockTable(rows) {
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Warehouse</th>
+              <th>Book</th>
+              <th>Language</th>
+              <th>Quantity</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows
+              .slice()
+              .sort((a, b) => getWarehouseName(a.warehouseId).localeCompare(getWarehouseName(b.warehouseId)) || getBookName(a.bookId).localeCompare(getBookName(b.bookId)))
+              .map((row) => {
+                const book = getBook(row.bookId);
+                const quantity = Number(row.quantity || 0);
+                const rate = Number(book.distributorPrice || book["Distributor Price"] || 0);
+                return `
+                  <tr>
+                    <td>${escapeHtml(getWarehouseName(row.warehouseId))}</td>
+                    <td>${escapeHtml(getBookName(row.bookId))}</td>
+                    <td>${escapeHtml(book.language || book.Language || "-")}</td>
+                    <td>${quantity}</td>
+                    <td>${money(quantity * rate)}</td>
+                  </tr>
+                `;
+              }).join("")}
+          </tbody>
+        </table>
+      </div>
     `;
   }
 
@@ -880,9 +935,26 @@
     };
   }
 
+  function normalizeStockRow(row) {
+    return {
+      warehouseId: row.warehouseId || row["Warehouse ID"] || "",
+      bookId: row.bookId || row["Book ID"] || "",
+      quantity: Number(row.quantity || row.Quantity || 0)
+    };
+  }
+
   function getWarehouseName(warehouseId) {
     const warehouse = state.warehouses.find((item) => item.warehouseId === warehouseId);
     return warehouse ? warehouse.name : warehouseId || "-";
+  }
+
+  function getBook(bookId) {
+    return state.books.find((item) => item.bookId === bookId || item["Book ID"] === bookId) || {};
+  }
+
+  function getBookName(bookId) {
+    const book = getBook(bookId);
+    return book.name || book["Book Name"] || bookId || "-";
   }
 
   function getActivityName(activityId) {

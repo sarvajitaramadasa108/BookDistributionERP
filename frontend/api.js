@@ -73,7 +73,8 @@
       "activities.update": () => updateMockActivity(payload),
       "activities.delete": () => deleteMockActivity(payload),
       "documents.list": mockData.documents,
-      "documents.create": () => createMockDocument(payload)
+      "documents.create": () => createMockDocument(payload),
+      "stock.current": () => getMockCurrentStock()
     };
     const handler = routes[action];
     return typeof handler === "function" ? handler() : handler || [];
@@ -239,12 +240,39 @@
       volunteerId: payload.volunteerId || "",
       status: payload.status || "Posted",
       notes: payload.notes || "",
+      lines: payload.lines || [],
       lineCount: (payload.lines || []).length,
       totalQuantity: (payload.lines || []).reduce((sum, line) => sum + Number(line.quantity || 0), 0)
     };
     mockData.documents.push(document);
     saveMockData();
     return { documentId };
+  }
+
+  function getMockCurrentStock() {
+    const index = {};
+    mockData.documents.forEach((document) => {
+      (document.lines || []).forEach((line) => {
+        if (document.documentType === "TRANSFER") {
+          addMockStock(index, document.fromWarehouseId, line.bookId, -Number(line.quantity || 0));
+          addMockStock(index, document.toWarehouseId, line.bookId, Number(line.quantity || 0));
+          return;
+        }
+
+        const inwardTypes = ["RECEIVE", "RETURN"];
+        const quantity = inwardTypes.includes(document.documentType) ? Number(line.quantity || 0) : -Number(line.quantity || 0);
+        addMockStock(index, document.toWarehouseId || document.fromWarehouseId, line.bookId, quantity);
+      });
+    });
+    return Object.values(index);
+  }
+
+  function addMockStock(index, warehouseId, bookId, quantity) {
+    const key = `${warehouseId}|${bookId}`;
+    if (!index[key]) {
+      index[key] = { warehouseId, bookId, quantity: 0 };
+    }
+    index[key].quantity += quantity;
   }
 
   window.erpApi = { request };
