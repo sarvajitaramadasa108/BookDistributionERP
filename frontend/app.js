@@ -31,7 +31,10 @@
     unsettledBookQueries: [],
     currentStock: [],
     activityUnsettled: [],
-    activityLedger: []
+    activityLedger: [],
+    warehouseMonthlyReport: null,
+    reportWarehouseId: "",
+    reportMonth: new Date().toISOString().slice(0, 7)
   };
 
   const views = {
@@ -425,6 +428,22 @@
     state.devotees = devotees.map(normalizeDevotee);
     state.activityUnsettled = unsettled.map(normalizeActivityUnsettled);
     state.activityLedger = activityLedger.map(normalizeActivityLedger);
+    if (!state.reportWarehouseId) {
+      state.reportWarehouseId = warehouses.find((warehouse) => (warehouse.name || "").toLowerCase().indexOf("gmb") === 0)?.warehouseId || warehouses[0]?.warehouseId || "";
+    }
+    if (!state.reportMonth) {
+      state.reportMonth = new Date().toISOString().slice(0, 7);
+    }
+
+    let warehouseReport = null;
+    if (state.reportWarehouseId) {
+      warehouseReport = await window.erpApi.request("reports.warehouseMonthly", {
+        warehouseId: state.reportWarehouseId,
+        month: state.reportMonth
+      });
+    }
+    state.warehouseMonthlyReport = warehouseReport ? normalizeWarehouseMonthlyReport(warehouseReport) : null;
+
     const totalQuantity = state.currentStock.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
     const activeWarehouses = new Set(state.currentStock.filter((row) => Number(row.quantity || 0) !== 0).map((row) => row.warehouseId)).size;
     const unsettledQuantity = state.activityUnsettled.reduce((sum, row) => sum + Number(row.unsettledQty || 0), 0);
@@ -439,7 +458,25 @@
             ${metric("Warehouse Stock", activeWarehouses, "Warehouses with non-zero stock")}
             ${metric("Unsettled Qty", unsettledQuantity, "Open quantity by activity")}
             ${metric("Activities Open", unsettledActivities, "Activities with unsettled balance")}
-            ${metric("Activity Ledger", state.activityLedger.length, "Devotee-linked activity rows")}
+            ${metric("Ledger Rows", state.activityLedger.length, "Devotee-linked activity rows")}
+          </div>
+          <div class="section-gap">
+            <div class="panel-header compact-header">
+              <h2>Warehouse Summary</h2>
+              <div class="row-actions">
+                <label class="field compact-field">
+                  <span>Warehouse</span>
+                  <select onchange="window.erpApp.setReportWarehouse(this.value)">
+                    ${state.warehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${state.reportWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
+                  </select>
+                </label>
+                <label class="field compact-field">
+                  <span>Month</span>
+                  <input type="month" value="${escapeAttribute(state.reportMonth)}" onchange="window.erpApp.setReportMonth(this.value)">
+                </label>
+              </div>
+            </div>
+            ${state.warehouseMonthlyReport ? warehouseMonthlyMarkup(state.warehouseMonthlyReport) : '<div class="empty-state">No warehouse report loaded.</div>'}
           </div>
           <div class="section-gap">
             <div class="panel-header compact-header">
@@ -1005,6 +1042,7 @@
   }
 
   function activityLedgerTable(rows) {
+    const showAction = rows.some((row) => Number(row.unsettledQty || 0) > 0);
     return `
       <div class="table-wrap">
         <table>
@@ -1018,6 +1056,7 @@
               <th>Sale</th>
               <th>Complimentary</th>
               <th>Balance</th>
+              ${showAction ? "<th>Action</th>" : ""}
             </tr>
           </thead>
           <tbody>
@@ -1031,11 +1070,65 @@
                 <td>${Number(row.saleQty || 0)}</td>
                 <td>${Number(row.complimentaryQty || 0)}</td>
                 <td><strong>${Number(row.unsettledQty || 0)}</strong></td>
+                ${showAction ? `<td>${Number(row.unsettledQty || 0) > 0 ? `<button class="small-button" type="button" onclick="window.erpApp.settleActivity('${escapeAttribute(row.activityId)}')">Settle Now</button>` : ""}</td>` : ""}
               </tr>
             `).join("")}
           </tbody>
         </table>
       </div>
+    `;
+  }
+
+  function warehouseMonthlyMarkup(report) {
+    if (!report || !report.rows) {
+      return '<div class="empty-state">No warehouse report available.</div>';
+    }
+    const isMain = report.reportMode === "main";
+    const transferTargets = isMain
+      ? state.warehouses.filter((warehouse) => warehouse.warehouseId !== report.warehouseId && (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0)
+      : [];
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ERP Code</th>
+              <th>Book</th>
+              <th>Opening</th>
+              ${isMain
+                ? `${transferTargets.map((warehouse) => `<th>Transfer to ${escapeHtml(warehouse.name)}</th>`).join("")}<th>Issue</th><th>Return</th><th>Complimentary</th><th>Unsettled</th><th>Closing</th>`
+                : `<th>Transfer In</th><th>Sales</th><th>Closing</th><th>Day Sales</th>`}
+            </tr>
+          </thead>
+          <tbody>
+            ${report.rows.map((row) => renderWarehouseReportRow(row, report, transferTargets)).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function renderTransferBreakdown(transfers) {
+    if (!transfers || !transfers.length) {
+      return "0";
+    }
+    return transfers.map((item) => `${escapeHtml(item.name)}: ${Number(item.quantity || 0)}`).join("<br>");
+  }
+
+  function renderWarehouseReportRow(row, report, transferTargets) {
+    const isMain = report.reportMode === "main";
+    const dayBreakdown = report.dayColumns && report.dayColumns.length
+      ? `<div class="mini-grid">${report.dayColumns.map((day) => `<span>${escapeHtml(day)}: ${Number((row.daySalesMap && row.daySalesMap[day]) || 0)}</span>`).join("")}</div>`
+      : "-";
+    return `
+      <tr>
+        <td>${escapeHtml(row.bookId)}</td>
+        <td><strong>${escapeHtml(row.bookName)}</strong></td>
+        <td>${Number(row.openingQty || 0)}</td>
+        ${isMain
+          ? `${transferTargets.map((warehouse) => `<td>${Number(((row.transferMap || {})[warehouse.name]) || 0)}</td>`).join("")}<td>${Number(row.issueQty || 0)}</td><td>${Number(row.returnQty || 0)}</td><td>${Number(row.complimentaryQty || 0)}</td><td>${Number(row.unsettledQty || 0)}</td><td><strong>${Number(row.closingQty || 0)}</strong></td>`
+          : `<td>${Number(row.transferInQty || 0)}</td><td>${Number(row.saleQty || 0)}</td><td><strong>${Number(row.closingQty || 0)}</strong></td><td>${dayBreakdown}</td>`}
+      </tr>
     `;
   }
 
@@ -1073,6 +1166,48 @@
       devoteeId: row.devoteeId || row["Devotee ID"] || "",
       devoteeName: row.devoteeName || row["Devotee Name"] || "",
       active: row.active === true || row.active === "TRUE" || row.Active === true || row.Active === "TRUE" || row.Active === "true"
+    };
+  }
+
+  function normalizeWarehouseMonthlyReport(row) {
+    return {
+      warehouseId: row.warehouseId || row["Warehouse ID"] || "",
+      warehouseName: row.warehouseName || row["Warehouse Name"] || "",
+      month: row.month || "",
+      reportMode: row.reportMode || "branch",
+      dayColumns: row.dayColumns || [],
+      rows: (row.rows || []).map((item) => ({
+        bookId: item.bookId || item["Book ID"] || "",
+        bookName: item.bookName || item["Book Name"] || "",
+        bookType: item.bookType || item["Book Type"] || "",
+        openingQty: Number(item.openingQty || item["Opening Qty"] || 0),
+        issueQty: Number(item.issueQty || item["Issue Qty"] || 0),
+        returnQty: Number(item.returnQty || item["Return Qty"] || 0),
+        transferInQty: Number(item.transferInQty || item["Transfer In Qty"] || 0),
+        transferOutQty: Number(item.transferOutQty || item["Transfer Out Qty"] || 0),
+        saleQty: Number(item.saleQty || item["Sale Qty"] || 0),
+        complimentaryQty: Number(item.complimentaryQty || item["Complimentary Qty"] || 0),
+        unsettledQty: Number(item.unsettledQty || item["Unsettled Qty"] || 0),
+        closingQty: Number(item.closingQty || item["Closing Qty"] || 0),
+        transferArray: (item.transferArray || item["Transfer Array"] || []).map((transfer) => ({
+          name: transfer.name || transfer["Name"] || "",
+          quantity: Number(transfer.quantity || transfer["Quantity"] || 0)
+        })),
+        transferMap: (item.transferArray || item["Transfer Array"] || []).reduce((acc, transfer) => {
+          const name = transfer.name || transfer["Name"] || "";
+          if (name) {
+            acc[name] = Number(transfer.quantity || transfer["Quantity"] || 0);
+          }
+          return acc;
+        }, {}),
+        daySalesMap: (item.daySalesArray || item["Day Sales Array"] || []).reduce((acc, sale) => {
+          const day = sale.day || sale["Day"] || "";
+          if (day) {
+            acc[day] = Number(sale.quantity || sale["Quantity"] || 0);
+          }
+          return acc;
+        }, {})
+      }))
     };
   }
 
@@ -1291,6 +1426,50 @@
   async function setReportDevotee(value) {
     state.reportDevoteeId = value;
     content.innerHTML = await renderReports();
+  }
+
+  async function setReportWarehouse(value) {
+    state.reportWarehouseId = value;
+    content.innerHTML = await renderReports();
+  }
+
+  async function setReportMonth(value) {
+    state.reportMonth = value;
+    content.innerHTML = await renderReports();
+  }
+
+  async function settleActivity(activityId) {
+    const activity = state.activities.find((item) => item.activityId === activityId);
+    if (!activity) {
+      showToast("Activity not found");
+      return;
+    }
+
+    if (!confirm(`Settle activity "${activity.name}" now?`)) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await window.erpApi.request("activities.update", {
+        activityId: activity.activityId,
+        name: activity.name,
+        type: activity.type,
+        devoteeId: activity.devoteeId,
+        startDate: activity.startDate,
+        endDate: activity.endDate,
+        warehouseId: activity.warehouseId,
+        spoc: activity.spoc,
+        status: "Completed"
+      });
+      state.activities = state.activities.map((item) => item.activityId === activityId ? { ...item, status: "Completed" } : item);
+      content.innerHTML = await renderReports();
+      showToast("Activity settled");
+    } catch (error) {
+      showToast(error.message || "Could not settle activity");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function documentTone(documentType) {
@@ -2258,6 +2437,9 @@
     openActivityForm,
     cancelActivity,
     setReportDevotee,
+    setReportWarehouse,
+    setReportMonth,
+    settleActivity,
     openOpeningStockForm,
     addOpeningLine,
     removeOpeningLine,

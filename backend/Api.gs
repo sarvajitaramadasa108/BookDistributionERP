@@ -23,7 +23,8 @@ function routeRequest_(request) {
     "documents.create": function () { return createDocument_(payload); },
     "stock.current": getCurrentStock_,
     "activity.unsettled": getActivityUnsettled_,
-    "reports.activityLedger": function () { return getActivityLedger_(payload); }
+    "reports.activityLedger": function () { return getActivityLedger_(payload); },
+    "reports.warehouseMonthly": function () { return getWarehouseMonthlyReport_(payload); }
   };
 
   if (!routes[action]) {
@@ -738,6 +739,181 @@ function getActivityLedger_(payload) {
       String(a.activityName).localeCompare(String(b.activityName)) ||
       String(a.bookId).localeCompare(String(b.bookId));
   });
+}
+
+function getWarehouseMonthlyReport_(payload) {
+  const warehouseId = payload && payload.warehouseId ? String(payload.warehouseId) : "";
+  if (!warehouseId) {
+    throw new Error("Warehouse is required");
+  }
+
+  const warehouses = readObjects_("Warehouses");
+  const books = readObjects_("Books").filter(function (row) {
+    return row.Active === true || row.Active === "TRUE" || row.Active === "true";
+  });
+  const warehouse = warehouses.find(function (row) {
+    return row["Warehouse ID"] === warehouseId;
+  });
+  if (!warehouse) {
+    throw new Error("Warehouse not found");
+  }
+
+  const month = payload && payload.month ? String(payload.month) : Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM");
+  const window = getMonthWindow_(month);
+  const ledger = readObjects_("StockLedger");
+  const docs = readObjects_("Documents");
+  const activities = readObjects_("Activities");
+  const docById = {};
+  const activityById = {};
+  docs.forEach(function (doc) {
+    docById[doc["Document ID"]] = doc;
+  });
+  activities.forEach(function (activity) {
+    activityById[activity["Activity ID"]] = activity;
+  });
+
+  const rowsByBook = {};
+  books.forEach(function (book) {
+    rowsByBook[book["ERP Code"]] = {
+      bookId: book["ERP Code"],
+      bookName: book["Book Name"],
+      bookType: book["Book Type"],
+      openingQty: 0,
+      issueQty: 0,
+      returnQty: 0,
+      transferInQty: 0,
+      transferOutQty: 0,
+      saleQty: 0,
+      complimentaryQty: 0,
+      unsettledQty: 0,
+      closingQty: 0,
+      transferBreakdown: {},
+      daySales: {}
+    };
+  });
+
+  ledger.forEach(function (row) {
+    if (row["Warehouse ID"] !== warehouseId) {
+      return;
+    }
+    const bookId = row["Book ID"];
+    if (!rowsByBook[bookId]) {
+      return;
+    }
+
+    const rowDate = row["Ledger Date"] ? new Date(row["Ledger Date"]) : null;
+    const movement = row["Movement Type"];
+    const inQty = Number(row["Quantity In"] || 0);
+    const outQty = Number(row["Quantity Out"] || 0);
+    const net = inQty - outQty;
+
+    if (rowDate && rowDate < window.start) {
+      rowsByBook[bookId].openingQty += net;
+      rowsByBook[bookId].closingQty += net;
+      return;
+    }
+    if (!rowDate || rowDate > window.end) {
+      return;
+    }
+
+    if (movement === "ISSUE") {
+      rowsByBook[bookId].issueQty += outQty;
+    } else if (movement === "RETURN") {
+      rowsByBook[bookId].returnQty += inQty;
+    } else if (movement === "TRANSFER_IN") {
+      rowsByBook[bookId].transferInQty += inQty;
+      const doc = docById[row["Document ID"]];
+      const fromName = doc ? getWarehouseName_(doc["From Warehouse ID"]) : "";
+      rowsByBook[bookId].transferBreakdown[fromName || "Transfer In"] = (rowsByBook[bookId].transferBreakdown[fromName || "Transfer In"] || 0) + inQty;
+    } else if (movement === "TRANSFER_OUT") {
+      rowsByBook[bookId].transferOutQty += outQty;
+      const doc = docById[row["Document ID"]];
+      const toName = doc ? getWarehouseName_(doc["To Warehouse ID"]) : "";
+      rowsByBook[bookId].transferBreakdown[toName || "Transfer Out"] = (rowsByBook[bookId].transferBreakdown[toName || "Transfer Out"] || 0) + outQty;
+    } else if (movement === "SALE") {
+      rowsByBook[bookId].saleQty += outQty;
+      const dayKey = Utilities.formatDate(rowDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
+      rowsByBook[bookId].daySales[dayKey] = (rowsByBook[bookId].daySales[dayKey] || 0) + outQty;
+    } else if (movement === "COMPLIMENTARY") {
+      rowsByBook[bookId].complimentaryQty += outQty;
+    } else if (movement === "UNSETTLED_OPENING") {
+      rowsByBook[bookId].unsettledQty += outQty;
+    }
+
+    rowsByBook[bookId].closingQty += net;
+  });
+
+  if ((warehouse["Warehouse Name"] || "").toLowerCase().indexOf("gmb") === 0) {
+    getActivityUnsettled_().forEach(function (row) {
+      const activity = activityById[row.activityId];
+      if (!activity || activity["Warehouse ID"] !== warehouseId) {
+        return;
+      }
+      if (!rowsByBook[row.bookId]) {
+        return;
+      }
+      const quantity = Number(row.unsettledQty || 0);
+      if (quantity > 0) {
+        rowsByBook[row.bookId].unsettledQty += quantity;
+      }
+    });
+  }
+
+  const dayColumns = getDayColumns_(window.start, window.end);
+  const rows = Object.keys(rowsByBook).sort().map(function (bookId) {
+    const row = rowsByBook[bookId];
+    row.daySalesArray = dayColumns.map(function (day) {
+      return { day: day, quantity: Number(row.daySales[day] || 0) };
+    });
+    row.transferArray = Object.keys(row.transferBreakdown).sort().map(function (name) {
+      return { name: name, quantity: Number(row.transferBreakdown[name] || 0) };
+    });
+    return row;
+  });
+
+  return {
+    warehouseId: warehouseId,
+    warehouseName: warehouse["Warehouse Name"],
+    month: month,
+    reportMode: (warehouse["Warehouse Name"] || "").toLowerCase().indexOf("gmb") === 0 ? "main" : "branch",
+    dayColumns: dayColumns,
+    rows: rows
+  };
+}
+
+function getMonthWindow_(month) {
+  const parts = String(month || "").split("-");
+  const year = Number(parts[0]) || new Date().getFullYear();
+  const monthValue = Number(parts[1]);
+  const monthIndex = Number.isNaN(monthValue) ? new Date().getMonth() : Math.max(0, Math.min(11, monthValue - 1));
+  const start = new Date(year, monthIndex, 1, 0, 0, 0, 0);
+  const now = new Date();
+  let end = new Date(year, monthIndex + 1, 0, 23, 59, 59, 999);
+  const currentMonth = Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM");
+  if (month === currentMonth) {
+    end = now;
+  }
+  return { start: start, end: end };
+}
+
+function getDayColumns_(start, end) {
+  const columns = [];
+  const cursor = new Date(start.getTime());
+  while (cursor <= end) {
+    columns.push(Utilities.formatDate(cursor, Session.getScriptTimeZone(), "yyyy-MM-dd"));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return columns;
+}
+
+function getWarehouseName_(warehouseId) {
+  if (!warehouseId) {
+    return "";
+  }
+  const warehouse = readObjects_("Warehouses").find(function (row) {
+    return row["Warehouse ID"] === warehouseId;
+  });
+  return warehouse ? warehouse["Warehouse Name"] : warehouseId;
 }
 
 function getCurrentStock_() {
