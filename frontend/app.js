@@ -47,6 +47,7 @@
     reportsLoading: false,
     reportsLoadToken: 0,
     unsettledReportActivityId: "",
+    sidebarCollapsed: false,
     reportWarehouseId: "",
     reportMonth: new Date().toISOString().slice(0, 7)
   };
@@ -64,19 +65,50 @@
   const content = document.getElementById("content");
   const title = document.getElementById("pageTitle");
   const subtitle = document.getElementById("pageSubtitle");
+  const appShell = document.getElementById("appShell");
   const sidebar = document.getElementById("sidebar");
+  const sidebarToggleButton = document.getElementById("sidebarToggleButton");
   const loadingOverlay = document.getElementById("loadingOverlay");
   const toastStack = document.getElementById("toastStack");
   const modalRoot = document.getElementById("modalRoot");
 
-  document.getElementById("menuButton").addEventListener("click", () => {
-    sidebar.classList.toggle("open");
+  try {
+    state.sidebarCollapsed = window.localStorage.getItem("hkm-sidebar-collapsed") === "true";
+  } catch (error) {
+    state.sidebarCollapsed = false;
+  }
+
+  function isMobileViewport() {
+    return window.matchMedia("(max-width: 980px)").matches;
+  }
+
+  function applySidebarState() {
+    appShell.classList.toggle("sidebar-collapsed", state.sidebarCollapsed);
+    try {
+      window.localStorage.setItem("hkm-sidebar-collapsed", String(state.sidebarCollapsed));
+    } catch (error) {
+      // ignore storage issues
+    }
+  }
+
+  sidebarToggleButton.addEventListener("click", () => {
+    if (isMobileViewport()) {
+      sidebar.classList.toggle("open");
+      return;
+    }
+    state.sidebarCollapsed = !state.sidebarCollapsed;
+    if (!state.sidebarCollapsed) {
+      sidebar.classList.remove("open");
+    }
+    applySidebarState();
   });
 
   document.querySelectorAll(".nav-item").forEach((item) => {
     item.addEventListener("click", () => {
       navigate(item.dataset.view);
-      sidebar.classList.remove("open");
+      if (isMobileViewport()) {
+        sidebar.classList.remove("open");
+      }
     });
   });
 
@@ -278,6 +310,14 @@
     state.devotees = devotees.map(normalizeDevotee);
     return renderActivitiesMarkup();
   }
+
+  window.addEventListener("resize", () => {
+    if (!isMobileViewport()) {
+      sidebar.classList.remove("open");
+    }
+  });
+
+  applySidebarState();
 
   function renderActivitiesMarkup() {
     const rows = getFilteredActivities();

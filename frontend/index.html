@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
-    <div class="app-shell">
+    <div class="app-shell" id="appShell">
       <aside class="sidebar" id="sidebar">
         <div class="brand">
           <div class="brand-mark">HKM</div>
@@ -30,7 +30,7 @@
 
       <main class="main">
         <header class="topbar">
-          <button class="icon-button mobile-only" id="menuButton" aria-label="Open menu">Menu</button>
+          <button class="icon-button sidebar-toggle" id="sidebarToggleButton" aria-label="Toggle menu" title="Toggle menu">☰</button>
           <div>
             <h1 id="pageTitle">Home</h1>
             <p id="pageSubtitle">Daily view of distribution, stock, and active service.</p>
@@ -55,4 +55,3 @@
     <script src="./app.js"></script>
   </body>
 </html>
-

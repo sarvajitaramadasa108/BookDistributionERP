@@ -49,6 +49,10 @@ textarea {
   background: transparent;
 }
 
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
 .main {
   min-width: 0;
 }
@@ -63,6 +67,15 @@ textarea {
   border-right: 1px solid var(--line);
   padding: 18px 14px;
   backdrop-filter: blur(10px);
+}
+
+.app-shell.sidebar-collapsed .sidebar {
+  width: 0;
+  padding: 0;
+  border-right: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .brand {
@@ -141,6 +154,15 @@ textarea {
   top: 0;
   z-index: 3;
   backdrop-filter: blur(10px);
+}
+
+.sidebar-toggle {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
 }
 
 .topbar h1 {
@@ -725,6 +747,10 @@ tbody tr:hover td {
     grid-template-columns: 1fr;
   }
 
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: 1fr;
+  }
+
   .sidebar {
     position: fixed;
     inset: 0 auto 0 0;
@@ -735,12 +761,24 @@ tbody tr:hover td {
     box-shadow: var(--shadow);
   }
 
+  .app-shell.sidebar-collapsed .sidebar {
+    width: min(300px, 86vw);
+    padding: 18px 14px;
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-100%);
+  }
+
   .sidebar.open {
     transform: translateX(0);
   }
 
   .mobile-only {
     display: inline-flex;
+  }
+
+  .sidebar-toggle {
+    display: inline-grid;
   }
 
   .metrics,
@@ -759,23 +797,79 @@ tbody tr:hover td {
   .line-row {
     grid-template-columns: 1fr;
   }
-}
 
-@media (max-width: 640px) {
   .topbar {
-    align-items: flex-start;
     padding: 14px 16px;
+    min-height: 72px;
   }
 
   .topbar h1 {
     font-size: 20px;
   }
 
-  .content {
-    padding: 18px 16px 34px;
+  .topbar p {
+    font-size: 13px;
   }
 
+  .content {
+    padding: 16px 14px 34px;
+  }
+
+  .panel-header,
+  .panel-body {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .form-grid {
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .line-row {
+    padding: 12px;
+  }
+
+  .table-wrap {
+    margin-right: -2px;
+  }
+}
+
+@media (max-width: 640px) {
   .user-chip {
     display: none;
+  }
+
+  .button,
+  .button.secondary,
+  .icon-button,
+  .small-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .row-actions {
+    width: 100%;
+  }
+
+  .row-actions > * {
+    flex: 1 1 100%;
+  }
+
+  .compact-field {
+    min-width: 100%;
+  }
+
+  .field input,
+  .field select {
+    min-height: 44px;
+  }
+
+  .metric-card {
+    padding: 14px;
+  }
+
+  .metric-value {
+    font-size: 24px;
   }
 }
