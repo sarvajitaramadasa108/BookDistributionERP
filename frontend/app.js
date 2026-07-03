@@ -47,6 +47,8 @@
     reportsLoading: false,
     reportsLoadToken: 0,
     unsettledReportActivityId: "",
+    complimentaryReportActivityId: "",
+    activityComplimentary: [],
     sidebarCollapsed: false,
     reportWarehouseId: "",
     reportMonth: new Date().toISOString().slice(0, 7)
@@ -475,7 +477,8 @@
       window.erpApi.request("warehouses.list"),
       window.erpApi.request("devotees.list"),
       window.erpApi.request("activities.list"),
-      window.erpApi.request("activity.unsettled")
+      window.erpApi.request("activity.unsettled"),
+      window.erpApi.request("activity.complimentary")
     ]);
     const stockResult = results[0];
     const booksResult = results[1];
@@ -483,6 +486,7 @@
     const devoteesResult = results[3];
     const activitiesResult = results[4];
     const unsettledResult = results[5];
+    const complimentaryResult = results[6];
     const reportErrors = [];
     if (stockResult.status === "rejected") reportErrors.push("Current stock");
     if (booksResult.status === "rejected") reportErrors.push("Books");
@@ -490,6 +494,7 @@
     if (devoteesResult.status === "rejected") reportErrors.push("Devotees");
     if (activitiesResult.status === "rejected") reportErrors.push("Activities");
     if (unsettledResult.status === "rejected") reportErrors.push("Unsettled stock");
+    if (complimentaryResult.status === "rejected") reportErrors.push("Complimentary stock");
 
     if (stockResult.status === "fulfilled") {
       state.currentStock = Array.isArray(stockResult.value) ? stockResult.value.map(normalizeStockRow) : [];
@@ -508,6 +513,9 @@
     }
     if (unsettledResult.status === "fulfilled") {
       state.activityUnsettled = Array.isArray(unsettledResult.value) ? unsettledResult.value.map(normalizeActivityUnsettled) : [];
+    }
+    if (complimentaryResult.status === "fulfilled") {
+      state.activityComplimentary = Array.isArray(complimentaryResult.value) ? complimentaryResult.value.map(normalizeActivityComplimentary) : [];
     }
     state.reportErrors = reportErrors;
 
@@ -549,6 +557,7 @@
                 <option value="warehouse" ${reportView === "warehouse" ? "selected" : ""}>Warehouse wise report</option>
                 <option value="activity" ${reportView === "activity" ? "selected" : ""}>Activity wise report</option>
                 <option value="unsettled" ${reportView === "unsettled" ? "selected" : ""}>Unsettled issues report</option>
+                <option value="complimentary" ${reportView === "complimentary" ? "selected" : ""}>Complimentary issues report</option>
               </select>
             </label>
           </div>
@@ -639,8 +648,19 @@
               ${state.activityUnsettled.length ? (
                 state.unsettledReportActivityId
                   ? unsettledActivityDetailMarkup(state.activityUnsettled, state.unsettledReportActivityId)
-                  : unsettledActivitySummaryMarkup(state.activityUnsettled)
+                : unsettledActivitySummaryMarkup(state.activityUnsettled)
               ) : '<div class="empty-state">No unsettled issues yet.</div>'}
+            ` : ""}
+            ${reportView === "complimentary" ? `
+              <div class="panel-header compact-header">
+                <h2>Complimentary Issues</h2>
+                ${state.complimentaryReportActivityId ? `<button class="button secondary" type="button" onclick="window.erpApp.backToComplimentarySummary()">Back to Summary</button>` : ""}
+              </div>
+              ${state.activityComplimentary.length ? (
+                state.complimentaryReportActivityId
+                  ? complimentaryActivityDetailMarkup(state.activityComplimentary, state.complimentaryReportActivityId)
+                  : complimentaryActivitySummaryMarkup(state.activityComplimentary)
+              ) : '<div class="empty-state">No complimentary issues yet.</div>'}
             ` : ""}
           </div>
         </div>
@@ -1714,6 +1734,20 @@
     };
   }
 
+  function normalizeActivityComplimentary(row) {
+    return {
+      devoteeId: row.devoteeId || row["Devotee ID"] || "",
+      devoteeName: row.devoteeName || row["Devotee Name"] || "",
+      activityId: row.activityId || row["Activity ID"] || "",
+      activityName: row.activityName || row["Activity Name"] || "",
+      bookId: row.bookId || row["Book ID"] || "",
+      bookName: row.bookName || row["Book Name"] || "",
+      warehouseId: row.warehouseId || row["Warehouse ID"] || "",
+      complimentaryQty: Number(row.complimentaryQty || row["Complimentary Qty"] || 0),
+      worth: Number(row.worth || row["Worth"] || 0)
+    };
+  }
+
   function normalizeActivityLedger(row) {
     return {
       devoteeId: row.devoteeId || row["Devotee ID"] || "",
@@ -2084,6 +2118,131 @@
     `;
   }
 
+  function complimentaryActivitySummaryRows(rows) {
+    const index = {};
+    rows.forEach((row) => {
+      const key = row.activityId || "";
+      if (!key) {
+        return;
+      }
+      if (!index[key]) {
+        index[key] = {
+          devoteeId: row.devoteeId || "",
+          devoteeName: row.devoteeName || getDevoteeName(row.devoteeId),
+          activityId: row.activityId,
+          activityName: row.activityName || getActivityName(row.activityId),
+          worth: 0,
+          complimentaryQty: 0
+        };
+      }
+      index[key].complimentaryQty += Number(row.complimentaryQty || 0);
+      index[key].worth += Number(row.complimentaryQty || 0) * getBookSalePrice(row.bookId);
+    });
+    return Object.keys(index)
+      .map((key) => index[key])
+      .sort((a, b) => a.devoteeName.localeCompare(b.devoteeName) || a.activityName.localeCompare(b.activityName));
+  }
+
+  function complimentaryActivitySummaryMarkup(rows) {
+    const summaryRows = complimentaryActivitySummaryRows(rows);
+    const totalWorth = summaryRows.reduce((sum, row) => sum + Number(row.worth || 0), 0);
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>SNo</th>
+              <th>Devotee Name</th>
+              <th>Activity Name</th>
+              <th>Worth of Complimentary</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="worth-row">
+              <td colspan="3"><strong>Worth</strong></td>
+              <td><strong>${money(totalWorth)}</strong></td>
+              <td></td>
+            </tr>
+            ${summaryRows.map((row, index) => `
+              <tr>
+                <td>${index + 1}</td>
+                <td>${escapeHtml(row.devoteeName || row.devoteeId || "-")}</td>
+                <td>${escapeHtml(row.activityName || row.activityId || "-")}</td>
+                <td><strong>${money(row.worth || 0)}</strong></td>
+                <td><button class="small-button" type="button" onclick="window.erpApp.showComplimentaryActivityDetails('${escapeAttribute(row.activityId)}')">Show Details</button></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function complimentaryActivityDetailRows(rows, activityId) {
+    const filtered = rows.filter((row) => row.activityId === activityId);
+    const index = {};
+    filtered.forEach((row) => {
+      if (!index[row.bookId]) {
+        index[row.bookId] = {
+          bookId: row.bookId,
+          bookName: row.bookName || getBookName(row.bookId),
+          complimentaryQty: 0
+        };
+      }
+      index[row.bookId].complimentaryQty += Number(row.complimentaryQty || 0);
+    });
+    return Object.keys(index)
+      .map((bookId) => index[bookId])
+      .sort((a, b) => a.bookName.localeCompare(b.bookName) || a.bookId.localeCompare(b.bookId));
+  }
+
+  function complimentaryActivityDetailMarkup(rows, activityId) {
+    const detailRows = complimentaryActivityDetailRows(rows, activityId);
+    const totalComplimentary = rows.reduce((sum, row) => sum + Number(row.complimentaryQty || 0), 0);
+    const selectedActivity = rows.find((row) => row.activityId === activityId);
+    if (!selectedActivity) {
+      return '<div class="empty-state">Complimentary activity not found.</div>';
+    }
+    return `
+      <div class="grid metrics reports-metrics activity-report-metrics">
+        ${metric("Total Complimentary Qty of All Activities", totalComplimentary, "All complimentary quantities currently on record")}
+        ${metric("Selected Activity", selectedActivity.activityName || selectedActivity.activityId, "Book-wise complimentary details below")}
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ERP Code</th>
+              <th>Book Name</th>
+              <th>Complimentary Quantity</th>
+              <th>Total Complimentary Qty of all activities</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="worth-row">
+              <td colspan="2"><strong>Worth</strong></td>
+              <td><strong>${Number(detailRows.reduce((sum, row) => sum + Number(row.complimentaryQty || 0), 0))}</strong></td>
+              <td><strong>${Number(totalComplimentary)}</strong></td>
+            </tr>
+            ${detailRows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.bookId)}</td>
+                <td>${escapeHtml(row.bookName)}</td>
+                <td><strong>${Number(row.complimentaryQty || 0)}</strong></td>
+                <td>${Number(totalComplimentary)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function activityComplimentaryTable(rows) {
+    return complimentaryActivitySummaryMarkup(rows);
+  }
+
   function getDocumentLineByKind(kind, index) {
     if (kind === "issue") return state.issueLines[index];
     if (kind === "sale") return state.saleLines[index];
@@ -2142,6 +2301,7 @@
     state.activityMonthlyReport = null;
     state.showWarehouseDayWiseSales = false;
     state.unsettledReportActivityId = "";
+    state.complimentaryReportActivityId = "";
     content.innerHTML = renderReportsMarkup();
   }
 
@@ -2158,6 +2318,7 @@
     state.activityMonthlyReport = null;
     state.showWarehouseDayWiseSales = false;
     state.unsettledReportActivityId = "";
+    state.complimentaryReportActivityId = "";
     content.innerHTML = renderReportsMarkup();
   }
 
@@ -2258,6 +2419,16 @@
 
   function backToUnsettledSummary() {
     state.unsettledReportActivityId = "";
+    content.innerHTML = renderReportsMarkup();
+  }
+
+  function showComplimentaryActivityDetails(activityId) {
+    state.complimentaryReportActivityId = activityId;
+    content.innerHTML = renderReportsMarkup();
+  }
+
+  function backToComplimentarySummary() {
+    state.complimentaryReportActivityId = "";
     content.innerHTML = renderReportsMarkup();
   }
 
@@ -3499,6 +3670,8 @@
     downloadWarehouseReport,
     showUnsettledActivityDetails,
     backToUnsettledSummary,
+    showComplimentaryActivityDetails,
+    backToComplimentarySummary,
     settleActivity,
     openOpeningStockForm,
     addOpeningLine,

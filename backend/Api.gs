@@ -23,6 +23,7 @@ function routeRequest_(request) {
     "documents.create": function () { return createDocument_(payload); },
     "stock.current": getCurrentStock_,
     "activity.unsettled": getActivityUnsettled_,
+    "activity.complimentary": getActivityComplimentary_,
     "reports.activityLedger": function () { return getActivityLedger_(payload); },
     "reports.activityMonthly": function () { return getActivityMonthlyReport_(payload); },
     "reports.warehouseMonthly": function () { return getWarehouseMonthlyReport_(payload); }
@@ -676,6 +677,69 @@ function getActivityUnsettled_() {
     return index[key];
   }).sort(function (a, b) {
     return String(a.activityId).localeCompare(String(b.activityId)) || String(a.bookId).localeCompare(String(b.bookId));
+  });
+}
+
+function getActivityComplimentary_() {
+  const documents = readObjects_("Documents");
+  const lines = readObjects_("DocumentLines");
+  const activities = readObjects_("Activities");
+  const activityById = {};
+  activities.forEach(function (activity) {
+    activityById[activity["Activity ID"]] = activity;
+  });
+
+  const docsById = {};
+  documents.forEach(function (doc) {
+    docsById[doc["Document ID"]] = doc;
+  });
+
+  const books = readObjects_("Books");
+  const booksById = {};
+  books.forEach(function (book) {
+    booksById[book["ERP Code"]] = book;
+  });
+
+  const index = {};
+  lines.forEach(function (line) {
+    const doc = docsById[line["Document ID"]];
+    if (!doc || !doc["Activity ID"] || doc["Document Type"] !== "COMPLIMENTARY") {
+      return;
+    }
+    if (String(doc.Status || "").toLowerCase() === "cancelled") {
+      return;
+    }
+
+    const activity = activityById[doc["Activity ID"]] || {};
+    const activityId = doc["Activity ID"];
+    const key = activityId + "|" + line["Book ID"];
+    if (!index[key]) {
+      const devoteeId = activity["Devotee ID"] || getDevoteeIdByName_("SJRD") || "";
+      index[key] = {
+        devoteeId: devoteeId,
+        devoteeName: getDevoteeName_(devoteeId),
+        activityId: activityId,
+        activityName: activity.Name || activityId,
+        bookId: line["Book ID"],
+        bookName: (booksById[line["Book ID"]] && booksById[line["Book ID"]]["Book Name"]) || line["Book ID"],
+        warehouseId: doc["From Warehouse ID"] || doc["To Warehouse ID"] || activity["Warehouse ID"] || "",
+        complimentaryQty: 0,
+        worth: 0
+      };
+    }
+
+    const quantity = Number(line["Quantity"] || 0);
+    const salePrice = Number((booksById[line["Book ID"]] && booksById[line["Book ID"]]["Sale Price"]) || 0);
+    index[key].complimentaryQty += quantity;
+    index[key].worth += quantity * salePrice;
+  });
+
+  return Object.keys(index).map(function (key) {
+    return index[key];
+  }).sort(function (a, b) {
+    return String(a.devoteeName).localeCompare(String(b.devoteeName)) ||
+      String(a.activityName).localeCompare(String(b.activityName)) ||
+      String(a.bookId).localeCompare(String(b.bookId));
   });
 }
 
