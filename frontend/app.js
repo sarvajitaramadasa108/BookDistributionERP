@@ -42,6 +42,7 @@
     activityLedger: [],
     activityMonthlyReport: null,
     warehouseMonthlyReport: null,
+    reportErrors: [],
     reportWarehouseId: "",
     reportMonth: new Date().toISOString().slice(0, 7)
   };
@@ -423,7 +424,7 @@
     `;
   }
 
-  async function renderReports() {
+  async function loadReportsData() {
     const results = await Promise.allSettled([
       window.erpApi.request("stock.current"),
       window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
@@ -470,6 +471,7 @@
     if (activityLedgerResult.status === "fulfilled") {
       state.activityLedger = activityLedgerResult.value.map(normalizeActivityLedger);
     }
+    state.reportErrors = reportErrors;
 
     if (!state.reportWarehouseId) {
       state.reportWarehouseId = state.warehouses.find((warehouse) => (warehouse.name || "").toLowerCase().indexOf("gmb") === 0)?.warehouseId || state.warehouses[0]?.warehouseId || "";
@@ -477,7 +479,9 @@
     if (!state.reportMonth) {
       state.reportMonth = new Date().toISOString().slice(0, 7);
     }
+  }
 
+  function renderReportsMarkup() {
     const totalQuantity = state.currentStock.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
     const activeWarehouses = new Set(state.currentStock.filter((row) => Number(row.quantity || 0) !== 0).map((row) => row.warehouseId)).size;
     const unsettledQuantity = state.activityUnsettled.reduce((sum, row) => sum + Number(row.unsettledQty || 0), 0);
@@ -498,7 +502,7 @@
             ${metric("Activities Open", unsettledActivities, "Activities with unsettled balance")}
             ${metric("Ledger Rows", state.activityLedger.length, "Devotee-linked activity rows")}
           </div>
-          ${reportErrors.length ? `<div class="empty-state">${escapeHtml(`Some report sources are unavailable right now: ${reportErrors.join(", ")}.`)}</div>` : ""}
+          ${state.reportErrors.length ? `<div class="empty-state">${escapeHtml(`Some report sources are unavailable right now: ${state.reportErrors.join(", ")}.`)}</div>` : ""}
           <div class="section-gap">
             <label class="field compact-field">
               <span>What do you want me to generate</span>
@@ -550,7 +554,7 @@
                 <div>
                   <label class="field compact-field">
                     <span>Devotee search</span>
-                    <input type="search" value="${escapeAttribute(state.activityReportDevoteeSearch)}" placeholder="Type devotee id or name" oninput="window.erpApp.setActivityReportDevoteeSearch(this.value)">
+                    <input id="activityReportDevoteeSearch" type="search" value="${escapeAttribute(state.activityReportDevoteeSearch)}" placeholder="Type devotee id or name" autocomplete="off" oninput="window.erpApp.setActivityReportDevoteeSearch(this.value)">
                   </label>
                   <div class="book-picker-results report-picker-results">
                     ${activityReportDevoteeOptions().map((devotee) => `
@@ -564,7 +568,7 @@
                 <div>
                   <label class="field compact-field">
                     <span>Activity search</span>
-                    <input type="search" value="${escapeAttribute(state.activityReportActivitySearch)}" placeholder="Type activity id or name" oninput="window.erpApp.setActivityReportActivitySearch(this.value)">
+                    <input id="activityReportActivitySearch" type="search" value="${escapeAttribute(state.activityReportActivitySearch)}" placeholder="Type activity id or name" autocomplete="off" oninput="window.erpApp.setActivityReportActivitySearch(this.value)">
                   </label>
                   <div class="book-picker-results report-picker-results">
                     ${activityReportActivityOptions().map((activity) => `
@@ -599,6 +603,11 @@
         </div>
       </section>
     `;
+  }
+
+  async function renderReports() {
+    await loadReportsData();
+    return renderReportsMarkup();
   }
 
   function currentStockTable(rows) {
@@ -1208,17 +1217,33 @@
 
   function activityReportDevoteeOptions() {
     const query = state.activityReportDevoteeSearch.trim().toLowerCase();
-    return state.devotees
+    const selected = state.devotees.find((devotee) => devotee.devoteeId === state.activityReportDevoteeId);
+    const options = state.devotees
       .filter((devotee) => {
         const haystack = [devotee.devoteeId, devotee.devoteeName].join(" ").toLowerCase();
         return !query || haystack.indexOf(query) !== -1;
       })
+      .sort((left, right) => {
+        const leftText = `${left.devoteeId} ${left.devoteeName}`.toLowerCase();
+        const rightText = `${right.devoteeId} ${right.devoteeName}`.toLowerCase();
+        const leftScore = leftText.startsWith(query) ? 0 : leftText.indexOf(query) !== -1 ? 1 : 2;
+        const rightScore = rightText.startsWith(query) ? 0 : rightText.indexOf(query) !== -1 ? 1 : 2;
+        if (leftScore !== rightScore) {
+          return leftScore - rightScore;
+        }
+        return leftText.localeCompare(rightText);
+      })
       .slice(0, 12);
+    if (selected && !options.some((devotee) => devotee.devoteeId === selected.devoteeId)) {
+      options.unshift(selected);
+    }
+    return options;
   }
 
   function activityReportActivityOptions() {
     const query = state.activityReportActivitySearch.trim().toLowerCase();
-    return state.activities
+    const selected = state.activities.find((activity) => activity.activityId === state.activityReportActivityId);
+    const options = state.activities
       .filter((activity) => {
         if (state.activityReportDevoteeId && activity.devoteeId !== state.activityReportDevoteeId) {
           return false;
@@ -1226,7 +1251,21 @@
         const haystack = [activity.activityId, activity.name, getWarehouseName(activity.warehouseId), activity.status].join(" ").toLowerCase();
         return !query || haystack.indexOf(query) !== -1;
       })
+      .sort((left, right) => {
+        const leftText = [left.activityId, left.name, getWarehouseName(left.warehouseId), left.status].join(" ").toLowerCase();
+        const rightText = [right.activityId, right.name, getWarehouseName(right.warehouseId), right.status].join(" ").toLowerCase();
+        const leftScore = leftText.startsWith(query) ? 0 : leftText.indexOf(query) !== -1 ? 1 : 2;
+        const rightScore = rightText.startsWith(query) ? 0 : rightText.indexOf(query) !== -1 ? 1 : 2;
+        if (leftScore !== rightScore) {
+          return leftScore - rightScore;
+        }
+        return leftText.localeCompare(rightText);
+      })
       .slice(0, 12);
+    if (selected && !options.some((activity) => activity.activityId === selected.activityId)) {
+      options.unshift(selected);
+    }
+    return options;
   }
 
   function activityMonthlyStats(report) {
@@ -1964,14 +2003,14 @@
     state.warehouseMonthlyReport = null;
     state.activityMonthlyReport = null;
     state.showWarehouseDayWiseSales = false;
-    content.innerHTML = await renderReports();
+    content.innerHTML = renderReportsMarkup();
   }
 
   async function setReportWarehouse(value) {
     state.reportWarehouseId = value;
     state.warehouseMonthlyReport = null;
     state.showWarehouseDayWiseSales = false;
-    content.innerHTML = await renderReports();
+    content.innerHTML = renderReportsMarkup();
   }
 
   async function setReportMonth(value) {
@@ -1979,19 +2018,27 @@
     state.warehouseMonthlyReport = null;
     state.activityMonthlyReport = null;
     state.showWarehouseDayWiseSales = false;
-    content.innerHTML = await renderReports();
+    content.innerHTML = renderReportsMarkup();
   }
 
   async function setActivityReportDevoteeSearch(value) {
     state.activityReportDevoteeSearch = value;
-    state.activityMonthlyReport = null;
-    content.innerHTML = await renderReports();
+    content.innerHTML = renderReportsMarkup();
+    const input = document.getElementById("activityReportDevoteeSearch");
+    if (input) {
+      input.focus();
+      input.setSelectionRange(value.length, value.length);
+    }
   }
 
   async function setActivityReportActivitySearch(value) {
     state.activityReportActivitySearch = value;
-    state.activityMonthlyReport = null;
-    content.innerHTML = await renderReports();
+    content.innerHTML = renderReportsMarkup();
+    const input = document.getElementById("activityReportActivitySearch");
+    if (input) {
+      input.focus();
+      input.setSelectionRange(value.length, value.length);
+    }
   }
 
   async function selectActivityReportDevotee(devoteeId) {
@@ -2000,7 +2047,7 @@
     state.activityReportActivityId = "";
     state.activityReportActivitySearch = "";
     state.activityMonthlyReport = null;
-    content.innerHTML = await renderReports();
+    content.innerHTML = renderReportsMarkup();
   }
 
   async function selectActivityReportActivity(activityId) {
@@ -2008,7 +2055,7 @@
     state.activityReportActivityId = activityId;
     state.activityReportActivitySearch = activity ? activity.name : activityId;
     state.activityMonthlyReport = null;
-    content.innerHTML = await renderReports();
+    content.innerHTML = renderReportsMarkup();
   }
 
   async function loadWarehouseReport(showDayWise = false) {
@@ -2025,11 +2072,11 @@
       });
       state.warehouseMonthlyReport = normalizeWarehouseMonthlyReport(report);
       state.showWarehouseDayWiseSales = showDayWise;
-      content.innerHTML = await renderReports();
+      content.innerHTML = renderReportsMarkup();
     } catch (error) {
       state.warehouseMonthlyReport = null;
       state.showWarehouseDayWiseSales = false;
-      content.innerHTML = await renderReports();
+      content.innerHTML = renderReportsMarkup();
       showToast(error.message || "Could not load warehouse report");
     } finally {
       setLoading(false);
@@ -2054,10 +2101,10 @@
         month: state.reportMonth
       });
       state.activityMonthlyReport = normalizeActivityMonthlyReport(report);
-      content.innerHTML = await renderReports();
+      content.innerHTML = renderReportsMarkup();
     } catch (error) {
       state.activityMonthlyReport = null;
-      content.innerHTML = await renderReports();
+      content.innerHTML = renderReportsMarkup();
       showToast(error.message || "Could not load activity report");
     } finally {
       setLoading(false);
@@ -2089,7 +2136,7 @@
         status: "Completed"
       });
       state.activities = state.activities.map((item) => item.activityId === activityId ? { ...item, status: "Completed" } : item);
-      content.innerHTML = await renderReports();
+      content.innerHTML = renderReportsMarkup();
       showToast("Activity settled");
     } catch (error) {
       showToast(error.message || "Could not settle activity");
