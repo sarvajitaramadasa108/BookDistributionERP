@@ -46,6 +46,7 @@
     reportsInitialized: false,
     reportsLoading: false,
     reportsLoadToken: 0,
+    unsettledReportActivityId: "",
     reportWarehouseId: "",
     reportMonth: new Date().toISOString().slice(0, 7)
   };
@@ -592,9 +593,14 @@
             ` : ""}
             ${reportView === "unsettled" ? `
               <div class="panel-header compact-header">
-                <h2>Activity Unsettled</h2>
+                <h2>Unsettled Issues</h2>
+                ${state.unsettledReportActivityId ? `<button class="button secondary" type="button" onclick="window.erpApp.backToUnsettledSummary()">Back to Summary</button>` : ""}
               </div>
-              ${state.activityUnsettled.length ? activityUnsettledTable(state.activityUnsettled) : '<div class="empty-state">No activity unsettled entries yet.</div>'}
+              ${state.activityUnsettled.length ? (
+                state.unsettledReportActivityId
+                  ? unsettledActivityDetailMarkup(state.activityUnsettled, state.unsettledReportActivityId)
+                  : unsettledActivitySummaryMarkup(state.activityUnsettled)
+              ) : '<div class="empty-state">No unsettled issues yet.</div>'}
             ` : ""}
           </div>
         </div>
@@ -1654,7 +1660,10 @@
 
   function normalizeActivityUnsettled(row) {
     return {
+      devoteeId: row.devoteeId || row["Devotee ID"] || "",
+      devoteeName: row.devoteeName || row["Devotee Name"] || "",
       activityId: row.activityId || row["Activity ID"] || "",
+      activityName: row.activityName || row["Activity Name"] || "",
       bookId: row.bookId || row["Book ID"] || "",
       warehouseId: row.warehouseId || row["Warehouse ID"] || "",
       issuedQty: Number(row.issuedQty || row["Issued Qty"] || 0),
@@ -1912,55 +1921,123 @@
     `;
   }
 
-  function activityUnsettledTable(rows) {
-    const worthTotals = rows.reduce((acc, row) => {
-      const price = getBookSalePrice(row.bookId);
-      acc.issued += Number(row.issuedQty || 0) * price;
-      acc.returned += Number(row.returnedQty || 0) * price;
-      acc.sold += Number(row.soldQty || 0) * price;
-      acc.complimentary += Number(row.complimentaryQty || 0) * price;
-      acc.balance += Number(row.unsettledQty || 0) * price;
-      return acc;
-    }, { issued: 0, returned: 0, sold: 0, complimentary: 0, balance: 0 });
+  function unsettledActivitySummaryRows(rows) {
+    const index = {};
+    rows.forEach((row) => {
+      const key = row.activityId || "";
+      if (!key) {
+        return;
+      }
+      if (!index[key]) {
+        index[key] = {
+          devoteeId: row.devoteeId || "",
+          devoteeName: row.devoteeName || getDevoteeName(row.devoteeId),
+          activityId: row.activityId,
+          activityName: row.activityName || getActivityName(row.activityId),
+          worth: 0,
+          unsettledQty: 0,
+          rowCount: 0
+        };
+      }
+      index[key].rowCount += 1;
+      index[key].unsettledQty += Number(row.unsettledQty || 0);
+      index[key].worth += Number(row.unsettledQty || 0) * getBookSalePrice(row.bookId);
+    });
+    return Object.keys(index)
+      .map((key) => index[key])
+      .sort((a, b) => a.devoteeName.localeCompare(b.devoteeName) || a.activityName.localeCompare(b.activityName));
+  }
+
+  function unsettledActivitySummaryMarkup(rows) {
+    const summaryRows = unsettledActivitySummaryRows(rows);
+    const totalWorth = summaryRows.reduce((sum, row) => sum + Number(row.worth || 0), 0);
     return `
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Activity</th>
-              <th>Warehouse</th>
-              <th>Book</th>
-              <th>Issued</th>
-              <th>Returned</th>
-              <th>Sold</th>
-              <th>Complimentary</th>
-              <th>Balance</th>
+              <th>SNo</th>
+              <th>Devotee Name</th>
+              <th>Activity Name</th>
+              <th>Worth of Unsettled</th>
+              <th>Action</th>
             </tr>
           </thead>
           <tbody>
             <tr class="worth-row">
               <td colspan="3"><strong>Worth</strong></td>
-              <td>${money(worthTotals.issued)}</td>
-              <td>${money(worthTotals.returned)}</td>
-              <td>${money(worthTotals.sold)}</td>
-              <td>${money(worthTotals.complimentary)}</td>
-              <td><strong>${money(worthTotals.balance)}</strong></td>
+              <td><strong>${money(totalWorth)}</strong></td>
+              <td></td>
             </tr>
-            ${rows
-              .slice()
-              .sort((a, b) => getActivityName(a.activityId).localeCompare(getActivityName(b.activityId)) || getBookName(a.bookId).localeCompare(getBookName(b.bookId)))
-              .map((row) => `
-                <tr>
-                  <td>${escapeHtml(getActivityName(row.activityId))}</td>
-                  <td>${escapeHtml(getWarehouseName(row.warehouseId))}</td>
-                  <td>${escapeHtml(getBookName(row.bookId))}</td>
-                  <td>${Number(row.issuedQty || 0)}</td>
-                  <td>${Number(row.returnedQty || 0)}</td>
-                  <td>${Number(row.soldQty || 0)}</td>
-                  <td>${Number(row.complimentaryQty || 0)}</td>
-                  <td><strong>${Number(row.unsettledQty || 0)}</strong></td>
-                </tr>
-              `).join("")}
+            ${summaryRows.map((row, index) => `
+              <tr>
+                <td>${index + 1}</td>
+                <td>${escapeHtml(row.devoteeName || row.devoteeId || "-")}</td>
+                <td>${escapeHtml(row.activityName || row.activityId || "-")}</td>
+                <td><strong>${money(row.worth || 0)}</strong></td>
+                <td><button class="small-button" type="button" onclick="window.erpApp.showUnsettledActivityDetails('${escapeAttribute(row.activityId)}')">Show Details</button></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function unsettledActivityDetailRows(rows, activityId) {
+    const filtered = rows.filter((row) => row.activityId === activityId);
+    const index = {};
+    filtered.forEach((row) => {
+      if (!index[row.bookId]) {
+        index[row.bookId] = {
+          bookId: row.bookId,
+          bookName: getBookName(row.bookId),
+          unsettledQty: 0
+        };
+      }
+      index[row.bookId].unsettledQty += Number(row.unsettledQty || 0);
+    });
+    return Object.keys(index)
+      .map((bookId) => index[bookId])
+      .sort((a, b) => a.bookName.localeCompare(b.bookName) || a.bookId.localeCompare(b.bookId));
+  }
+
+  function unsettledActivityDetailMarkup(rows, activityId) {
+    const detailRows = unsettledActivityDetailRows(rows, activityId);
+    const totalUnsettled = rows.reduce((sum, row) => sum + Number(row.unsettledQty || 0), 0);
+    const selectedActivity = rows.find((row) => row.activityId === activityId);
+    if (!selectedActivity) {
+      return '<div class="empty-state">Unsettled activity not found.</div>';
+    }
+    return `
+      <div class="grid metrics reports-metrics activity-report-metrics">
+        ${metric("Total Unsettled Qty of All Activities", totalUnsettled, "All unsettled quantities currently on record")}
+        ${metric("Selected Activity", selectedActivity.activityName || selectedActivity.activityId, "Book-wise unsettled details below")}
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ERP Code</th>
+              <th>Book Name</th>
+              <th>Unsettled Quantity</th>
+              <th>Total Unsettled Qty of all activities</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="worth-row">
+              <td colspan="2"><strong>Worth</strong></td>
+              <td><strong>${Number(detailRows.reduce((sum, row) => sum + Number(row.unsettledQty || 0), 0))}</strong></td>
+              <td><strong>${Number(totalUnsettled)}</strong></td>
+            </tr>
+            ${detailRows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.bookId)}</td>
+                <td>${escapeHtml(row.bookName)}</td>
+                <td><strong>${Number(row.unsettledQty || 0)}</strong></td>
+                <td>${Number(totalUnsettled)}</td>
+              </tr>
+            `).join("")}
           </tbody>
         </table>
       </div>
@@ -2024,6 +2101,7 @@
     state.warehouseMonthlyReport = null;
     state.activityMonthlyReport = null;
     state.showWarehouseDayWiseSales = false;
+    state.unsettledReportActivityId = "";
     content.innerHTML = renderReportsMarkup();
   }
 
@@ -2039,6 +2117,7 @@
     state.warehouseMonthlyReport = null;
     state.activityMonthlyReport = null;
     state.showWarehouseDayWiseSales = false;
+    state.unsettledReportActivityId = "";
     content.innerHTML = renderReportsMarkup();
   }
 
@@ -2130,6 +2209,16 @@
     } finally {
       setLoading(false);
     }
+  }
+
+  function showUnsettledActivityDetails(activityId) {
+    state.unsettledReportActivityId = activityId;
+    content.innerHTML = renderReportsMarkup();
+  }
+
+  function backToUnsettledSummary() {
+    state.unsettledReportActivityId = "";
+    content.innerHTML = renderReportsMarkup();
   }
 
   async function settleActivity(activityId) {
@@ -3368,6 +3457,8 @@
     loadWarehouseReport,
     loadWarehouseDayWiseSales,
     downloadWarehouseReport,
+    showUnsettledActivityDetails,
+    backToUnsettledSummary,
     settleActivity,
     openOpeningStockForm,
     addOpeningLine,

@@ -613,6 +613,11 @@ function activityHasUnsettledSeed_(activityId) {
 function getActivityUnsettled_() {
   const documents = readObjects_("Documents");
   const lines = readObjects_("DocumentLines");
+  const activities = readObjects_("Activities");
+  const activityById = {};
+  activities.forEach(function (activity) {
+    activityById[activity["Activity ID"]] = activity;
+  });
   const docsById = {};
   documents.forEach(function (doc) {
     docsById[doc["Document ID"]] = doc;
@@ -633,8 +638,13 @@ function getActivityUnsettled_() {
 
     const key = doc["Activity ID"] + "|" + line["Book ID"];
     if (!index[key]) {
+      const activity = activityById[doc["Activity ID"]] || {};
+      const devoteeId = activity["Devotee ID"] || getDevoteeIdByName_("SJRD") || "";
       index[key] = {
+        devoteeId: devoteeId,
+        devoteeName: getDevoteeName_(devoteeId),
         activityId: doc["Activity ID"],
+        activityName: activity.Name || doc["Activity ID"],
         bookId: line["Book ID"],
         warehouseId: doc["From Warehouse ID"] || doc["To Warehouse ID"] || "",
         issuedQty: 0,
