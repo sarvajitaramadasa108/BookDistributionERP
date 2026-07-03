@@ -12,6 +12,7 @@
     activities: [],
     activitySearch: "",
     activityStatus: "open",
+    reportView: "warehouse",
     reportDevoteeId: "",
     showWarehouseDayWiseSales: false,
     documents: [],
@@ -471,65 +472,71 @@
     const activeWarehouses = new Set(state.currentStock.filter((row) => Number(row.quantity || 0) !== 0).map((row) => row.warehouseId)).size;
     const unsettledQuantity = state.activityUnsettled.reduce((sum, row) => sum + Number(row.unsettledQty || 0), 0);
     const unsettledActivities = new Set(state.activityUnsettled.filter((row) => Number(row.unsettledQty || 0) > 0).map((row) => row.activityId)).size;
+    const reportView = state.reportView || "warehouse";
 
     return `
       <section class="card">
         <div class="panel-header"><h2>Reports</h2></div>
         <div class="panel-body">
-          <div class="grid metrics">
+          <div class="grid metrics reports-metrics">
             ${metric("Current Stock", totalQuantity, "Books available across warehouses")}
             ${metric("Warehouse Stock", activeWarehouses, "Warehouses with non-zero stock")}
             ${metric("Unsettled Qty", unsettledQuantity, "Open quantity by activity")}
             ${metric("Activities Open", unsettledActivities, "Activities with unsettled balance")}
             ${metric("Ledger Rows", state.activityLedger.length, "Devotee-linked activity rows")}
           </div>
-          ${reportErrors.length ? `<div class="empty-state">Some report sources are unavailable right now: ${escapeHtml(reportErrors.join(", "))}.</div>` : ""}
+          ${reportErrors.length ? `<div class="empty-state">${escapeHtml(`Some report sources are unavailable right now: ${reportErrors.join(", ")}.`)}</div>` : ""}
           <div class="section-gap">
-            <div class="panel-header compact-header">
-              <h2>Warehouse Summary</h2>
-              <div class="row-actions">
-                <label class="field compact-field">
-                  <span>Warehouse</span>
-                  <select onchange="window.erpApp.setReportWarehouse(this.value)">
-                    ${state.warehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${state.reportWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
-                  </select>
-              </label>
-                <label class="field compact-field">
-                  <span>Month</span>
-                  <input type="month" value="${escapeAttribute(state.reportMonth)}" onchange="window.erpApp.setReportMonth(this.value)">
-                </label>
-                <button class="button" type="button" onclick="window.erpApp.loadWarehouseReport()">Get Report</button>
-                <button class="button secondary" type="button" onclick="window.erpApp.loadWarehouseDayWiseSales()">Get Day Wise Sales</button>
-                <button class="button secondary" type="button" onclick="window.erpApp.downloadWarehouseReport()">Download Excel</button>
+            <label class="field compact-field">
+              <span>What do you want me to generate</span>
+              <select onchange="window.erpApp.setReportView(this.value)">
+                <option value="warehouse" ${reportView === "warehouse" ? "selected" : ""}>Warehouse wise report</option>
+                <option value="activity" ${reportView === "activity" ? "selected" : ""}>Activity wise report</option>
+                <option value="unsettled" ${reportView === "unsettled" ? "selected" : ""}>Unsettled issues report</option>
+              </select>
+            </label>
+          </div>
+          <div class="section-gap">
+            ${reportView === "warehouse" ? `
+              <div class="panel-header compact-header">
+                <h2>Warehouse Summary</h2>
+                <div class="row-actions">
+                  <label class="field compact-field">
+                    <span>Warehouse</span>
+                    <select onchange="window.erpApp.setReportWarehouse(this.value)">
+                      ${state.warehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${state.reportWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
+                    </select>
+                  </label>
+                  <label class="field compact-field">
+                    <span>Month</span>
+                    <input type="month" value="${escapeAttribute(state.reportMonth)}" onchange="window.erpApp.setReportMonth(this.value)">
+                  </label>
+                  <button class="button" type="button" onclick="window.erpApp.loadWarehouseReport()">Get Report</button>
+                  <button class="button secondary" type="button" onclick="window.erpApp.loadWarehouseDayWiseSales()">Get Day Wise Sales</button>
+                  <button class="button secondary" type="button" onclick="window.erpApp.downloadWarehouseReport()">Download Excel</button>
+                </div>
               </div>
-            </div>
-            ${state.warehouseMonthlyReport ? warehouseMonthlyMarkup(state.warehouseMonthlyReport) : '<div class="empty-state">No warehouse report loaded.</div>'}
-            ${state.warehouseMonthlyReport && state.showWarehouseDayWiseSales ? warehouseDayWiseMarkup(state.warehouseMonthlyReport) : ""}
-          </div>
-          <div class="section-gap">
-            <div class="panel-header compact-header">
-              <h2>Activity Ledger</h2>
-              <label class="field compact-field">
-                <span>Devotee</span>
-                <select onchange="window.erpApp.setReportDevotee(this.value)">
-                  <option value="">All devotees</option>
-                  ${state.devotees.map((devotee) => `<option value="${escapeAttribute(devotee.devoteeId)}" ${state.reportDevoteeId === devotee.devoteeId ? "selected" : ""}>${escapeHtml(devotee.devoteeName)}</option>`).join("")}
-                </select>
-              </label>
-            </div>
-            ${state.activityLedger.length ? activityLedgerTable(state.activityLedger) : '<div class="empty-state">No activity ledger rows yet.</div>'}
-          </div>
-          <div class="section-gap">
-            <div class="panel-header compact-header">
-              <h2>Current Stock</h2>
-            </div>
-            ${state.currentStock.length ? currentStockTable(state.currentStock) : '<div class="empty-state">No stock ledger entries yet.</div>'}
-          </div>
-          <div class="section-gap">
-            <div class="panel-header compact-header">
-              <h2>Activity Unsettled</h2>
-            </div>
-            ${state.activityUnsettled.length ? activityUnsettledTable(state.activityUnsettled) : '<div class="empty-state">No activity unsettled entries yet.</div>'}
+              ${state.warehouseMonthlyReport ? (state.showWarehouseDayWiseSales ? warehouseDayWiseMarkup(state.warehouseMonthlyReport) : warehouseMonthlyMarkup(state.warehouseMonthlyReport)) : '<div class="empty-state">Choose a warehouse and month, then click Get Report.</div>'}
+            ` : ""}
+            ${reportView === "activity" ? `
+              <div class="panel-header compact-header">
+                <h2>Activity Ledger</h2>
+                <label class="field compact-field">
+                  <span>Devotee</span>
+                  <select onchange="window.erpApp.setReportDevotee(this.value)">
+                    <option value="">All devotees</option>
+                    ${state.devotees.map((devotee) => `<option value="${escapeAttribute(devotee.devoteeId)}" ${state.reportDevoteeId === devotee.devoteeId ? "selected" : ""}>${escapeHtml(devotee.devoteeName)}</option>`).join("")}
+                  </select>
+                </label>
+              </div>
+              ${state.activityLedger.length ? activityLedgerTable(state.activityLedger) : '<div class="empty-state">No activity ledger rows yet.</div>'}
+            ` : ""}
+            ${reportView === "unsettled" ? `
+              <div class="panel-header compact-header">
+                <h2>Activity Unsettled</h2>
+              </div>
+              ${state.activityUnsettled.length ? activityUnsettledTable(state.activityUnsettled) : '<div class="empty-state">No activity unsettled entries yet.</div>'}
+            ` : ""}
           </div>
         </div>
       </section>
@@ -1639,6 +1646,13 @@
 
   async function setReportDevotee(value) {
     state.reportDevoteeId = value;
+    content.innerHTML = await renderReports();
+  }
+
+  async function setReportView(value) {
+    state.reportView = value;
+    state.warehouseMonthlyReport = null;
+    state.showWarehouseDayWiseSales = false;
     content.innerHTML = await renderReports();
   }
 
@@ -2910,6 +2924,7 @@
     openActivityForm,
     cancelActivity,
     setReportDevotee,
+    setReportView,
     setReportWarehouse,
     setReportMonth,
     loadWarehouseReport,
