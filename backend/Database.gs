@@ -6,6 +6,7 @@ function setupDatabase() {
   migrateActivitiesSheet_();
   seedSettings_();
   seedDevotees_();
+  backfillBlankActivityDevotees_();
   seedStarterWarehouses_();
   return { ok: true, message: "Database setup completed", sheets: Object.keys(ERP_SCHEMA) };
 }
@@ -125,6 +126,49 @@ function migrateActivitiesSheet_() {
 
   sheet.getRange(1, 1, 1, ERP_SCHEMA.Activities.length).setValues([ERP_SCHEMA.Activities]);
   sheet.setFrozenRows(1);
+}
+
+function backfillBlankActivityDevotees_() {
+  const sheet = getSheet_("Activities");
+  const rows = sheet.getDataRange().getValues();
+  if (rows.length < 2) {
+    return;
+  }
+
+  const headers = rows[0];
+  const devoteeIndex = headers.indexOf("Devotee ID");
+  const activityIdIndex = headers.indexOf("Activity ID");
+  if (devoteeIndex === -1 || activityIdIndex === -1) {
+    return;
+  }
+
+  const sjrdDevoteeId = getDevoteeIdByName_("SJRD");
+  if (!sjrdDevoteeId) {
+    return;
+  }
+
+  let updated = false;
+  for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+    const devoteeId = rows[rowIndex][devoteeIndex];
+    if (!String(devoteeId || "").trim()) {
+      rows[rowIndex][devoteeIndex] = sjrdDevoteeId;
+      updated = true;
+    }
+  }
+
+  if (updated) {
+    sheet.getRange(2, 1, rows.length - 1, headers.length).setValues(rows.slice(1));
+  }
+}
+
+function getDevoteeIdByName_(devoteeName) {
+  if (!devoteeName) {
+    return "";
+  }
+  const devotee = readObjects_("Devotees").find(function (row) {
+    return String(row["Devotee Name"] || "").toLowerCase() === String(devoteeName).toLowerCase();
+  });
+  return devotee ? devotee["Devotee ID"] : "";
 }
 
 function getSheet_(sheetName) {

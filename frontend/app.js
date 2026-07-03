@@ -12,7 +12,7 @@
     activities: [],
     activitySearch: "",
     activityStatus: "open",
-    reportView: "warehouse",
+    reportView: "",
     activityReportDevoteeId: "",
     activityReportDevoteeSearch: "",
     activityReportActivityId: "",
@@ -482,7 +482,7 @@
     const activeWarehouses = new Set(state.currentStock.filter((row) => Number(row.quantity || 0) !== 0).map((row) => row.warehouseId)).size;
     const unsettledQuantity = state.activityUnsettled.reduce((sum, row) => sum + Number(row.unsettledQty || 0), 0);
     const unsettledActivities = new Set(state.activityUnsettled.filter((row) => Number(row.unsettledQty || 0) > 0).map((row) => row.activityId)).size;
-    const reportView = state.reportView || "warehouse";
+    const reportView = state.reportView || "";
     const reportStats = reportView === "activity" && state.activityMonthlyReport
       ? activityMonthlyStats(state.activityMonthlyReport)
       : null;
@@ -503,6 +503,7 @@
             <label class="field compact-field">
               <span>What do you want me to generate</span>
               <select onchange="window.erpApp.setReportView(this.value)">
+                <option value="" disabled ${!reportView ? "selected" : ""}>Select report type</option>
                 <option value="warehouse" ${reportView === "warehouse" ? "selected" : ""}>Warehouse wise report</option>
                 <option value="activity" ${reportView === "activity" ? "selected" : ""}>Activity wise report</option>
                 <option value="unsettled" ${reportView === "unsettled" ? "selected" : ""}>Unsettled issues report</option>
@@ -510,6 +511,7 @@
             </label>
           </div>
           <div class="section-gap">
+            ${!reportView ? '<div class="empty-state">Select a report type to continue.</div>' : ""}
             ${reportView === "warehouse" ? `
               <div class="panel-header compact-header">
                 <h2>Warehouse Summary</h2>
@@ -517,6 +519,7 @@
                   <label class="field compact-field">
                     <span>Warehouse</span>
                     <select onchange="window.erpApp.setReportWarehouse(this.value)">
+                      <option value="" disabled ${!state.reportWarehouseId ? "selected" : ""}>Select warehouse</option>
                       ${state.warehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${state.reportWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
                     </select>
                   </label>
@@ -874,6 +877,7 @@
           <label class="field">
             <span>Type</span>
             <select name="type" required>
+              <option value="" disabled ${!warehouse.type ? "selected" : ""}>Select type</option>
               <option value="Main" ${warehouse.type === "Main" ? "selected" : ""}>Main</option>
               <option value="Event" ${warehouse.type === "Event" ? "selected" : ""}>Event</option>
               <option value="Temporary" ${warehouse.type === "Temporary" ? "selected" : ""}>Temporary</option>
@@ -989,7 +993,7 @@
     const activity = state.activities.find((item) => item.activityId === activityId) || {
       activityId: "",
       name: "",
-      type: "Stall",
+      type: "",
       devoteeId: "",
       startDate: new Date().toISOString().slice(0, 10),
       endDate: "",
@@ -1016,6 +1020,7 @@
           <label class="field">
             <span>Type</span>
             <select name="type" required>
+              <option value="" disabled ${!activity.type ? "selected" : ""}>Select type</option>
               ${["Stall", "Daily", "Event", "Marathon", "Festival"].map((type) => `<option value="${type}" ${activity.type === type ? "selected" : ""}>${type}</option>`).join("")}
             </select>
           </label>

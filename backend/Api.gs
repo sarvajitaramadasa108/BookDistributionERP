@@ -297,12 +297,13 @@ function mapDevotee_(row) {
 }
 
 function mapActivity_(row) {
+  const devoteeId = row["Devotee ID"] || getDevoteeIdByName_("SJRD") || "";
   return {
     activityId: row["Activity ID"],
     name: row.Name,
     type: row.Type,
-    devoteeId: row["Devotee ID"],
-    devoteeName: getDevoteeName_(row["Devotee ID"]),
+    devoteeId: devoteeId,
+    devoteeName: getDevoteeName_(devoteeId),
     startDate: row["Start Date"],
     endDate: row["End Date"],
     warehouseId: row["Warehouse ID"],
@@ -694,7 +695,9 @@ function getActivityLedger_(payload) {
       return;
     }
 
-    if (devoteeId && String(activity["Devotee ID"] || "") !== devoteeId) {
+    const activityDevoteeId = activity["Devotee ID"] || getDevoteeIdByName_("SJRD") || "";
+
+    if (devoteeId && String(activityDevoteeId || "") !== devoteeId) {
       return;
     }
 
@@ -707,8 +710,8 @@ function getActivityLedger_(payload) {
     const key = doc["Activity ID"] + "|" + line["Book ID"];
     if (!index[key]) {
       index[key] = {
-        devoteeId: activity["Devotee ID"] || "",
-        devoteeName: getDevoteeName_(activity["Devotee ID"]),
+        devoteeId: activityDevoteeId,
+        devoteeName: getDevoteeName_(activityDevoteeId),
         activityId: doc["Activity ID"],
         activityName: activity.Name,
         bookId: line["Book ID"],
@@ -761,7 +764,8 @@ function getActivityMonthlyReport_(payload) {
   if (!activity) {
     throw new Error("Activity not found");
   }
-  if (devoteeId && String(activity["Devotee ID"] || "") !== devoteeId) {
+  const activityDevoteeId = activity["Devotee ID"] || getDevoteeIdByName_("SJRD") || "";
+  if (devoteeId && String(activityDevoteeId || "") !== devoteeId) {
     throw new Error("Selected activity does not belong to the selected devotee");
   }
 
@@ -930,8 +934,8 @@ function getActivityMonthlyReport_(payload) {
 
   return {
     month: month,
-    devoteeId: activity["Devotee ID"] || "",
-    devoteeName: getDevoteeName_(activity["Devotee ID"]),
+    devoteeId: activityDevoteeId,
+    devoteeName: getDevoteeName_(activityDevoteeId),
     activityId: activity["Activity ID"],
     activityName: activity.Name,
     activityStatus: activity.Status,
