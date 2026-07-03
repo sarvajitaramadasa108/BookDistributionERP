@@ -320,16 +320,18 @@
   }
 
   async function renderDocuments() {
-    const [documents, books, warehouses, activities] = await Promise.all([
+    const [documents, books, warehouses, activities, stock] = await Promise.all([
       window.erpApi.request("documents.list"),
       window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
       window.erpApi.request("warehouses.list"),
-      window.erpApi.request("activities.list")
+      window.erpApi.request("activities.list"),
+      window.erpApi.request("stock.current")
     ]);
     state.documents = documents.map(normalizeDocument);
     state.books = books;
     state.warehouses = warehouses.map(normalizeWarehouse);
     state.activities = activities.map(normalizeActivity);
+    state.currentStock = stock.map(normalizeStockRow);
 
     return `
       <section class="card">
@@ -960,6 +962,11 @@
     return book.name || book["Book Name"] || bookId || "-";
   }
 
+  function getAvailableStock(warehouseId, bookId) {
+    const stockRow = state.currentStock.find((row) => row.warehouseId === warehouseId && row.bookId === bookId);
+    return stockRow ? Number(stockRow.quantity || 0) : 0;
+  }
+
   function getBookType(book) {
     return book.bookType || book.category || book["Book Type"] || "-";
   }
@@ -997,6 +1004,10 @@
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const openActivities = state.activities.filter((activity) => activity.status !== "Completed" && activity.status !== "Cancelled");
     const draft = state.issueDraft;
+    const fromWarehouseId = draft.fromWarehouseId || "";
+    const booksWithStock = fromWarehouseId
+      ? activeBooks.filter((book) => getAvailableStock(fromWarehouseId, book.erpCode || book.bookId) > 0)
+      : [];
 
     modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
@@ -1012,7 +1023,7 @@
           </label>
           <label class="field">
             <span>From Warehouse</span>
-            <select name="fromWarehouseId" required>
+            <select name="fromWarehouseId" required onchange="window.erpApp.onIssueWarehouseChange(this.value)">
               <option value="">Select warehouse</option>
               ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.fromWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
             </select>
@@ -1030,14 +1041,14 @@
           </label>
           <div class="wide-field">
             <div class="line-editor-header">
-              <h3>Books</h3>
+              <h3>Books${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addIssueLine()">Add Line</button>
             </div>
-            ${activeBooks.length ? issueLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before issuing stock.</div>'}
+            ${booksWithStock.length ? issueLinesMarkup(booksWithStock, fromWarehouseId) : '<div class="empty-state">' + (fromWarehouseId ? `No books with available stock at ${getWarehouseName(fromWarehouseId)}.` : "Select a warehouse to see available books.") + '</div>'}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit" ${activeBooks.length ? "" : "disabled"}>Post Issue</button>
+            <button class="button" type="submit" ${booksWithStock.length ? "" : "disabled"}>Post Issue</button>
           </div>
         </form>
       </section>
@@ -1046,7 +1057,7 @@
     document.getElementById("issueForm").addEventListener("submit", saveIssueDocument);
   }
 
-  function issueLinesMarkup(activeBooks) {
+  function issueLinesMarkup(activeBooks, fromWarehouseId) {
     return `
       <div class="line-table">
         ${state.issueLines.map((line, index) => `
@@ -1055,7 +1066,11 @@
               <span>Book</span>
               <select onchange="window.erpApp.updateIssueLine(${index}, 'bookId', this.value)" required>
                 <option value="">Select book</option>
-                ${activeBooks.map((book) => `<option value="${escapeAttribute(book.erpCode || book.bookId)}" ${line.bookId === (book.erpCode || book.bookId) ? "selected" : ""}>${escapeHtml(getBookOptionLabel(book))}</option>`).join("")}
+                ${activeBooks.map((book) => {
+                  const bookId = book.erpCode || book.bookId;
+                  const available = fromWarehouseId ? getAvailableStock(fromWarehouseId, bookId) : 0;
+                  return `<option value="${escapeAttribute(bookId)}" ${line.bookId === bookId ? "selected" : ""}>${escapeHtml(getBookOptionLabel(book))}${available > 0 ? ` (Avail: ${available})` : ""}</option>`;
+                }).join("")}
               </select>
             </label>
             <label class="field">
@@ -1321,6 +1336,10 @@
     const activeBooks = state.books.filter((book) => book.active !== false);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const draft = state.transferDraft;
+    const fromWarehouseId = draft.fromWarehouseId || "";
+    const booksWithStock = fromWarehouseId
+      ? activeBooks.filter((book) => getAvailableStock(fromWarehouseId, book.erpCode || book.bookId) > 0)
+      : [];
 
     modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
@@ -1336,7 +1355,7 @@
           </label>
           <label class="field">
             <span>From Warehouse</span>
-            <select name="fromWarehouseId" required>
+            <select name="fromWarehouseId" required onchange="window.erpApp.onTransferWarehouseChange(this.value)">
               <option value="">Select warehouse</option>
               ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.fromWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
             </select>
@@ -1354,14 +1373,14 @@
           </label>
           <div class="wide-field">
             <div class="line-editor-header">
-              <h3>Books</h3>
+              <h3>Books${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addTransferLine()">Add Line</button>
             </div>
-            ${activeBooks.length ? transferLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before transferring stock.</div>'}
+            ${booksWithStock.length ? transferLinesMarkup(booksWithStock, fromWarehouseId) : '<div class="empty-state">' + (fromWarehouseId ? `No books with available stock at ${getWarehouseName(fromWarehouseId)}.` : "Select a source warehouse to see available books.") + '</div>'}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit" ${activeBooks.length ? "" : "disabled"}>Post Transfer</button>
+            <button class="button" type="submit" ${booksWithStock.length ? "" : "disabled"}>Post Transfer</button>
           </div>
         </form>
       </section>
@@ -1370,7 +1389,7 @@
     document.getElementById("transferForm").addEventListener("submit", saveTransferDocument);
   }
 
-  function transferLinesMarkup(activeBooks) {
+  function transferLinesMarkup(activeBooks, fromWarehouseId) {
     return `
       <div class="line-table">
         ${state.transferLines.map((line, index) => `
@@ -1379,7 +1398,11 @@
               <span>Book</span>
               <select onchange="window.erpApp.updateTransferLine(${index}, 'bookId', this.value)" required>
                 <option value="">Select book</option>
-                ${activeBooks.map((book) => `<option value="${escapeAttribute(book.erpCode || book.bookId)}" ${line.bookId === (book.erpCode || book.bookId) ? "selected" : ""}>${escapeHtml(getBookOptionLabel(book))}</option>`).join("")}
+                ${activeBooks.map((book) => {
+                  const bookId = book.erpCode || book.bookId;
+                  const available = fromWarehouseId ? getAvailableStock(fromWarehouseId, bookId) : 0;
+                  return `<option value="${escapeAttribute(bookId)}" ${line.bookId === bookId ? "selected" : ""}>${escapeHtml(getBookOptionLabel(book))}${available > 0 ? ` (Avail: ${available})` : ""}</option>`;
+                }).join("")}
               </select>
             </label>
             <label class="field">
@@ -1427,6 +1450,20 @@
       toWarehouseId: data.get("toWarehouseId") || "",
       notes: data.get("notes") || ""
     };
+  }
+
+  function onIssueWarehouseChange(warehouseId) {
+    syncIssueDraft();
+    state.issueDraft.fromWarehouseId = warehouseId;
+    state.issueLines = [blankIssueLine()];
+    renderIssueModal();
+  }
+
+  function onTransferWarehouseChange(warehouseId) {
+    syncTransferDraft();
+    state.transferDraft.fromWarehouseId = warehouseId;
+    state.transferLines = [blankTransferLine()];
+    renderTransferModal();
   }
 
   async function saveTransferDocument(event) {
@@ -1573,6 +1610,8 @@
     addTransferLine,
     removeTransferLine,
     updateTransferLine,
+    onIssueWarehouseChange,
+    onTransferWarehouseChange,
     closeModal
   };
   navigate(state.view);
