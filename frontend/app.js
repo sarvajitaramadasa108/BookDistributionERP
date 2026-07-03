@@ -462,19 +462,6 @@
       state.reportMonth = new Date().toISOString().slice(0, 7);
     }
 
-    let warehouseReport = null;
-    if (state.reportWarehouseId) {
-      try {
-        warehouseReport = await window.erpApi.request("reports.warehouseMonthly", {
-          warehouseId: state.reportWarehouseId,
-          month: state.reportMonth
-        });
-      } catch (error) {
-        warehouseReport = null;
-      }
-    }
-    state.warehouseMonthlyReport = warehouseReport ? normalizeWarehouseMonthlyReport(warehouseReport) : null;
-
     const totalQuantity = state.currentStock.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
     const activeWarehouses = new Set(state.currentStock.filter((row) => Number(row.quantity || 0) !== 0).map((row) => row.warehouseId)).size;
     const unsettledQuantity = state.activityUnsettled.reduce((sum, row) => sum + Number(row.unsettledQty || 0), 0);
@@ -506,6 +493,7 @@
                   <span>Month</span>
                   <input type="month" value="${escapeAttribute(state.reportMonth)}" onchange="window.erpApp.setReportMonth(this.value)">
                 </label>
+                <button class="button" type="button" onclick="window.erpApp.loadWarehouseReport()">Get Report</button>
                 <button class="button secondary" type="button" onclick="window.erpApp.downloadWarehouseReport()">Download Excel</button>
               </div>
             </div>
@@ -1539,12 +1527,37 @@
 
   async function setReportWarehouse(value) {
     state.reportWarehouseId = value;
+    state.warehouseMonthlyReport = null;
     content.innerHTML = await renderReports();
   }
 
   async function setReportMonth(value) {
     state.reportMonth = value;
+    state.warehouseMonthlyReport = null;
     content.innerHTML = await renderReports();
+  }
+
+  async function loadWarehouseReport() {
+    if (!state.reportWarehouseId || !state.reportMonth) {
+      showToast("Select a warehouse and month first");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const report = await window.erpApi.request("reports.warehouseMonthly", {
+        warehouseId: state.reportWarehouseId,
+        month: state.reportMonth
+      });
+      state.warehouseMonthlyReport = normalizeWarehouseMonthlyReport(report);
+      content.innerHTML = await renderReports();
+    } catch (error) {
+      state.warehouseMonthlyReport = null;
+      content.innerHTML = await renderReports();
+      showToast(error.message || "Could not load warehouse report");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function settleActivity(activityId) {
@@ -2548,6 +2561,7 @@
     setReportDevotee,
     setReportWarehouse,
     setReportMonth,
+    loadWarehouseReport,
     downloadWarehouseReport,
     settleActivity,
     openOpeningStockForm,
