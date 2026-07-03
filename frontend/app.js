@@ -43,6 +43,9 @@
     activityMonthlyReport: null,
     warehouseMonthlyReport: null,
     reportErrors: [],
+    reportsInitialized: false,
+    reportsLoading: false,
+    reportsLoadToken: 0,
     reportWarehouseId: "",
     reportMonth: new Date().toISOString().slice(0, 7)
   };
@@ -600,12 +603,32 @@
   }
 
   async function renderReports() {
+    if (!state.reportsInitialized) {
+      state.reportsInitialized = true;
+      refreshReportsData();
+    }
+    return renderReportsMarkup();
+  }
+
+  async function refreshReportsData() {
+    if (state.reportsLoading) {
+      return;
+    }
+    state.reportsLoading = true;
+    const token = Date.now();
+    state.reportsLoadToken = token;
     try {
       await loadReportsData();
     } catch (error) {
       state.reportErrors = [error.message || "Reports data"];
+    } finally {
+      if (state.reportsLoadToken === token) {
+        state.reportsLoading = false;
+      }
+      if (state.view === "reports") {
+        content.innerHTML = renderReportsMarkup();
+      }
     }
-    return renderReportsMarkup();
   }
 
   function currentStockTable(rows) {
