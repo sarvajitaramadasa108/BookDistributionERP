@@ -18,6 +18,7 @@
     activityReportActivityId: "",
     activityReportActivitySearch: "",
     showWarehouseDayWiseSales: false,
+    issueDocumentType: "ISSUE",
     documents: [],
     issueDraft: {},
     issueLines: [],
@@ -417,6 +418,7 @@
             <button class="button secondary" type="button" onclick="window.erpApp.openSaleForm()">Sale Books</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Return Books</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Books</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openComplimentaryForm()">Complimentary Issue</button>
             <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Books</button>
           </div>
         </div>
@@ -2540,6 +2542,22 @@
 
   function openIssueForm() {
     ensureCurrentStockLoaded().then(() => {
+      state.issueDocumentType = "ISSUE";
+      state.issueDraft = {
+        documentDate: new Date().toISOString().slice(0, 10),
+        fromWarehouseId: "",
+        activityId: "",
+        notes: ""
+      };
+      state.issueLines = [blankIssueLine()];
+      state.issueBookQueries = [""];
+      renderIssueModal();
+    });
+  }
+
+  function openComplimentaryForm() {
+    ensureCurrentStockLoaded().then(() => {
+      state.issueDocumentType = "COMPLIMENTARY";
       state.issueDraft = {
         documentDate: new Date().toISOString().slice(0, 10),
         fromWarehouseId: "",
@@ -3046,6 +3064,7 @@
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const openActivities = state.activities.filter((activity) => activity.status !== "Completed" && activity.status !== "Cancelled");
     const draft = state.issueDraft;
+    const isComplimentary = state.issueDocumentType === "COMPLIMENTARY";
     const fromWarehouseId = draft.fromWarehouseId || "";
     const booksWithStock = fromWarehouseId
       ? activeBooks.filter((book) => getAvailableStock(fromWarehouseId, book.erpCode || book.bookId) > 0)
@@ -3055,12 +3074,12 @@
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
       <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="issueFormTitle">
         <div class="modal-header">
-          <h2 id="issueFormTitle">Issue Books</h2>
+          <h2 id="issueFormTitle">${isComplimentary ? "Complimentary Issue" : "Issue Books"}</h2>
           <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
         </div>
         <form class="form-grid" id="issueForm">
           <label class="field">
-            <span>Issue Date</span>
+            <span>${isComplimentary ? "Complimentary Date" : "Issue Date"}</span>
             <input name="documentDate" type="date" value="${escapeAttribute(draft.documentDate)}" required>
           </label>
           <label class="field">
@@ -3079,18 +3098,18 @@
           </label>
           <label class="field wide-field">
             <span>Notes</span>
-            <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Optional issue note">
+            <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="${isComplimentary ? "Optional complimentary note" : "Optional issue note"}">
           </label>
           <div class="wide-field">
             <div class="line-editor-header">
-              <h3>Books${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}</h3>
+              <h3>${isComplimentary ? "Books for Complimentary Issue" : `Books${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}`}</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addIssueLine()">Add Line</button>
             </div>
             ${booksWithStock.length ? issueLinesMarkup(booksWithStock, fromWarehouseId) : '<div class="empty-state">' + (fromWarehouseId ? `No books with available stock at ${getWarehouseName(fromWarehouseId)}.` : "Select a warehouse to see available books.") + '</div>'}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit" ${booksWithStock.length ? "" : "disabled"}>Post Issue</button>
+            <button class="button" type="submit" ${booksWithStock.length ? "" : "disabled"}>${isComplimentary ? "Post Complimentary" : "Post Issue"}</button>
           </div>
         </form>
       </section>
@@ -3159,6 +3178,7 @@
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
+    const isComplimentary = state.issueDocumentType === "COMPLIMENTARY";
     const lines = state.issueLines
       .filter((line) => line.bookId && Number(line.quantity || 0) > 0)
       .map((line) => ({
@@ -3173,7 +3193,7 @@
     }
 
     const payload = {
-      documentType: "ISSUE",
+      documentType: isComplimentary ? "COMPLIMENTARY" : "ISSUE",
       documentDate: data.get("documentDate"),
       fromWarehouseId: data.get("fromWarehouseId"),
       activityId: data.get("activityId"),
@@ -3187,9 +3207,9 @@
       const result = await window.erpApi.request("documents.create", payload);
       closeModal();
       content.innerHTML = await renderDocuments();
-      showToast(`Issue posted: ${result.documentId}`);
+      showToast(`${isComplimentary ? "Complimentary issue" : "Issue"} posted: ${result.documentId}`);
     } catch (error) {
-      showToast(error.message || "Could not post issue");
+      showToast(error.message || `Could not post ${isComplimentary ? "complimentary issue" : "issue"}`);
     } finally {
       setLoading(false);
     }
@@ -3684,6 +3704,7 @@
     setBookPickerQuery,
     pickBookFromPicker,
     openIssueForm,
+    openComplimentaryForm,
     openSaleForm,
     addIssueLine,
     removeIssueLine,
