@@ -29,9 +29,31 @@
       { warehouseId: "WH-003", name: "Simhachalam", type: "Event", spoc: "", mobile: "", active: true },
       { warehouseId: "WH-004", name: "Kakinada", type: "Event", spoc: "", mobile: "", active: true }
     ],
+    devotees: [
+      { devoteeId: "DEV-0001", devoteeName: "HG NCBP", active: true },
+      { devoteeId: "DEV-0002", devoteeName: "YDRP", active: true },
+      { devoteeId: "DEV-0003", devoteeName: "VKTP", active: true },
+      { devoteeId: "DEV-0004", devoteeName: "ABRP", active: true },
+      { devoteeId: "DEV-0005", devoteeName: "SRSP", active: true },
+      { devoteeId: "DEV-0006", devoteeName: "SYMP", active: true },
+      { devoteeId: "DEV-0007", devoteeName: "KKRP", active: true },
+      { devoteeId: "DEV-0008", devoteeName: "GPVP", active: true },
+      { devoteeId: "DEV-0009", devoteeName: "RVRP", active: true },
+      { devoteeId: "DEV-0010", devoteeName: "ADKP", active: true },
+      { devoteeId: "DEV-0011", devoteeName: "GDHP", active: true },
+      { devoteeId: "DEV-0012", devoteeName: "ISKP", active: true },
+      { devoteeId: "DEV-0013", devoteeName: "NVKP", active: true },
+      { devoteeId: "DEV-0014", devoteeName: "SDGP", active: true },
+      { devoteeId: "DEV-0015", devoteeName: "NTHP", active: true },
+      { devoteeId: "DEV-0016", devoteeName: "RMPP", active: true },
+      { devoteeId: "DEV-0017", devoteeName: "SJRD", active: true },
+      { devoteeId: "DEV-0018", devoteeName: "BDCP", active: true },
+      { devoteeId: "DEV-0019", devoteeName: "GVBP", active: true },
+      { devoteeId: "DEV-0020", devoteeName: "MKGP", active: true }
+    ],
     activities: [
-      { activityId: "ACT-001", name: "Simhachalam Stall", type: "Stall", warehouse: "Simhachalam", status: "Running" },
-      { activityId: "ACT-002", name: "Annavaram Daily Stall", type: "Daily", warehouse: "Annavaram", status: "Running" }
+      { activityId: "ACT-001", name: "Simhachalam Stall", type: "Stall", devoteeId: "DEV-0007", devoteeName: "KKRP", warehouse: "Simhachalam", status: "Running" },
+      { activityId: "ACT-002", name: "Annavaram Daily Stall", type: "Daily", devoteeId: "DEV-0010", devoteeName: "ADKP", warehouse: "Annavaram", status: "Running" }
     ],
     documents: []
   };
@@ -49,9 +71,17 @@
       body: JSON.stringify({ action, payload: payload || {} })
     });
 
-    const result = await response.json();
-    if (!result.ok) {
-      throw new Error(result.error || "Request failed");
+    const raw = await response.text();
+    let result;
+    try {
+      result = raw ? JSON.parse(raw) : {};
+    } catch (error) {
+      const preview = raw ? raw.trim().slice(0, 180) : "Empty response";
+      throw new Error(`Backend returned non-JSON response: ${preview}`);
+    }
+
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || `Request failed (${response.status})`);
     }
     return result.data;
   }
@@ -67,6 +97,7 @@
       "books.delete": () => deleteMockBook(payload),
       "books.bulkUpsert": () => bulkUpsertMockBooks(payload),
       "warehouses.list": mockData.warehouses,
+      "devotees.list": mockData.devotees,
       "warehouses.create": () => createMockWarehouse(payload),
       "warehouses.update": () => updateMockWarehouse(payload),
       "warehouses.delete": () => deleteMockWarehouse(payload),
@@ -77,7 +108,8 @@
       "documents.list": mockData.documents,
       "documents.create": () => createMockDocument(payload),
       "stock.current": () => getMockCurrentStock(),
-      "activity.unsettled": () => getMockActivityUnsettled()
+      "activity.unsettled": () => getMockActivityUnsettled(),
+      "reports.activityLedger": () => getMockActivityLedger(payload)
     };
     const handler = routes[action];
     return typeof handler === "function" ? handler() : handler || [];
@@ -87,12 +119,30 @@
     try {
       const saved = window.localStorage.getItem("hkm-book-erp-mock-data");
       if (saved) {
-        return JSON.parse(saved);
+        return migrateMockData(JSON.parse(saved));
       }
     } catch (error) {
       console.warn("Could not read mock data", error);
     }
     return JSON.parse(JSON.stringify(mockSeed));
+  }
+
+  function migrateMockData(data) {
+    const clone = JSON.parse(JSON.stringify(mockSeed));
+    const source = data || {};
+    clone.dashboard = source.dashboard || clone.dashboard;
+    clone.books = Array.isArray(source.books) && source.books.length ? source.books : clone.books;
+    clone.warehouses = Array.isArray(source.warehouses) && source.warehouses.length ? source.warehouses : clone.warehouses;
+    clone.devotees = Array.isArray(source.devotees) && source.devotees.length ? source.devotees : clone.devotees;
+    clone.activities = Array.isArray(source.activities) && source.activities.length
+      ? source.activities.map((activity) => ({
+          ...activity,
+          devoteeId: activity.devoteeId || "",
+          devoteeName: activity.devoteeName || getMockDevoteeName(activity.devoteeId)
+        }))
+      : clone.activities;
+    clone.documents = Array.isArray(source.documents) ? source.documents : clone.documents;
+    return clone;
   }
 
   function saveMockData() {
@@ -213,8 +263,12 @@
   }
 
   function createMockActivity(payload) {
+    if (!payload.devoteeId) {
+      throw new Error("Devotee is required");
+    }
     const activity = normalizeMockActivity(payload);
     activity.activityId = nextMockId("ACT", mockData.activities, "activityId");
+    activity.devoteeName = getMockDevoteeName(activity.devoteeId);
     mockData.activities.push(activity);
     saveMockData();
     return activity;
@@ -225,7 +279,7 @@
     if (index === -1) {
       throw new Error("Activity not found");
     }
-    mockData.activities[index] = { ...mockData.activities[index], ...normalizeMockActivity(payload), activityId: payload.activityId };
+    mockData.activities[index] = { ...mockData.activities[index], ...normalizeMockActivity(payload), activityId: payload.activityId, devoteeName: getMockDevoteeName(payload.devoteeId) };
     saveMockData();
     return mockData.activities[index];
   }
@@ -245,11 +299,13 @@
       activityId: payload.activityId || "",
       name: String(payload.name || "").trim(),
       type: String(payload.type || "Stall").trim(),
+      devoteeId: String(payload.devoteeId || "").trim(),
       startDate: payload.startDate || "",
       endDate: payload.endDate || "",
       warehouseId: payload.warehouseId || payload.warehouse || "",
       spoc: String(payload.spoc || "").trim(),
-      status: payload.status || "Draft"
+      status: payload.status || "Draft",
+      devoteeName: getMockDevoteeName(payload.devoteeId)
     };
   }
 
@@ -354,6 +410,59 @@
       });
     });
     return Object.values(index);
+  }
+
+  function getMockActivityLedger(payload) {
+    const devoteeId = String(payload && payload.devoteeId ? payload.devoteeId : "");
+    const rows = [];
+    mockData.documents.forEach((document) => {
+      const activity = mockData.activities.find((item) => item.activityId === document.activityId);
+      if (!activity || (devoteeId && activity.devoteeId !== devoteeId)) {
+        return;
+      }
+      const allowed = ["ISSUE", "RETURN", "SALE", "COMPLIMENTARY", "UNSETTLED_OPENING"];
+      if (!allowed.includes(document.documentType)) {
+        return;
+      }
+      (document.lines || []).forEach((line) => {
+        let row = rows.find((item) => item.activityId === document.activityId && item.bookId === line.bookId);
+        if (!row) {
+          row = {
+            devoteeId: activity.devoteeId || "",
+            devoteeName: activity.devoteeName || getMockDevoteeName(activity.devoteeId),
+            activityId: document.activityId,
+            activityName: activity.name,
+            bookId: line.bookId,
+            warehouseId: document.fromWarehouseId || document.toWarehouseId || activity.warehouseId || "",
+            issueQty: 0,
+            returnQty: 0,
+            saleQty: 0,
+            complimentaryQty: 0,
+            unsettledQty: 0
+          };
+          rows.push(row);
+        }
+        const qty = Number(line.quantity || 0);
+        if (document.documentType === "ISSUE" || document.documentType === "UNSETTLED_OPENING") {
+          row.issueQty += qty;
+          row.unsettledQty += qty;
+        } else if (document.documentType === "RETURN") {
+          row.returnQty += qty;
+          row.unsettledQty -= qty;
+        } else if (document.documentType === "SALE") {
+          row.saleQty += qty;
+          row.unsettledQty -= qty;
+        } else if (document.documentType === "COMPLIMENTARY") {
+          row.complimentaryQty += qty;
+        }
+      });
+    });
+    return rows;
+  }
+
+  function getMockDevoteeName(devoteeId) {
+    const devotee = mockData.devotees.find((item) => item.devoteeId === devoteeId);
+    return devotee ? devotee.devoteeName : devoteeId || "";
   }
 
   function addMockStock(index, warehouseId, bookId, quantity) {

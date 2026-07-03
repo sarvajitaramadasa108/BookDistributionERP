@@ -8,9 +8,11 @@
     warehouses: [],
     warehouseSearch: "",
     warehouseStatus: "active",
+    devotees: [],
     activities: [],
     activitySearch: "",
     activityStatus: "open",
+    reportDevoteeId: "",
     documents: [],
     issueDraft: {},
     issueLines: [],
@@ -28,7 +30,8 @@
     unsettledLines: [],
     unsettledBookQueries: [],
     currentStock: [],
-    activityUnsettled: []
+    activityUnsettled: [],
+    activityLedger: []
   };
 
   const views = {
@@ -248,12 +251,14 @@
   }
 
   async function renderActivities() {
-    const [activities, warehouses] = await Promise.all([
+    const [activities, warehouses, devotees] = await Promise.all([
       window.erpApi.request("activities.list"),
-      window.erpApi.request("warehouses.list")
+      window.erpApi.request("warehouses.list"),
+      window.erpApi.request("devotees.list")
     ]);
     state.activities = activities.map(normalizeActivity);
     state.warehouses = warehouses.map(normalizeWarehouse);
+    state.devotees = devotees.map(normalizeDevotee);
     return renderActivitiesMarkup();
   }
 
@@ -298,6 +303,7 @@
               <th>Activity ID</th>
               <th>Name</th>
               <th>Type</th>
+              <th>Devotee</th>
               <th>Dates</th>
               <th>Warehouse</th>
               <th>SPOC</th>
@@ -311,6 +317,7 @@
                 <td>${escapeHtml(row.activityId)}</td>
                 <td><strong>${escapeHtml(row.name)}</strong></td>
                 <td>${escapeHtml(row.type)}</td>
+                <td>${escapeHtml(getDevoteeName(row.devoteeId))}</td>
                 <td>${escapeHtml(formatDateRange(row.startDate, row.endDate))}</td>
                 <td>${escapeHtml(getWarehouseName(row.warehouseId))}</td>
                 <td>${escapeHtml(row.spoc || "-")}</td>
@@ -330,18 +337,16 @@
   }
 
   async function renderDocuments() {
-    const [documents, books, warehouses, activities, stock] = await Promise.all([
+    const [documents, books, warehouses, activities] = await Promise.all([
       window.erpApi.request("documents.list"),
       window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
       window.erpApi.request("warehouses.list"),
-      window.erpApi.request("activities.list"),
-      window.erpApi.request("stock.current")
+      window.erpApi.request("activities.list")
     ]);
     state.documents = documents.map(normalizeDocument);
     state.books = books;
     state.warehouses = warehouses.map(normalizeWarehouse);
     state.activities = activities.map(normalizeActivity);
-    state.currentStock = stock.map(normalizeStockRow);
 
     return `
       <section class="card">
@@ -406,16 +411,20 @@
   }
 
   async function renderReports() {
-    const [stock, books, warehouses, unsettled] = await Promise.all([
+    const [stock, books, warehouses, devotees, unsettled, activityLedger] = await Promise.all([
       window.erpApi.request("stock.current"),
       window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
       window.erpApi.request("warehouses.list"),
-      window.erpApi.request("activity.unsettled")
+      window.erpApi.request("devotees.list"),
+      window.erpApi.request("activity.unsettled"),
+      window.erpApi.request("reports.activityLedger", { devoteeId: state.reportDevoteeId })
     ]);
     state.currentStock = stock.map(normalizeStockRow);
     state.books = books;
     state.warehouses = warehouses.map(normalizeWarehouse);
+    state.devotees = devotees.map(normalizeDevotee);
     state.activityUnsettled = unsettled.map(normalizeActivityUnsettled);
+    state.activityLedger = activityLedger.map(normalizeActivityLedger);
     const totalQuantity = state.currentStock.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
     const activeWarehouses = new Set(state.currentStock.filter((row) => Number(row.quantity || 0) !== 0).map((row) => row.warehouseId)).size;
     const unsettledQuantity = state.activityUnsettled.reduce((sum, row) => sum + Number(row.unsettledQty || 0), 0);
@@ -430,7 +439,20 @@
             ${metric("Warehouse Stock", activeWarehouses, "Warehouses with non-zero stock")}
             ${metric("Unsettled Qty", unsettledQuantity, "Open quantity by activity")}
             ${metric("Activities Open", unsettledActivities, "Activities with unsettled balance")}
-            ${metric("Book-wise Sales", "Ready", "Quantity and amount by book")}
+            ${metric("Activity Ledger", state.activityLedger.length, "Devotee-linked activity rows")}
+          </div>
+          <div class="section-gap">
+            <div class="panel-header compact-header">
+              <h2>Activity Ledger</h2>
+              <label class="field compact-field">
+                <span>Devotee</span>
+                <select onchange="window.erpApp.setReportDevotee(this.value)">
+                  <option value="">All devotees</option>
+                  ${state.devotees.map((devotee) => `<option value="${escapeAttribute(devotee.devoteeId)}" ${state.reportDevoteeId === devotee.devoteeId ? "selected" : ""}>${escapeHtml(devotee.devoteeName)}</option>`).join("")}
+                </select>
+              </label>
+            </div>
+            ${state.activityLedger.length ? activityLedgerTable(state.activityLedger) : '<div class="empty-state">No activity ledger rows yet.</div>'}
           </div>
           <div class="section-gap">
             <div class="panel-header compact-header">
@@ -807,7 +829,7 @@
         state.activityStatus === "all" ||
         (state.activityStatus === "open" && activity.status !== "Completed" && activity.status !== "Cancelled") ||
         activity.status === state.activityStatus;
-      const haystack = [activity.activityId, activity.name, activity.type, activity.spoc, getWarehouseName(activity.warehouseId)].join(" ").toLowerCase();
+      const haystack = [activity.activityId, activity.name, activity.type, activity.spoc, getWarehouseName(activity.warehouseId), getDevoteeName(activity.devoteeId)].join(" ").toLowerCase();
       return matchesStatus && (!query || haystack.includes(query));
     });
   }
@@ -827,6 +849,7 @@
       activityId: "",
       name: "",
       type: "Stall",
+      devoteeId: "",
       startDate: new Date().toISOString().slice(0, 10),
       endDate: "",
       warehouseId: state.warehouses.find((warehouse) => warehouse.active)?.warehouseId || "",
@@ -853,6 +876,13 @@
             <span>Type</span>
             <select name="type" required>
               ${["Stall", "Daily", "Event", "Marathon", "Festival"].map((type) => `<option value="${type}" ${activity.type === type ? "selected" : ""}>${type}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field wide-field">
+            <span>Devotee</span>
+            <select name="devoteeId" required>
+              <option value="">Select devotee</option>
+              ${state.devotees.map((devotee) => `<option value="${escapeAttribute(devotee.devoteeId)}" ${activity.devoteeId === devotee.devoteeId ? "selected" : ""}>${escapeHtml(devotee.devoteeName)}</option>`).join("")}
             </select>
           </label>
           <label class="field">
@@ -899,6 +929,7 @@
       activityId: data.get("activityId"),
       name: data.get("name").trim(),
       type: data.get("type"),
+      devoteeId: data.get("devoteeId"),
       startDate: data.get("startDate"),
       endDate: data.get("endDate"),
       warehouseId: data.get("warehouseId"),
@@ -942,6 +973,8 @@
       activityId: row.activityId || row["Activity ID"] || "",
       name: row.name || row.Name || "",
       type: row.type || row.Type || "",
+      devoteeId: row.devoteeId || row["Devotee ID"] || "",
+      devoteeName: row.devoteeName || row["Devotee Name"] || "",
       startDate: row.startDate || row["Start Date"] || "",
       endDate: row.endDate || row["End Date"] || "",
       warehouseId: row.warehouseId || row["Warehouse ID"] || "",
@@ -971,6 +1004,41 @@
     };
   }
 
+  function activityLedgerTable(rows) {
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Devotee</th>
+              <th>Activity</th>
+              <th>Book</th>
+              <th>Issue</th>
+              <th>Return</th>
+              <th>Sale</th>
+              <th>Complimentary</th>
+              <th>Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.devoteeName || row.devoteeId || "-")}</td>
+                <td>${escapeHtml(row.activityName || row.activityId || "-")}</td>
+                <td>${escapeHtml(getBookName(row.bookId))}</td>
+                <td>${Number(row.issueQty || 0)}</td>
+                <td>${Number(row.returnQty || 0)}</td>
+                <td>${Number(row.saleQty || 0)}</td>
+                <td>${Number(row.complimentaryQty || 0)}</td>
+                <td><strong>${Number(row.unsettledQty || 0)}</strong></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
   function normalizeActivityUnsettled(row) {
     return {
       activityId: row.activityId || row["Activity ID"] || "",
@@ -984,9 +1052,38 @@
     };
   }
 
+  function normalizeActivityLedger(row) {
+    return {
+      devoteeId: row.devoteeId || row["Devotee ID"] || "",
+      devoteeName: row.devoteeName || row["Devotee Name"] || "",
+      activityId: row.activityId || row["Activity ID"] || "",
+      activityName: row.activityName || row["Activity Name"] || "",
+      bookId: row.bookId || row["Book ID"] || "",
+      warehouseId: row.warehouseId || row["Warehouse ID"] || "",
+      issueQty: Number(row.issueQty || row["Issue Qty"] || 0),
+      returnQty: Number(row.returnQty || row["Return Qty"] || 0),
+      saleQty: Number(row.saleQty || row["Sale Qty"] || 0),
+      complimentaryQty: Number(row.complimentaryQty || row["Complimentary Qty"] || 0),
+      unsettledQty: Number(row.unsettledQty || row["Unsettled Qty"] || 0)
+    };
+  }
+
+  function normalizeDevotee(row) {
+    return {
+      devoteeId: row.devoteeId || row["Devotee ID"] || "",
+      devoteeName: row.devoteeName || row["Devotee Name"] || "",
+      active: row.active === true || row.active === "TRUE" || row.Active === true || row.Active === "TRUE" || row.Active === "true"
+    };
+  }
+
   function getWarehouseName(warehouseId) {
     const warehouse = state.warehouses.find((item) => item.warehouseId === warehouseId);
     return warehouse ? warehouse.name : warehouseId || "-";
+  }
+
+  function getDevoteeName(devoteeId) {
+    const devotee = state.devotees.find((item) => item.devoteeId === devoteeId);
+    return devotee ? devotee.devoteeName : devoteeId || "-";
   }
 
   function getBook(bookId) {
@@ -1191,6 +1288,11 @@
     return activity ? activity.name : activityId || "-";
   }
 
+  async function setReportDevotee(value) {
+    state.reportDevoteeId = value;
+    content.innerHTML = await renderReports();
+  }
+
   function documentTone(documentType) {
     const toneByType = {
       OPENING: "good",
@@ -1207,15 +1309,17 @@
   }
 
   function openIssueForm() {
-    state.issueDraft = {
-      documentDate: new Date().toISOString().slice(0, 10),
-      fromWarehouseId: "",
-      activityId: "",
-      notes: ""
-    };
-    state.issueLines = [blankIssueLine()];
-    state.issueBookQueries = [""];
-    renderIssueModal();
+    ensureCurrentStockLoaded().then(() => {
+      state.issueDraft = {
+        documentDate: new Date().toISOString().slice(0, 10),
+        fromWarehouseId: "",
+        activityId: "",
+        notes: ""
+      };
+      state.issueLines = [blankIssueLine()];
+      state.issueBookQueries = [""];
+      renderIssueModal();
+    });
   }
 
   function blankIssueLine() {
@@ -1869,15 +1973,17 @@
   }
 
   function openTransferForm() {
-    state.transferDraft = {
-      documentDate: new Date().toISOString().slice(0, 10),
-      fromWarehouseId: "",
-      toWarehouseId: "",
-      notes: ""
-    };
-    state.transferLines = [blankTransferLine()];
-    state.transferBookQueries = [""];
-    renderTransferModal();
+    ensureCurrentStockLoaded().then(() => {
+      state.transferDraft = {
+        documentDate: new Date().toISOString().slice(0, 10),
+        fromWarehouseId: "",
+        toWarehouseId: "",
+        notes: ""
+      };
+      state.transferLines = [blankTransferLine()];
+      state.transferBookQueries = [""];
+      renderTransferModal();
+    });
   }
 
   function blankTransferLine() {
@@ -2001,14 +2107,22 @@
     syncIssueDraft();
     state.issueDraft.fromWarehouseId = warehouseId;
     state.issueLines = [blankIssueLine()];
-    renderIssueModal();
+    ensureCurrentStockLoaded().then(renderIssueModal);
   }
 
   function onTransferWarehouseChange(warehouseId) {
     syncTransferDraft();
     state.transferDraft.fromWarehouseId = warehouseId;
     state.transferLines = [blankTransferLine()];
-    renderTransferModal();
+    ensureCurrentStockLoaded().then(renderTransferModal);
+  }
+
+  async function ensureCurrentStockLoaded() {
+    if (state.currentStock.length) {
+      return state.currentStock;
+    }
+    state.currentStock = (await window.erpApi.request("stock.current")).map(normalizeStockRow);
+    return state.currentStock;
   }
 
   async function saveTransferDocument(event) {
@@ -2143,6 +2257,7 @@
     setActivityStatus,
     openActivityForm,
     cancelActivity,
+    setReportDevotee,
     openOpeningStockForm,
     addOpeningLine,
     removeOpeningLine,

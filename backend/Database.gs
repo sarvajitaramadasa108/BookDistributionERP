@@ -3,7 +3,9 @@ function setupDatabase() {
   Object.keys(ERP_SCHEMA).forEach(function (sheetName) {
     ensureSheet_(spreadsheet, sheetName, ERP_SCHEMA[sheetName]);
   });
+  migrateActivitiesSheet_();
   seedSettings_();
+  seedDevotees_();
   seedStarterWarehouses_();
   return { ok: true, message: "Database setup completed", sheets: Object.keys(ERP_SCHEMA) };
 }
@@ -19,6 +21,10 @@ function ensureSheet_(spreadsheet, sheetName, headers) {
   const needsHeader = existing.join("") === "" || headers.some(function (header, index) {
     return existing[index] !== header;
   });
+
+  if (sheetName === "Activities" && existing[0] === "Activity ID" && existing.indexOf("Devotee ID") === -1) {
+    return;
+  }
 
   if (needsHeader) {
     range.setValues([headers]);
@@ -61,6 +67,58 @@ function seedStarterWarehouses_() {
   ].forEach(function (row) {
     sheet.appendRow(row);
   });
+}
+
+function seedDevotees_() {
+  const sheet = getSheet_("Devotees");
+  const rows = readObjects_("Devotees");
+  if (rows.length > 0) {
+    return;
+  }
+
+  const now = new Date();
+  [
+    "HG NCBP",
+    "YDRP",
+    "VKTP",
+    "ABRP",
+    "SRSP",
+    "SYMP",
+    "KKRP",
+    "GPVP",
+    "RVRP",
+    "ADKP",
+    "GDHP",
+    "ISKP",
+    "NVKP",
+    "SDGP",
+    "NTHP",
+    "RMPP",
+    "SJRD",
+    "BDCP",
+    "GVBP",
+    "MKGP"
+  ].forEach(function (name, index) {
+    sheet.appendRow([
+      "DEV-" + String(index + 1).padStart(4, "0"),
+      name,
+      true,
+      now,
+      now
+    ]);
+  });
+}
+
+function migrateActivitiesSheet_() {
+  const sheet = getSheet_("Activities");
+  const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), ERP_SCHEMA.Activities.length)).getValues()[0];
+  if (headers.indexOf("Devotee ID") !== -1) {
+    return;
+  }
+
+  sheet.insertColumnBefore(4);
+  sheet.getRange(1, 1, 1, ERP_SCHEMA.Activities.length).setValues([ERP_SCHEMA.Activities]);
+  sheet.setFrozenRows(1);
 }
 
 function getSheet_(sheetName) {
@@ -111,4 +169,3 @@ function nextId_(prefix, sheetName, columnName) {
   });
   return prefix + "-" + String(max + 1).padStart(4, "0");
 }
-

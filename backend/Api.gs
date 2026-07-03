@@ -14,6 +14,7 @@ function routeRequest_(request) {
     "warehouses.create": function () { return createWarehouse_(payload); },
     "warehouses.update": function () { return updateWarehouse_(payload); },
     "warehouses.delete": function () { return deleteWarehouse_(payload); },
+    "devotees.list": function () { return readObjects_("Devotees").map(mapDevotee_); },
     "activities.list": function () { return readObjects_("Activities").map(mapActivity_); },
     "activities.create": function () { return createActivity_(payload); },
     "activities.update": function () { return updateActivity_(payload); },
@@ -21,7 +22,8 @@ function routeRequest_(request) {
     "documents.list": function () { return readObjects_("Documents").map(mapDocument_); },
     "documents.create": function () { return createDocument_(payload); },
     "stock.current": getCurrentStock_,
-    "activity.unsettled": getActivityUnsettled_
+    "activity.unsettled": getActivityUnsettled_,
+    "reports.activityLedger": function () { return getActivityLedger_(payload); }
   };
 
   if (!routes[action]) {
@@ -284,11 +286,21 @@ function mapWarehouse_(row) {
   };
 }
 
+function mapDevotee_(row) {
+  return {
+    devoteeId: row["Devotee ID"],
+    devoteeName: row["Devotee Name"],
+    active: row.Active === true || row.Active === "TRUE" || row.Active === "true"
+  };
+}
+
 function mapActivity_(row) {
   return {
     activityId: row["Activity ID"],
     name: row.Name,
     type: row.Type,
+    devoteeId: row["Devotee ID"],
+    devoteeName: getDevoteeName_(row["Devotee ID"]),
     startDate: row["Start Date"],
     endDate: row["End Date"],
     warehouseId: row["Warehouse ID"],
@@ -304,6 +316,7 @@ function createActivity_(payload) {
     "Activity ID": nextId_("ACT", "Activities", "Activity ID"),
     "Name": payload.name,
     "Type": payload.type || "Stall",
+    "Devotee ID": payload.devoteeId || "",
     "Start Date": payload.startDate ? new Date(payload.startDate) : "",
     "End Date": payload.endDate ? new Date(payload.endDate) : "",
     "Warehouse ID": payload.warehouseId,
@@ -344,6 +357,7 @@ function updateActivity_(payload) {
     "Activity ID": payload.activityId,
     "Name": payload.name,
     "Type": payload.type || "Stall",
+    "Devotee ID": payload.devoteeId || "",
     "Start Date": payload.startDate ? new Date(payload.startDate) : "",
     "End Date": payload.endDate ? new Date(payload.endDate) : "",
     "Warehouse ID": payload.warehouseId,
@@ -376,6 +390,7 @@ function deleteActivity_(payload) {
     activityId: payload.activityId,
     name: activity.Name,
     type: activity.Type,
+    devoteeId: activity["Devotee ID"],
     startDate: activity["Start Date"],
     endDate: activity["End Date"],
     warehouseId: activity["Warehouse ID"],
@@ -390,6 +405,9 @@ function validateActivity_(payload) {
   }
   if (!payload.type) {
     throw new Error("Activity type is required");
+  }
+  if (!payload.devoteeId && !payload.activityId) {
+    throw new Error("Devotee is required");
   }
   if (!payload.warehouseId) {
     throw new Error("Warehouse is required");
@@ -425,6 +443,16 @@ function getDashboardSummary_() {
     recentActivities: activities.slice(-5).reverse(),
     recentDocuments: readObjects_("Documents").slice(-5).reverse()
   };
+}
+
+function getDevoteeName_(devoteeId) {
+  if (!devoteeId) {
+    return "";
+  }
+  const devotee = readObjects_("Devotees").find(function (row) {
+    return row["Devotee ID"] === devoteeId;
+  });
+  return devotee ? devotee["Devotee Name"] : devoteeId;
 }
 
 function createDocument_(payload) {
@@ -632,6 +660,83 @@ function getActivityUnsettled_() {
     return index[key];
   }).sort(function (a, b) {
     return String(a.activityId).localeCompare(String(b.activityId)) || String(a.bookId).localeCompare(String(b.bookId));
+  });
+}
+
+function getActivityLedger_(payload) {
+  const documents = readObjects_("Documents");
+  const lines = readObjects_("DocumentLines");
+  const activities = readObjects_("Activities");
+  const docsById = {};
+  const activityById = {};
+  activities.forEach(function (activity) {
+    activityById[activity["Activity ID"]] = activity;
+  });
+  documents.forEach(function (doc) {
+    docsById[doc["Document ID"]] = doc;
+  });
+
+  const devoteeId = payload && payload.devoteeId ? String(payload.devoteeId) : "";
+  const index = {};
+  lines.forEach(function (line) {
+    const doc = docsById[line["Document ID"]];
+    if (!doc || !doc["Activity ID"]) {
+      return;
+    }
+
+    const activity = activityById[doc["Activity ID"]];
+    if (!activity) {
+      return;
+    }
+
+    if (devoteeId && String(activity["Devotee ID"] || "") !== devoteeId) {
+      return;
+    }
+
+    const type = doc["Document Type"];
+    const allowed = ["ISSUE", "RETURN", "SALE", "COMPLIMENTARY", "UNSETTLED_OPENING"];
+    if (allowed.indexOf(type) === -1) {
+      return;
+    }
+
+    const key = doc["Activity ID"] + "|" + line["Book ID"];
+    if (!index[key]) {
+      index[key] = {
+        devoteeId: activity["Devotee ID"] || "",
+        devoteeName: getDevoteeName_(activity["Devotee ID"]),
+        activityId: doc["Activity ID"],
+        activityName: activity.Name,
+        bookId: line["Book ID"],
+        warehouseId: doc["From Warehouse ID"] || doc["To Warehouse ID"] || activity["Warehouse ID"] || "",
+        issueQty: 0,
+        returnQty: 0,
+        saleQty: 0,
+        complimentaryQty: 0,
+        unsettledQty: 0
+      };
+    }
+
+    const quantity = Number(line["Quantity"] || 0);
+    if (type === "ISSUE" || type === "UNSETTLED_OPENING") {
+      index[key].issueQty += quantity;
+      index[key].unsettledQty += quantity;
+    } else if (type === "RETURN") {
+      index[key].returnQty += quantity;
+      index[key].unsettledQty -= quantity;
+    } else if (type === "SALE") {
+      index[key].saleQty += quantity;
+      index[key].unsettledQty -= quantity;
+    } else if (type === "COMPLIMENTARY") {
+      index[key].complimentaryQty += quantity;
+    }
+  });
+
+  return Object.keys(index).map(function (key) {
+    return index[key];
+  }).sort(function (a, b) {
+    return String(a.devoteeName).localeCompare(String(b.devoteeName)) ||
+      String(a.activityName).localeCompare(String(b.activityName)) ||
+      String(a.bookId).localeCompare(String(b.bookId));
   });
 }
 
