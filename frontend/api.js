@@ -76,7 +76,8 @@
       "activities.delete": () => deleteMockActivity(payload),
       "documents.list": mockData.documents,
       "documents.create": () => createMockDocument(payload),
-      "stock.current": () => getMockCurrentStock()
+      "stock.current": () => getMockCurrentStock(),
+      "activity.unsettled": () => getMockActivityUnsettled()
     };
     const handler = routes[action];
     return typeof handler === "function" ? handler() : handler || [];
@@ -256,11 +257,14 @@
     if (payload.documentType === "ISSUE" && !payload.activityId) {
       throw new Error("Activity is required for issue documents");
     }
-    if ((payload.documentType === "RECEIVE" || payload.documentType === "RETURN") && !payload.activityId) {
-      throw new Error("Activity is required for return documents");
+    if ((payload.documentType === "RETURN" || payload.documentType === "UNSETTLED_OPENING") && !payload.activityId) {
+      throw new Error("Activity is required for unsettled stock documents");
     }
-    if ((payload.documentType === "RECEIVE" || payload.documentType === "RETURN") && !activityHasIssueMock(payload.activityId)) {
-      throw new Error("Return can be posted only for an activity that already has issue entries");
+    if (payload.documentType === "UNSETTLED_OPENING" && !payload.fromWarehouseId) {
+      throw new Error("Source warehouse is required for unsettled opening documents");
+    }
+    if (payload.documentType === "RETURN" && !activityHasIssueMock(payload.activityId) && !activityHasUnsettledSeedMock(payload.activityId)) {
+      throw new Error("Return can be posted only for an activity that already has issue or unsettled opening entries");
     }
 
     const documentId = nextMockId("DOC", mockData.documents, "documentId");
@@ -287,6 +291,10 @@
     return mockData.documents.some((document) => document.activityId === activityId && document.documentType === "ISSUE" && document.status !== "Cancelled");
   }
 
+  function activityHasUnsettledSeedMock(activityId) {
+    return mockData.documents.some((document) => document.activityId === activityId && document.documentType === "UNSETTLED_OPENING" && document.status !== "Cancelled");
+  }
+
   function getMockCurrentStock() {
     const index = {};
     mockData.documents.forEach((document) => {
@@ -297,9 +305,52 @@
           return;
         }
 
+        if (document.documentType === "UNSETTLED_OPENING") {
+          return;
+        }
+
         const inwardTypes = ["OPENING", "RECEIVE", "RETURN"];
         const quantity = inwardTypes.includes(document.documentType) ? Number(line.quantity || 0) : -Number(line.quantity || 0);
         addMockStock(index, document.toWarehouseId || document.fromWarehouseId, line.bookId, quantity);
+      });
+    });
+    return Object.values(index);
+  }
+
+  function getMockActivityUnsettled() {
+    const index = {};
+    mockData.documents.forEach((document) => {
+      const allowed = ["ISSUE", "RETURN", "SALE", "COMPLIMENTARY", "UNSETTLED_OPENING"];
+      if (!document.activityId || !allowed.includes(document.documentType)) {
+        return;
+      }
+      (document.lines || []).forEach((line) => {
+        const key = `${document.activityId}|${line.bookId}`;
+        if (!index[key]) {
+          index[key] = {
+            activityId: document.activityId,
+            bookId: line.bookId,
+            warehouseId: document.fromWarehouseId || document.toWarehouseId || "",
+            issuedQty: 0,
+            returnedQty: 0,
+            soldQty: 0,
+            complimentaryQty: 0,
+            unsettledQty: 0
+          };
+        }
+        const qty = Number(line.quantity || 0);
+        if (document.documentType === "ISSUE" || document.documentType === "UNSETTLED_OPENING") {
+          index[key].issuedQty += qty;
+          index[key].unsettledQty += qty;
+        } else if (document.documentType === "RETURN") {
+          index[key].returnedQty += qty;
+          index[key].unsettledQty -= qty;
+        } else if (document.documentType === "SALE") {
+          index[key].soldQty += qty;
+          index[key].unsettledQty -= qty;
+        } else if (document.documentType === "COMPLIMENTARY") {
+          index[key].complimentaryQty += qty;
+        }
       });
     });
     return Object.values(index);

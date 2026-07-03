@@ -20,7 +20,8 @@ function routeRequest_(request) {
     "activities.delete": function () { return deleteActivity_(payload); },
     "documents.list": function () { return readObjects_("Documents").map(mapDocument_); },
     "documents.create": function () { return createDocument_(payload); },
-    "stock.current": getCurrentStock_
+    "stock.current": getCurrentStock_,
+    "activity.unsettled": getActivityUnsettled_
   };
 
   if (!routes[action]) {
@@ -488,6 +489,10 @@ function mapDocument_(row) {
 }
 
 function appendLedgerRows_(documentId, lineId, documentType, documentDate, payload, line, quantity, rate, amount, now) {
+  if (documentType === "UNSETTLED_OPENING") {
+    return;
+  }
+
   if (documentType === "TRANSFER") {
     appendLedgerRow_(documentId, lineId, documentDate, payload.fromWarehouseId, payload.activityId, line.bookId, "TRANSFER_OUT", 0, quantity, rate, amount, now);
     appendLedgerRow_(documentId, lineId, documentDate, payload.toWarehouseId, payload.activityId, line.bookId, "TRANSFER_IN", quantity, 0, rate, amount, now);
@@ -531,12 +536,16 @@ function validateDocument_(payload) {
     throw new Error("Activity is required for issue documents");
   }
 
-  if ((payload.documentType === "RECEIVE" || payload.documentType === "RETURN") && !payload.activityId) {
-    throw new Error("Activity is required for return documents");
+  if ((payload.documentType === "RETURN" || payload.documentType === "UNSETTLED_OPENING") && !payload.activityId) {
+    throw new Error("Activity is required for unsettled stock documents");
   }
 
-  if ((payload.documentType === "RECEIVE" || payload.documentType === "RETURN") && !activityHasIssue_(payload.activityId)) {
-    throw new Error("Return can be posted only for an activity that already has issue entries");
+  if (payload.documentType === "UNSETTLED_OPENING" && !payload.fromWarehouseId) {
+    throw new Error("Source warehouse is required for unsettled opening documents");
+  }
+
+  if (payload.documentType === "RETURN" && !activityHasIssue_(payload.activityId) && !activityHasUnsettledSeed_(payload.activityId)) {
+    throw new Error("Return can be posted only for an activity that already has issue or unsettled opening entries");
   }
 
   payload.lines.forEach(function (line) {
@@ -555,6 +564,74 @@ function activityHasIssue_(activityId) {
   }
   return readObjects_("Documents").some(function (row) {
     return row["Activity ID"] === activityId && row["Document Type"] === "ISSUE" && row.Status !== "Cancelled";
+  });
+}
+
+function activityHasUnsettledSeed_(activityId) {
+  if (!activityId) {
+    return false;
+  }
+  return readObjects_("Documents").some(function (row) {
+    return row["Activity ID"] === activityId && row["Document Type"] === "UNSETTLED_OPENING" && row.Status !== "Cancelled";
+  });
+}
+
+function getActivityUnsettled_() {
+  const documents = readObjects_("Documents");
+  const lines = readObjects_("DocumentLines");
+  const docsById = {};
+  documents.forEach(function (doc) {
+    docsById[doc["Document ID"]] = doc;
+  });
+
+  const index = {};
+  lines.forEach(function (line) {
+    const doc = docsById[line["Document ID"]];
+    if (!doc || !doc["Activity ID"]) {
+      return;
+    }
+
+    const type = doc["Document Type"];
+    const allowed = ["ISSUE", "RETURN", "SALE", "COMPLIMENTARY", "UNSETTLED_OPENING"];
+    if (allowed.indexOf(type) === -1) {
+      return;
+    }
+
+    const key = doc["Activity ID"] + "|" + line["Book ID"];
+    if (!index[key]) {
+      index[key] = {
+        activityId: doc["Activity ID"],
+        bookId: line["Book ID"],
+        warehouseId: doc["From Warehouse ID"] || doc["To Warehouse ID"] || "",
+        issuedQty: 0,
+        returnedQty: 0,
+        soldQty: 0,
+        complimentaryQty: 0,
+        unsettledQty: 0,
+        documentCount: 0
+      };
+    }
+
+    const quantity = Number(line["Quantity"] || 0);
+    index[key].documentCount += 1;
+    if (type === "ISSUE" || type === "UNSETTLED_OPENING") {
+      index[key].issuedQty += quantity;
+      index[key].unsettledQty += quantity;
+    } else if (type === "RETURN") {
+      index[key].returnedQty += quantity;
+      index[key].unsettledQty -= quantity;
+    } else if (type === "SALE") {
+      index[key].soldQty += quantity;
+      index[key].unsettledQty -= quantity;
+    } else if (type === "COMPLIMENTARY") {
+      index[key].complimentaryQty += quantity;
+    }
+  });
+
+  return Object.keys(index).map(function (key) {
+    return index[key];
+  }).sort(function (a, b) {
+    return String(a.activityId).localeCompare(String(b.activityId)) || String(a.bookId).localeCompare(String(b.bookId));
   });
 }
 

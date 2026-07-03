@@ -24,7 +24,11 @@
     openingDraft: {},
     openingLines: [],
     openingBookQueries: [],
-    currentStock: []
+    unsettledDraft: {},
+    unsettledLines: [],
+    unsettledBookQueries: [],
+    currentStock: [],
+    activityUnsettled: []
   };
 
   const views = {
@@ -345,6 +349,7 @@
           <h2>Stock Documents</h2>
           <div class="row-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">Opening Stock</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openUnsettledOpeningForm()">Unsettled Opening</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Return Books</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Books</button>
             <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Books</button>
@@ -401,16 +406,20 @@
   }
 
   async function renderReports() {
-    const [stock, books, warehouses] = await Promise.all([
+    const [stock, books, warehouses, unsettled] = await Promise.all([
       window.erpApi.request("stock.current"),
       window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
-      window.erpApi.request("warehouses.list")
+      window.erpApi.request("warehouses.list"),
+      window.erpApi.request("activity.unsettled")
     ]);
     state.currentStock = stock.map(normalizeStockRow);
     state.books = books;
     state.warehouses = warehouses.map(normalizeWarehouse);
+    state.activityUnsettled = unsettled.map(normalizeActivityUnsettled);
     const totalQuantity = state.currentStock.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
     const activeWarehouses = new Set(state.currentStock.filter((row) => Number(row.quantity || 0) !== 0).map((row) => row.warehouseId)).size;
+    const unsettledQuantity = state.activityUnsettled.reduce((sum, row) => sum + Number(row.unsettledQty || 0), 0);
+    const unsettledActivities = new Set(state.activityUnsettled.filter((row) => Number(row.unsettledQty || 0) > 0).map((row) => row.activityId)).size;
 
     return `
       <section class="card">
@@ -419,7 +428,8 @@
           <div class="grid metrics">
             ${metric("Current Stock", totalQuantity, "Books available across warehouses")}
             ${metric("Warehouse Stock", activeWarehouses, "Warehouses with non-zero stock")}
-            ${metric("Activity Summary", "Ready", "Issued, sold, returned, balance")}
+            ${metric("Unsettled Qty", unsettledQuantity, "Open quantity by activity")}
+            ${metric("Activities Open", unsettledActivities, "Activities with unsettled balance")}
             ${metric("Book-wise Sales", "Ready", "Quantity and amount by book")}
           </div>
           <div class="section-gap">
@@ -427,6 +437,12 @@
               <h2>Current Stock</h2>
             </div>
             ${state.currentStock.length ? currentStockTable(state.currentStock) : '<div class="empty-state">No stock ledger entries yet.</div>'}
+          </div>
+          <div class="section-gap">
+            <div class="panel-header compact-header">
+              <h2>Activity Unsettled</h2>
+            </div>
+            ${state.activityUnsettled.length ? activityUnsettledTable(state.activityUnsettled) : '<div class="empty-state">No activity unsettled entries yet.</div>'}
           </div>
         </div>
       </section>
@@ -955,6 +971,19 @@
     };
   }
 
+  function normalizeActivityUnsettled(row) {
+    return {
+      activityId: row.activityId || row["Activity ID"] || "",
+      bookId: row.bookId || row["Book ID"] || "",
+      warehouseId: row.warehouseId || row["Warehouse ID"] || "",
+      issuedQty: Number(row.issuedQty || row["Issued Qty"] || 0),
+      returnedQty: Number(row.returnedQty || row["Returned Qty"] || 0),
+      soldQty: Number(row.soldQty || row["Sold Qty"] || 0),
+      complimentaryQty: Number(row.complimentaryQty || row["Complimentary Qty"] || 0),
+      unsettledQty: Number(row.unsettledQty || row["Unsettled Qty"] || 0)
+    };
+  }
+
   function getWarehouseName(warehouseId) {
     const warehouse = state.warehouses.find((item) => item.warehouseId === warehouseId);
     return warehouse ? warehouse.name : warehouseId || "-";
@@ -987,6 +1016,7 @@
     if (kind === "receive") return state.receiveBookQueries;
     if (kind === "transfer") return state.transferBookQueries;
     if (kind === "opening") return state.openingBookQueries;
+    if (kind === "unsettled") return state.unsettledBookQueries;
     return [];
   }
 
@@ -1074,11 +1104,50 @@
     `;
   }
 
+  function activityUnsettledTable(rows) {
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Activity</th>
+              <th>Warehouse</th>
+              <th>Book</th>
+              <th>Issued</th>
+              <th>Returned</th>
+              <th>Sold</th>
+              <th>Complimentary</th>
+              <th>Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows
+              .slice()
+              .sort((a, b) => getActivityName(a.activityId).localeCompare(getActivityName(b.activityId)) || getBookName(a.bookId).localeCompare(getBookName(b.bookId)))
+              .map((row) => `
+                <tr>
+                  <td>${escapeHtml(getActivityName(row.activityId))}</td>
+                  <td>${escapeHtml(getWarehouseName(row.warehouseId))}</td>
+                  <td>${escapeHtml(getBookName(row.bookId))}</td>
+                  <td>${Number(row.issuedQty || 0)}</td>
+                  <td>${Number(row.returnedQty || 0)}</td>
+                  <td>${Number(row.soldQty || 0)}</td>
+                  <td>${Number(row.complimentaryQty || 0)}</td>
+                  <td><strong>${Number(row.unsettledQty || 0)}</strong></td>
+                </tr>
+              `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
   function getDocumentLineByKind(kind, index) {
     if (kind === "issue") return state.issueLines[index];
     if (kind === "receive") return state.receiveLines[index];
     if (kind === "transfer") return state.transferLines[index];
     if (kind === "opening") return state.openingLines[index];
+    if (kind === "unsettled") return state.unsettledLines[index];
     return null;
   }
 
@@ -1091,6 +1160,8 @@
       renderTransferModal();
     } else if (kind === "opening") {
       renderOpeningStockModal();
+    } else if (kind === "unsettled") {
+      renderUnsettledOpeningModal();
     }
     if (index === undefined) {
       return;
@@ -1108,7 +1179,7 @@
   }
 
   function getIssuedActivityOptions() {
-    return state.activities.filter((activity) => state.documents.some((document) => document.activityId === activity.activityId && document.documentType === "ISSUE"));
+    return state.activities.filter((activity) => state.documents.some((document) => document.activityId === activity.activityId && (document.documentType === "ISSUE" || document.documentType === "UNSETTLED_OPENING")));
   }
 
   function isMainAdmin() {
@@ -1123,6 +1194,7 @@
   function documentTone(documentType) {
     const toneByType = {
       OPENING: "good",
+      UNSETTLED_OPENING: "good",
       RECEIVE: "good",
       RETURN: "good",
       TRANSFER: "warn",
@@ -1300,6 +1372,174 @@
       showToast(`Opening stock posted: ${result.documentId}`);
     } catch (error) {
       showToast(error.message || "Could not post opening stock");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function openUnsettledOpeningForm() {
+    state.unsettledDraft = {
+      documentDate: new Date().toISOString().slice(0, 10),
+      fromWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
+      activityId: "",
+      notes: "Legacy unsettled issue opening"
+    };
+    state.unsettledLines = [blankUnsettledLine()];
+    state.unsettledBookQueries = [""];
+    renderUnsettledOpeningModal();
+  }
+
+  function blankUnsettledLine() {
+    return { bookId: "", quantity: 1, rate: 0 };
+  }
+
+  function renderUnsettledOpeningModal() {
+    const activeBooks = state.books.filter((book) => book.active !== false);
+    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
+    const openActivities = state.activities.filter((activity) => activity.status !== "Completed" && activity.status !== "Cancelled");
+    const draft = state.unsettledDraft;
+
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+      <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="unsettledFormTitle">
+        <div class="modal-header">
+          <h2 id="unsettledFormTitle">Unsettled Opening</h2>
+          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+        </div>
+        <form class="form-grid" id="unsettledForm">
+          <label class="field">
+            <span>Date</span>
+            <input name="documentDate" type="date" value="${escapeAttribute(draft.documentDate)}" required>
+          </label>
+          <label class="field">
+            <span>Source Warehouse</span>
+            <select name="fromWarehouseId" required>
+              <option value="">Select warehouse</option>
+              ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.fromWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
+            </select>
+          </label>
+          ${openActivities.length ? `
+            <label class="field wide-field">
+              <span>Activity</span>
+              <select name="activityId" required>
+                <option value="">Select activity</option>
+                ${openActivities.map((activity) => `<option value="${escapeAttribute(activity.activityId)}" ${draft.activityId === activity.activityId ? "selected" : ""}>${escapeHtml(activity.name)} (${escapeHtml(getWarehouseName(activity.warehouseId))})</option>`).join("")}
+              </select>
+            </label>
+          ` : '<div class="empty-state wide-field">Create the activity first, then seed unsettled stock against it.</div>'}
+          <label class="field wide-field">
+            <span>Notes</span>
+            <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Unsettled opening note">
+          </label>
+          <div class="wide-field">
+            <div class="line-editor-header">
+              <h3>Books</h3>
+              <button class="small-button" type="button" onclick="window.erpApp.addUnsettledLine()">Add Line</button>
+            </div>
+            ${activeBooks.length ? unsettledLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before posting unsettled opening stock.</div>'}
+          </div>
+          <div class="form-actions">
+            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+            <button class="button" type="submit" ${(activeBooks.length && openActivities.length) ? "" : "disabled"}>Post Unsettled Opening</button>
+          </div>
+        </form>
+      </section>
+    `;
+
+    document.getElementById("unsettledForm").addEventListener("submit", saveUnsettledOpeningDocument);
+  }
+
+  function unsettledLinesMarkup(activeBooks) {
+    return `
+      <div class="line-table">
+        ${state.unsettledLines.map((line, index) => `
+          <div class="line-row">
+            ${bookPickerMarkup("unsettled", index, activeBooks, line, state.unsettledBookQueries[index] || "")}
+            <label class="field">
+              <span>Qty</span>
+              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateUnsettledLine(${index}, 'quantity', this.value)" required>
+            </label>
+            <label class="field">
+              <span>Rate</span>
+              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.rate)}" onchange="window.erpApp.updateUnsettledLine(${index}, 'rate', this.value)">
+            </label>
+            <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeUnsettledLine(${index})">Remove</button>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function addUnsettledLine() {
+    syncUnsettledDraft();
+    state.unsettledLines.push(blankUnsettledLine());
+    state.unsettledBookQueries.push("");
+    renderUnsettledOpeningModal();
+  }
+
+  function removeUnsettledLine(index) {
+    syncUnsettledDraft();
+    state.unsettledLines.splice(index, 1);
+    state.unsettledBookQueries.splice(index, 1);
+    if (!state.unsettledLines.length) {
+      state.unsettledLines.push(blankUnsettledLine());
+      state.unsettledBookQueries.push("");
+    }
+    renderUnsettledOpeningModal();
+  }
+
+  function updateUnsettledLine(index, key, value) {
+    if (!state.unsettledLines[index]) return;
+    state.unsettledLines[index][key] = key === "bookId" ? value : Number(value || 0);
+  }
+
+  function syncUnsettledDraft() {
+    const form = document.getElementById("unsettledForm");
+    if (!form) return;
+    const data = new FormData(form);
+    state.unsettledDraft = {
+      documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
+      fromWarehouseId: data.get("fromWarehouseId") || "",
+      activityId: data.get("activityId") || "",
+      notes: data.get("notes") || ""
+    };
+  }
+
+  async function saveUnsettledOpeningDocument(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const lines = state.unsettledLines
+      .filter((line) => line.bookId && Number(line.quantity || 0) > 0)
+      .map((line) => ({
+        bookId: line.bookId,
+        quantity: Number(line.quantity),
+        rate: Number(line.rate || 0)
+      }));
+
+    if (!lines.length) {
+      showToast("Add at least one book line");
+      return;
+    }
+
+    const payload = {
+      documentType: "UNSETTLED_OPENING",
+      documentDate: data.get("documentDate"),
+      fromWarehouseId: data.get("fromWarehouseId"),
+      activityId: data.get("activityId"),
+      status: "Posted",
+      notes: data.get("notes").trim(),
+      lines
+    };
+
+    setLoading(true);
+    try {
+      const result = await window.erpApi.request("documents.create", payload);
+      closeModal();
+      content.innerHTML = await renderDocuments();
+      showToast(`Unsettled opening posted: ${result.documentId}`);
+    } catch (error) {
+      showToast(error.message || "Could not post unsettled opening stock");
     } finally {
       setLoading(false);
     }
@@ -1907,6 +2147,10 @@
     addOpeningLine,
     removeOpeningLine,
     updateOpeningLine,
+    openUnsettledOpeningForm,
+    addUnsettledLine,
+    removeUnsettledLine,
+    updateUnsettledLine,
     setBookPickerQuery,
     pickBookFromPicker,
     openIssueForm,
