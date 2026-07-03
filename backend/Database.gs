@@ -22,7 +22,7 @@ function ensureSheet_(spreadsheet, sheetName, headers) {
     return existing[index] !== header;
   });
 
-  if (sheetName === "Activities" && existing[0] === "Activity ID" && existing.indexOf("Devotee ID") === -1) {
+  if (sheetName === "Activities" && existing[0] === "Activity ID") {
     return;
   }
 
@@ -111,12 +111,18 @@ function seedDevotees_() {
 
 function migrateActivitiesSheet_() {
   const sheet = getSheet_("Activities");
-  const headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), ERP_SCHEMA.Activities.length)).getValues()[0];
-  if (headers.indexOf("Devotee ID") !== -1) {
-    return;
+  let headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), ERP_SCHEMA.Activities.length)).getValues()[0];
+
+  if (headers.indexOf("Devotee ID") === -1) {
+    sheet.insertColumnBefore(4);
+    headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), ERP_SCHEMA.Activities.length)).getValues()[0];
   }
 
-  sheet.insertColumnBefore(4);
+  if (headers.indexOf("Settled At") === -1) {
+    const createdAtIndex = headers.indexOf("Created At");
+    sheet.insertColumnBefore(createdAtIndex > 0 ? createdAtIndex + 1 : Math.max(1, headers.length));
+  }
+
   sheet.getRange(1, 1, 1, ERP_SCHEMA.Activities.length).setValues([ERP_SCHEMA.Activities]);
   sheet.setFrozenRows(1);
 }

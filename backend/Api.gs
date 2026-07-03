@@ -306,7 +306,8 @@ function mapActivity_(row) {
     endDate: row["End Date"],
     warehouseId: row["Warehouse ID"],
     spoc: row.SPOC,
-    status: row.Status
+    status: row.Status,
+    settledAt: row["Settled At"]
   };
 }
 
@@ -323,6 +324,7 @@ function createActivity_(payload) {
     "Warehouse ID": payload.warehouseId,
     "SPOC": payload.spoc || "",
     "Status": payload.status || "Draft",
+    "Settled At": payload.status === "Completed" ? now : "",
     "Created At": now,
     "Updated At": now
   };
@@ -364,6 +366,7 @@ function updateActivity_(payload) {
     "Warehouse ID": payload.warehouseId,
     "SPOC": payload.spoc || "",
     "Status": payload.status || "Draft",
+    "Settled At": current["Settled At"] || (payload.status === "Completed" ? new Date() : ""),
     "Created At": current["Created At"] || new Date(),
     "Updated At": new Date()
   };
@@ -757,6 +760,7 @@ function getWarehouseMonthlyReport_(payload) {
   if (!warehouse) {
     throw new Error("Warehouse not found");
   }
+  const isMainWarehouse = (warehouse["Warehouse Name"] || "").toLowerCase().indexOf("gmb") === 0;
 
   const month = payload && payload.month ? String(payload.month) : Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM");
   const window = getMonthWindow_(month);
@@ -839,7 +843,7 @@ function getWarehouseMonthlyReport_(payload) {
       rowsByBook[bookId].transferOutQty += outQty;
       const toName = doc ? getWarehouseName_(doc["To Warehouse ID"]) : "";
       rowsByBook[bookId].transferBreakdown[toName || "Transfer Out"] = (rowsByBook[bookId].transferBreakdown[toName || "Transfer Out"] || 0) + outQty;
-    } else if (movement === "SALE") {
+    } else if (movement === "SALE" && !isMainWarehouse) {
       rowsByBook[bookId].saleQty += outQty;
       const dayKey = Utilities.formatDate(rowDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
       rowsByBook[bookId].daySales[dayKey] = (rowsByBook[bookId].daySales[dayKey] || 0) + outQty;
@@ -852,7 +856,7 @@ function getWarehouseMonthlyReport_(payload) {
     rowsByBook[bookId].closingQty += net;
   });
 
-  if ((warehouse["Warehouse Name"] || "").toLowerCase().indexOf("gmb") === 0) {
+  if (isMainWarehouse) {
     getActivityUnsettled_().forEach(function (row) {
       const activity = activityById[row.activityId];
       if (!activity || activity["Warehouse ID"] !== warehouseId) {
@@ -868,11 +872,37 @@ function getWarehouseMonthlyReport_(payload) {
     });
   }
 
-  if ((warehouse["Warehouse Name"] || "").toLowerCase().indexOf("gmb") === 0) {
+  if (isMainWarehouse) {
+    const activityLedgerRows = getActivityLedger_({});
+    activityLedgerRows.forEach(function (row) {
+      const activity = activityById[row.activityId];
+      if (!activity || activity["Warehouse ID"] !== warehouseId) {
+        return;
+      }
+      if (String(activity.Status || "").toLowerCase() !== "completed") {
+        return;
+      }
+      const settledAtValue = activity["Settled At"] || activity["Updated At"] || "";
+      const settledAt = settledAtValue ? new Date(settledAtValue) : null;
+      if (!settledAt || settledAt < window.start || settledAt > window.end) {
+        return;
+      }
+      if (!rowsByBook[row.bookId]) {
+        return;
+      }
+      const dayKey = Utilities.formatDate(settledAt, Session.getScriptTimeZone(), "yyyy-MM-dd");
+      const settledNet = Math.max(0, Number(row.issueQty || 0) - Number(row.returnQty || 0));
+      if (settledNet > 0) {
+        rowsByBook[row.bookId].saleQty += settledNet;
+        rowsByBook[row.bookId].daySales[dayKey] = (rowsByBook[row.bookId].daySales[dayKey] || 0) + settledNet;
+      }
+    });
+  }
+
+  if (isMainWarehouse) {
     Object.keys(rowsByBook).forEach(function (bookId) {
       const row = rowsByBook[bookId];
-      const settledNet = Math.max(0, Number(row.settledIssueQty || 0) - Number(row.settledReturnQty || 0));
-      row.saleQty += settledNet;
+      row.saleQty = Number(row.saleQty || 0);
     });
   }
 
@@ -892,7 +922,7 @@ function getWarehouseMonthlyReport_(payload) {
     warehouseId: warehouseId,
     warehouseName: warehouse["Warehouse Name"],
     month: month,
-    reportMode: (warehouse["Warehouse Name"] || "").toLowerCase().indexOf("gmb") === 0 ? "main" : "branch",
+    reportMode: isMainWarehouse ? "main" : "branch",
     dayColumns: dayColumns,
     rows: rows
   };

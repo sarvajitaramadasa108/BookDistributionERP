@@ -13,6 +13,7 @@
     activitySearch: "",
     activityStatus: "open",
     reportDevoteeId: "",
+    showWarehouseDayWiseSales: false,
     documents: [],
     issueDraft: {},
     issueLines: [],
@@ -494,10 +495,12 @@
                   <input type="month" value="${escapeAttribute(state.reportMonth)}" onchange="window.erpApp.setReportMonth(this.value)">
                 </label>
                 <button class="button" type="button" onclick="window.erpApp.loadWarehouseReport()">Get Report</button>
+                <button class="button secondary" type="button" onclick="window.erpApp.loadWarehouseDayWiseSales()">Get Day Wise Sales</button>
                 <button class="button secondary" type="button" onclick="window.erpApp.downloadWarehouseReport()">Download Excel</button>
               </div>
             </div>
             ${state.warehouseMonthlyReport ? warehouseMonthlyMarkup(state.warehouseMonthlyReport) : '<div class="empty-state">No warehouse report loaded.</div>'}
+            ${state.warehouseMonthlyReport && state.showWarehouseDayWiseSales ? warehouseDayWiseMarkup(state.warehouseMonthlyReport) : ""}
           </div>
           <div class="section-gap">
             <div class="panel-header compact-header">
@@ -1122,7 +1125,7 @@
               <th>Opening</th>
               ${isMain
                 ? `${transferTargets.map((warehouse) => `<th>To ${escapeHtml(warehouse.name)}</th>`).join("")}<th>Sales</th><th>Complimentary</th><th>Unsettled</th><th>Closing</th>`
-                : `<th>Transfer In</th><th>Sales</th><th>Closing</th><th>Day Sales</th>`}
+                : `<th>Transfer In</th><th>Sales</th><th>Closing</th>`}
             </tr>
           </thead>
           <tbody>
@@ -1142,9 +1145,6 @@
 
   function renderWarehouseReportRow(row, report, transferTargets) {
     const isMain = report.reportMode === "main";
-    const dayBreakdown = report.dayColumns && report.dayColumns.length
-      ? `<div class="mini-grid">${report.dayColumns.map((day) => `<span>${escapeHtml(day)}: ${Number((row.daySalesMap && row.daySalesMap[day]) || 0)}</span>`).join("")}</div>`
-      : "-";
     return `
       <tr>
         <td>${escapeHtml(row.bookId)}</td>
@@ -1152,8 +1152,42 @@
         <td>${Number(row.openingQty || 0)}</td>
         ${isMain
           ? `${transferTargets.map((warehouse) => `<td>${Number(((row.transferMap || {})[warehouse.name]) || 0)}</td>`).join("")}<td>${Number(row.saleQty || 0)}</td><td>${Number(row.complimentaryQty || 0)}</td><td>${Number(row.unsettledQty || 0)}</td><td><strong>${Number(row.closingQty || 0)}</strong></td>`
-          : `<td>${Number(row.transferInQty || 0)}</td><td>${Number(row.saleQty || 0)}</td><td><strong>${Number(row.closingQty || 0)}</strong></td><td>${dayBreakdown}</td>`}
+          : `<td>${Number(row.transferInQty || 0)}</td><td>${Number(row.saleQty || 0)}</td><td><strong>${Number(row.closingQty || 0)}</strong></td>`}
       </tr>
+    `;
+  }
+
+  function warehouseDayWiseMarkup(report) {
+    if (!report || !report.rows) {
+      return "";
+    }
+
+    return `
+      <div class="section-gap">
+        <div class="panel-header compact-header">
+          <h2>Day Wise Sales</h2>
+        </div>
+        <div class="table-wrap warehouse-daywise-wrap">
+          <table class="warehouse-daywise-table">
+            <thead>
+              <tr>
+                <th>ERP Code</th>
+                <th>Book</th>
+                ${report.dayColumns.map((day) => `<th>${escapeHtml(day)}</th>`).join("")}
+              </tr>
+            </thead>
+            <tbody>
+              ${report.rows.map((row) => `
+                <tr>
+                  <td>${escapeHtml(row.bookId)}</td>
+                  <td><strong>${escapeHtml(row.bookName)}</strong></td>
+                  ${report.dayColumns.map((day) => `<td>${Number((row.daySalesMap && row.daySalesMap[day]) || 0)}</td>`).join("")}
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
     `;
   }
 
@@ -1528,16 +1562,18 @@
   async function setReportWarehouse(value) {
     state.reportWarehouseId = value;
     state.warehouseMonthlyReport = null;
+    state.showWarehouseDayWiseSales = false;
     content.innerHTML = await renderReports();
   }
 
   async function setReportMonth(value) {
     state.reportMonth = value;
     state.warehouseMonthlyReport = null;
+    state.showWarehouseDayWiseSales = false;
     content.innerHTML = await renderReports();
   }
 
-  async function loadWarehouseReport() {
+  async function loadWarehouseReport(showDayWise = false) {
     if (!state.reportWarehouseId || !state.reportMonth) {
       showToast("Select a warehouse and month first");
       return;
@@ -1550,14 +1586,20 @@
         month: state.reportMonth
       });
       state.warehouseMonthlyReport = normalizeWarehouseMonthlyReport(report);
+      state.showWarehouseDayWiseSales = showDayWise;
       content.innerHTML = await renderReports();
     } catch (error) {
       state.warehouseMonthlyReport = null;
+      state.showWarehouseDayWiseSales = false;
       content.innerHTML = await renderReports();
       showToast(error.message || "Could not load warehouse report");
     } finally {
       setLoading(false);
     }
+  }
+
+  function loadWarehouseDayWiseSales() {
+    return loadWarehouseReport(true);
   }
 
   async function settleActivity(activityId) {
@@ -2562,6 +2604,7 @@
     setReportWarehouse,
     setReportMonth,
     loadWarehouseReport,
+    loadWarehouseDayWiseSales,
     downloadWarehouseReport,
     settleActivity,
     openOpeningStockForm,

@@ -3,7 +3,7 @@ const ERP_SCHEMA = {
   Books: ["ERP Code", "Book Name", "Book Type", "Purchase Price", "Sale Price", "Active", "Created At", "Updated At"],
   Warehouses: ["Warehouse ID", "Warehouse Name", "Type", "SPOC", "Mobile", "Active", "Created At", "Updated At"],
   Devotees: ["Devotee ID", "Devotee Name", "Active", "Created At", "Updated At"],
-  Activities: ["Activity ID", "Name", "Type", "Devotee ID", "Start Date", "End Date", "Warehouse ID", "SPOC", "Status", "Created At", "Updated At"],
+  Activities: ["Activity ID", "Name", "Type", "Devotee ID", "Start Date", "End Date", "Warehouse ID", "SPOC", "Status", "Settled At", "Created At", "Updated At"],
   Volunteers: ["Volunteer ID", "Name", "Mobile", "Default Warehouse ID", "Active", "Created At", "Updated At"],
   Documents: ["Document ID", "Document Type", "Document Date", "From Warehouse ID", "To Warehouse ID", "Activity ID", "Volunteer ID", "Status", "Notes", "Created At", "Created By", "Updated At"],
   DocumentLines: ["Line ID", "Document ID", "Book ID", "Quantity", "Rate", "Amount", "Line Notes"],

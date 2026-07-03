@@ -321,8 +321,17 @@ table.warehouse-report-table {
   table-layout: fixed;
 }
 
+table.warehouse-daywise-table {
+  min-width: 0;
+  table-layout: fixed;
+}
+
 .warehouse-report-wrap {
   overflow-x: visible;
+}
+
+.warehouse-daywise-wrap {
+  overflow-x: auto;
 }
 
 .warehouse-report-table th,
