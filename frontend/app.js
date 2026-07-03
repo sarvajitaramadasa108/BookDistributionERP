@@ -431,8 +431,7 @@
       window.erpApi.request("warehouses.list"),
       window.erpApi.request("devotees.list"),
       window.erpApi.request("activities.list"),
-      window.erpApi.request("activity.unsettled"),
-      window.erpApi.request("reports.activityLedger", { devoteeId: state.activityReportDevoteeId })
+      window.erpApi.request("activity.unsettled")
     ]);
     const stockResult = results[0];
     const booksResult = results[1];
@@ -440,7 +439,6 @@
     const devoteesResult = results[3];
     const activitiesResult = results[4];
     const unsettledResult = results[5];
-    const activityLedgerResult = results[6];
     const reportErrors = [];
     if (stockResult.status === "rejected") reportErrors.push("Current stock");
     if (booksResult.status === "rejected") reportErrors.push("Books");
@@ -448,28 +446,24 @@
     if (devoteesResult.status === "rejected") reportErrors.push("Devotees");
     if (activitiesResult.status === "rejected") reportErrors.push("Activities");
     if (unsettledResult.status === "rejected") reportErrors.push("Unsettled stock");
-    if (activityLedgerResult.status === "rejected") reportErrors.push("Activity ledger");
 
     if (stockResult.status === "fulfilled") {
-      state.currentStock = stockResult.value.map(normalizeStockRow);
+      state.currentStock = Array.isArray(stockResult.value) ? stockResult.value.map(normalizeStockRow) : [];
     }
     if (booksResult.status === "fulfilled") {
-      state.books = booksResult.value;
+      state.books = Array.isArray(booksResult.value) ? booksResult.value : [];
     }
     if (warehousesResult.status === "fulfilled") {
-      state.warehouses = warehousesResult.value.map(normalizeWarehouse);
+      state.warehouses = Array.isArray(warehousesResult.value) ? warehousesResult.value.map(normalizeWarehouse) : [];
     }
     if (devoteesResult.status === "fulfilled") {
-      state.devotees = devoteesResult.value.map(normalizeDevotee);
+      state.devotees = Array.isArray(devoteesResult.value) ? devoteesResult.value.map(normalizeDevotee) : [];
     }
     if (activitiesResult.status === "fulfilled") {
-      state.activities = activitiesResult.value.map(normalizeActivity);
+      state.activities = Array.isArray(activitiesResult.value) ? activitiesResult.value.map(normalizeActivity) : [];
     }
     if (unsettledResult.status === "fulfilled") {
-      state.activityUnsettled = unsettledResult.value.map(normalizeActivityUnsettled);
-    }
-    if (activityLedgerResult.status === "fulfilled") {
-      state.activityLedger = activityLedgerResult.value.map(normalizeActivityLedger);
+      state.activityUnsettled = Array.isArray(unsettledResult.value) ? unsettledResult.value.map(normalizeActivityUnsettled) : [];
     }
     state.reportErrors = reportErrors;
 
@@ -606,7 +600,11 @@
   }
 
   async function renderReports() {
-    await loadReportsData();
+    try {
+      await loadReportsData();
+    } catch (error) {
+      state.reportErrors = [error.message || "Reports data"];
+    }
     return renderReportsMarkup();
   }
 
