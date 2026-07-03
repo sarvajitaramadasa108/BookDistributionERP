@@ -194,6 +194,18 @@ textarea {
   font-size: 12px;
 }
 
+.activity-report-metrics {
+  margin-top: 12px;
+}
+
+.report-activity-filters {
+  margin-top: 12px;
+}
+
+.report-picker-results {
+  max-height: 220px;
+}
+
 .panel-header {
   display: flex;
   align-items: center;
@@ -346,6 +358,10 @@ table.warehouse-daywise-table {
   overflow-x: auto;
 }
 
+.activity-report-wrap {
+  overflow-x: auto;
+}
+
 .warehouse-report-table th,
 .warehouse-report-table td {
   padding: 8px 6px;
@@ -360,6 +376,24 @@ table.warehouse-daywise-table {
 
 .warehouse-report-table td {
   font-size: 11px;
+}
+
+.activity-report-table {
+  min-width: 1600px;
+  table-layout: fixed;
+}
+
+.activity-report-table th,
+.activity-report-table td {
+  padding: 8px 6px;
+  font-size: 11px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.activity-report-table th {
+  vertical-align: middle;
 }
 
 .mini-grid {

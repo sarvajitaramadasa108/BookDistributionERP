@@ -13,7 +13,10 @@
     activitySearch: "",
     activityStatus: "open",
     reportView: "warehouse",
-    reportDevoteeId: "",
+    activityReportDevoteeId: "",
+    activityReportDevoteeSearch: "",
+    activityReportActivityId: "",
+    activityReportActivitySearch: "",
     showWarehouseDayWiseSales: false,
     documents: [],
     issueDraft: {},
@@ -37,6 +40,7 @@
     currentStock: [],
     activityUnsettled: [],
     activityLedger: [],
+    activityMonthlyReport: null,
     warehouseMonthlyReport: null,
     reportWarehouseId: "",
     reportMonth: new Date().toISOString().slice(0, 7)
@@ -425,20 +429,23 @@
       window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
       window.erpApi.request("warehouses.list"),
       window.erpApi.request("devotees.list"),
+      window.erpApi.request("activities.list"),
       window.erpApi.request("activity.unsettled"),
-      window.erpApi.request("reports.activityLedger", { devoteeId: state.reportDevoteeId })
+      window.erpApi.request("reports.activityLedger", { devoteeId: state.activityReportDevoteeId })
     ]);
     const stockResult = results[0];
     const booksResult = results[1];
     const warehousesResult = results[2];
     const devoteesResult = results[3];
-    const unsettledResult = results[4];
-    const activityLedgerResult = results[5];
+    const activitiesResult = results[4];
+    const unsettledResult = results[5];
+    const activityLedgerResult = results[6];
     const reportErrors = [];
     if (stockResult.status === "rejected") reportErrors.push("Current stock");
     if (booksResult.status === "rejected") reportErrors.push("Books");
     if (warehousesResult.status === "rejected") reportErrors.push("Warehouses");
     if (devoteesResult.status === "rejected") reportErrors.push("Devotees");
+    if (activitiesResult.status === "rejected") reportErrors.push("Activities");
     if (unsettledResult.status === "rejected") reportErrors.push("Unsettled stock");
     if (activityLedgerResult.status === "rejected") reportErrors.push("Activity ledger");
 
@@ -453,6 +460,9 @@
     }
     if (devoteesResult.status === "fulfilled") {
       state.devotees = devoteesResult.value.map(normalizeDevotee);
+    }
+    if (activitiesResult.status === "fulfilled") {
+      state.activities = activitiesResult.value.map(normalizeActivity);
     }
     if (unsettledResult.status === "fulfilled") {
       state.activityUnsettled = unsettledResult.value.map(normalizeActivityUnsettled);
@@ -473,6 +483,9 @@
     const unsettledQuantity = state.activityUnsettled.reduce((sum, row) => sum + Number(row.unsettledQty || 0), 0);
     const unsettledActivities = new Set(state.activityUnsettled.filter((row) => Number(row.unsettledQty || 0) > 0).map((row) => row.activityId)).size;
     const reportView = state.reportView || "warehouse";
+    const reportStats = reportView === "activity" && state.activityMonthlyReport
+      ? activityMonthlyStats(state.activityMonthlyReport)
+      : null;
 
     return `
       <section class="card">
@@ -520,16 +533,58 @@
             ` : ""}
             ${reportView === "activity" ? `
               <div class="panel-header compact-header">
-                <h2>Activity Ledger</h2>
-                <label class="field compact-field">
-                  <span>Devotee</span>
-                  <select onchange="window.erpApp.setReportDevotee(this.value)">
-                    <option value="">All devotees</option>
-                    ${state.devotees.map((devotee) => `<option value="${escapeAttribute(devotee.devoteeId)}" ${state.reportDevoteeId === devotee.devoteeId ? "selected" : ""}>${escapeHtml(devotee.devoteeName)}</option>`).join("")}
-                  </select>
-                </label>
+                <h2>Activity Wise Report</h2>
+                <div class="row-actions">
+                  <label class="field compact-field">
+                    <span>Month</span>
+                    <input type="month" value="${escapeAttribute(state.reportMonth)}" onchange="window.erpApp.setReportMonth(this.value)">
+                  </label>
+                  <button class="button" type="button" onclick="window.erpApp.loadActivityReport()">Get Report</button>
+                  <button class="button secondary" type="button" onclick="window.erpApp.downloadActivityReport()">Download Excel</button>
+                </div>
               </div>
-              ${state.activityLedger.length ? activityLedgerTable(state.activityLedger) : '<div class="empty-state">No activity ledger rows yet.</div>'}
+              <div class="grid two-col report-activity-filters">
+                <div>
+                  <label class="field compact-field">
+                    <span>Devotee search</span>
+                    <input type="search" value="${escapeAttribute(state.activityReportDevoteeSearch)}" placeholder="Type devotee id or name" oninput="window.erpApp.setActivityReportDevoteeSearch(this.value)">
+                  </label>
+                  <div class="book-picker-results report-picker-results">
+                    ${activityReportDevoteeOptions().map((devotee) => `
+                      <button class="book-picker-item ${state.activityReportDevoteeId === devotee.devoteeId ? "selected" : ""}" type="button" onclick="window.erpApp.selectActivityReportDevotee('${escapeAttribute(devotee.devoteeId)}')">
+                        <span class="book-picker-name">${escapeHtml(devotee.devoteeName)}</span>
+                        <span class="book-picker-meta">${escapeHtml(devotee.devoteeId)}</span>
+                      </button>
+                    `).join("") || '<div class="book-picker-empty">No matching devotees.</div>'}
+                  </div>
+                </div>
+                <div>
+                  <label class="field compact-field">
+                    <span>Activity search</span>
+                    <input type="search" value="${escapeAttribute(state.activityReportActivitySearch)}" placeholder="Type activity id or name" oninput="window.erpApp.setActivityReportActivitySearch(this.value)">
+                  </label>
+                  <div class="book-picker-results report-picker-results">
+                    ${activityReportActivityOptions().map((activity) => `
+                      <button class="book-picker-item ${state.activityReportActivityId === activity.activityId ? "selected" : ""}" type="button" onclick="window.erpApp.selectActivityReportActivity('${escapeAttribute(activity.activityId)}')">
+                        <span class="book-picker-name">${escapeHtml(activity.name || activity.activityId)}</span>
+                        <span class="book-picker-meta">${escapeHtml(activity.activityId)} | ${escapeHtml(getWarehouseName(activity.warehouseId))}</span>
+                      </button>
+                    `).join("") || '<div class="book-picker-empty">No matching activities.</div>'}
+                  </div>
+                </div>
+              </div>
+              ${state.activityMonthlyReport ? `
+                ${reportStats ? `
+                  <div class="grid metrics reports-metrics activity-report-metrics">
+                    ${metric("Docs", reportStats.documentCount, "Documents in the selected month")}
+                    ${metric("Issue Qty", reportStats.issueQty, "Issue quantity total")}
+                    ${metric("Return Qty", reportStats.returnQty, "Return quantity total")}
+                    ${metric("Sale Qty", reportStats.saleQty, "Sale quantity total")}
+                    ${metric("Unsettled Qty", reportStats.unsettledQty, "Open balance for the activity")}
+                  </div>
+                ` : ""}
+                ${activityMonthlyMarkup(state.activityMonthlyReport)}
+              ` : '<div class="empty-state">Select a devotee, then an activity, and click Get Report.</div>'}
             ` : ""}
             ${reportView === "unsettled" ? `
               <div class="panel-header compact-header">
@@ -1146,6 +1201,211 @@
     `;
   }
 
+  function activityReportDevoteeOptions() {
+    const query = state.activityReportDevoteeSearch.trim().toLowerCase();
+    return state.devotees
+      .filter((devotee) => {
+        const haystack = [devotee.devoteeId, devotee.devoteeName].join(" ").toLowerCase();
+        return !query || haystack.indexOf(query) !== -1;
+      })
+      .slice(0, 12);
+  }
+
+  function activityReportActivityOptions() {
+    const query = state.activityReportActivitySearch.trim().toLowerCase();
+    return state.activities
+      .filter((activity) => {
+        if (state.activityReportDevoteeId && activity.devoteeId !== state.activityReportDevoteeId) {
+          return false;
+        }
+        const haystack = [activity.activityId, activity.name, getWarehouseName(activity.warehouseId), activity.status].join(" ").toLowerCase();
+        return !query || haystack.indexOf(query) !== -1;
+      })
+      .slice(0, 12);
+  }
+
+  function activityMonthlyStats(report) {
+    if (!report) {
+      return null;
+    }
+    return {
+      documentCount: Number(report.documents && report.documents.length || 0),
+      issueQty: Number(report.totals && report.totals.issueQty || 0),
+      returnQty: Number(report.totals && report.totals.returnQty || 0),
+      saleQty: Number(report.totals && report.totals.saleQty || 0),
+      unsettledQty: Number(report.totals && report.totals.unsettledQty || 0)
+    };
+  }
+
+  function activityDocumentWorthTotals(report) {
+    const docs = report && report.documents ? report.documents : [];
+    const totals = docs.map(() => 0);
+    let overall = 0;
+    (report && report.rows ? report.rows : []).forEach((row) => {
+      const price = getBookSalePrice(row.bookId);
+      (row.docMapArray || []).forEach((doc, index) => {
+        const quantity = Number(doc.issueQty || 0) +
+          Number(doc.returnQty || 0) +
+          Number(doc.saleQty || 0) +
+          Number(doc.unsettledQty || 0) +
+          Number(doc.complimentaryQty || 0);
+        const value = quantity * price;
+        totals[index] += value;
+        overall += value;
+      });
+    });
+    return { totals: totals, overall: overall };
+  }
+
+  function activityMonthlyMarkup(report) {
+    if (!report || !report.rows) {
+      return '<div class="empty-state">No activity report available.</div>';
+    }
+    const docs = report.documents || [];
+    const worthTotals = activityDocumentWorthTotals(report);
+    return `
+      <div class="table-wrap activity-report-wrap">
+        <table class="activity-report-table">
+          <thead>
+            <tr>
+              <th rowspan="2">ERP Code</th>
+              <th rowspan="2">Book</th>
+              ${docs.map((doc) => `<th colspan="5">${escapeHtml(doc.documentId)}</th>`).join("")}
+              <th rowspan="2">Issue</th>
+              <th rowspan="2">Return</th>
+              <th rowspan="2">Sale</th>
+              <th rowspan="2">Unsettled</th>
+              <th rowspan="2">Complimentary</th>
+              <th rowspan="2">Worth</th>
+            </tr>
+            <tr>
+              ${docs.map(() => "<th>Issue</th><th>Return</th><th>Sale</th><th>Unsettled</th><th>Complimentary</th>").join("")}
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="worth-row">
+              <td colspan="2"><strong>Worth</strong></td>
+              ${worthTotals.totals.map((value) => `<td colspan="5">${money(value)}</td>`).join("")}
+              <td>${Number(report.totals && report.totals.issueQty || 0)}</td>
+              <td>${Number(report.totals && report.totals.returnQty || 0)}</td>
+              <td>${Number(report.totals && report.totals.saleQty || 0)}</td>
+              <td>${Number(report.totals && report.totals.unsettledQty || 0)}</td>
+              <td>${Number(report.totals && report.totals.complimentaryQty || 0)}</td>
+              <td>${money(worthTotals.overall || report.totals && report.totals.worth || 0)}</td>
+            </tr>
+            ${report.rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.bookId)}</td>
+                <td><strong>${escapeHtml(row.bookName)}</strong></td>
+                ${(row.docMapArray || []).map((doc) => `
+                  <td>${Number(doc.issueQty || 0)}</td>
+                  <td>${Number(doc.returnQty || 0)}</td>
+                  <td>${Number(doc.saleQty || 0)}</td>
+                  <td>${Number(doc.unsettledQty || 0)}</td>
+                  <td>${Number(doc.complimentaryQty || 0)}</td>
+                `).join("")}
+                <td>${Number(row.issueQty || 0)}</td>
+                <td>${Number(row.returnQty || 0)}</td>
+                <td>${Number(row.saleQty || 0)}</td>
+                <td><strong>${Number(row.unsettledQty || 0)}</strong></td>
+                <td>${Number(row.complimentaryQty || 0)}</td>
+                <td>${money(row.worth || 0)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function downloadActivityReport() {
+    const report = state.activityMonthlyReport;
+    if (!report || !report.rows) {
+      showToast("Load an activity report first");
+      return;
+    }
+
+    const html = buildActivityMonthlyExcel(report);
+    const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const safeName = String(report.activityName || "Activity").replace(/[^\w.-]+/g, "_");
+    link.href = url;
+    link.download = `${safeName}-${report.month || "report"}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function buildActivityMonthlyExcel(report) {
+    const docs = report.documents || [];
+    const worthTotals = activityDocumentWorthTotals(report);
+    const headerTop = `
+      <tr>
+        <th rowspan="2">ERP Code</th>
+        <th rowspan="2">Book</th>
+        ${docs.map((doc) => `<th colspan="5">${escapeHtml(doc.documentId)}</th>`).join("")}
+        <th rowspan="2">Issue</th>
+        <th rowspan="2">Return</th>
+        <th rowspan="2">Sale</th>
+        <th rowspan="2">Unsettled</th>
+        <th rowspan="2">Complimentary</th>
+        <th rowspan="2">Worth</th>
+      </tr>
+      <tr>${docs.map(() => "<th>Issue</th><th>Return</th><th>Sale</th><th>Unsettled</th><th>Complimentary</th>").join("")}</tr>
+    `;
+    const totalsRow = `
+      <tr>
+        <td colspan="2"><strong>Worth</strong></td>
+        ${worthTotals.totals.map((value) => `<td colspan="5">${escapeHtml(String(value))}</td>`).join("")}
+        <td>${Number(report.totals && report.totals.issueQty || 0)}</td>
+        <td>${Number(report.totals && report.totals.returnQty || 0)}</td>
+        <td>${Number(report.totals && report.totals.saleQty || 0)}</td>
+        <td>${Number(report.totals && report.totals.unsettledQty || 0)}</td>
+        <td>${Number(report.totals && report.totals.complimentaryQty || 0)}</td>
+        <td>${Number(worthTotals.overall || report.totals && report.totals.worth || 0)}</td>
+      </tr>
+    `;
+    const rows = report.rows.map((row) => `
+      <tr>
+        <td>${escapeHtml(row.bookId)}</td>
+        <td>${escapeHtml(row.bookName)}</td>
+        ${(row.docMapArray || []).map((doc) => `
+          <td>${Number(doc.issueQty || 0)}</td>
+          <td>${Number(doc.returnQty || 0)}</td>
+          <td>${Number(doc.saleQty || 0)}</td>
+          <td>${Number(doc.unsettledQty || 0)}</td>
+          <td>${Number(doc.complimentaryQty || 0)}</td>
+        `).join("")}
+        <td>${Number(row.issueQty || 0)}</td>
+        <td>${Number(row.returnQty || 0)}</td>
+        <td>${Number(row.saleQty || 0)}</td>
+        <td>${Number(row.unsettledQty || 0)}</td>
+        <td>${Number(row.complimentaryQty || 0)}</td>
+        <td>${Number(row.worth || 0)}</td>
+      </tr>
+    `).join("");
+    return `
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 11px; }
+            th, td { border: 1px solid #999; padding: 4px 6px; vertical-align: top; }
+            th { background: #e9edf5; }
+          </style>
+        </head>
+        <body>
+          <table>
+            <thead>${headerTop}</thead>
+            <tbody>${totalsRow}${rows}</tbody>
+          </table>
+        </body>
+      </html>
+    `;
+  }
+
   function warehouseMonthlyMarkup(report) {
     if (!report || !report.rows) {
       return '<div class="empty-state">No warehouse report available.</div>';
@@ -1353,6 +1613,56 @@
       saleQty: Number(row.saleQty || row["Sale Qty"] || 0),
       complimentaryQty: Number(row.complimentaryQty || row["Complimentary Qty"] || 0),
       unsettledQty: Number(row.unsettledQty || row["Unsettled Qty"] || 0)
+    };
+  }
+
+  function normalizeActivityMonthlyReport(row) {
+    return {
+      month: row.month || "",
+      devoteeId: row.devoteeId || row["Devotee ID"] || "",
+      devoteeName: row.devoteeName || row["Devotee Name"] || "",
+      activityId: row.activityId || row["Activity ID"] || "",
+      activityName: row.activityName || row["Activity Name"] || "",
+      activityStatus: row.activityStatus || row["Activity Status"] || "",
+      warehouseId: row.warehouseId || row["Warehouse ID"] || "",
+      warehouseName: row.warehouseName || row["Warehouse Name"] || "",
+      documents: (row.documents || row["Documents"] || []).map((doc) => ({
+        documentId: doc.documentId || doc["Document ID"] || "",
+        documentType: doc.documentType || doc["Document Type"] || "",
+        documentDate: doc.documentDate || doc["Document Date"] || "",
+        status: doc.status || doc.Status || "",
+        notes: doc.notes || doc.Notes || ""
+      })),
+      rows: (row.rows || []).map((item) => ({
+        bookId: item.bookId || item["Book ID"] || "",
+        bookName: item.bookName || item["Book Name"] || "",
+        bookType: item.bookType || item["Book Type"] || "",
+        issueQty: Number(item.issueQty || item["Issue Qty"] || 0),
+        returnQty: Number(item.returnQty || item["Return Qty"] || 0),
+        saleQty: Number(item.saleQty || item["Sale Qty"] || 0),
+        complimentaryQty: Number(item.complimentaryQty || item["Complimentary Qty"] || 0),
+        unsettledQty: Number(item.unsettledQty || item["Unsettled Qty"] || 0),
+        worth: Number(item.worth || item["Worth"] || 0),
+        documentCount: Number(item.documentCount || item["Document Count"] || 0),
+        docMapArray: (item.docMapArray || item["Doc Map Array"] || []).map((doc) => ({
+          documentId: doc.documentId || doc["Document ID"] || "",
+          documentType: doc.documentType || doc["Document Type"] || "",
+          documentDate: doc.documentDate || doc["Document Date"] || "",
+          issueQty: Number(doc.issueQty || doc["Issue Qty"] || 0),
+          returnQty: Number(doc.returnQty || doc["Return Qty"] || 0),
+          saleQty: Number(doc.saleQty || doc["Sale Qty"] || 0),
+          unsettledQty: Number(doc.unsettledQty || doc["Unsettled Qty"] || 0),
+          complimentaryQty: Number(doc.complimentaryQty || doc["Complimentary Qty"] || 0)
+        }))
+      })),
+      totals: {
+        issueQty: Number(row.totals && (row.totals.issueQty || row.totals["Issue Qty"]) || 0),
+        returnQty: Number(row.totals && (row.totals.returnQty || row.totals["Return Qty"]) || 0),
+        saleQty: Number(row.totals && (row.totals.saleQty || row.totals["Sale Qty"]) || 0),
+        complimentaryQty: Number(row.totals && (row.totals.complimentaryQty || row.totals["Complimentary Qty"]) || 0),
+        unsettledQty: Number(row.totals && (row.totals.unsettledQty || row.totals["Unsettled Qty"]) || 0),
+        worth: Number(row.totals && (row.totals.worth || row.totals["Worth"]) || 0)
+      }
     };
   }
 
@@ -1644,14 +1954,10 @@
     return activity ? activity.name : activityId || "-";
   }
 
-  async function setReportDevotee(value) {
-    state.reportDevoteeId = value;
-    content.innerHTML = await renderReports();
-  }
-
   async function setReportView(value) {
     state.reportView = value;
     state.warehouseMonthlyReport = null;
+    state.activityMonthlyReport = null;
     state.showWarehouseDayWiseSales = false;
     content.innerHTML = await renderReports();
   }
@@ -1666,7 +1972,37 @@
   async function setReportMonth(value) {
     state.reportMonth = value;
     state.warehouseMonthlyReport = null;
+    state.activityMonthlyReport = null;
     state.showWarehouseDayWiseSales = false;
+    content.innerHTML = await renderReports();
+  }
+
+  async function setActivityReportDevoteeSearch(value) {
+    state.activityReportDevoteeSearch = value;
+    state.activityMonthlyReport = null;
+    content.innerHTML = await renderReports();
+  }
+
+  async function setActivityReportActivitySearch(value) {
+    state.activityReportActivitySearch = value;
+    state.activityMonthlyReport = null;
+    content.innerHTML = await renderReports();
+  }
+
+  async function selectActivityReportDevotee(devoteeId) {
+    state.activityReportDevoteeId = devoteeId;
+    state.activityReportDevoteeSearch = getDevoteeName(devoteeId);
+    state.activityReportActivityId = "";
+    state.activityReportActivitySearch = "";
+    state.activityMonthlyReport = null;
+    content.innerHTML = await renderReports();
+  }
+
+  async function selectActivityReportActivity(activityId) {
+    const activity = state.activities.find((item) => item.activityId === activityId);
+    state.activityReportActivityId = activityId;
+    state.activityReportActivitySearch = activity ? activity.name : activityId;
+    state.activityMonthlyReport = null;
     content.innerHTML = await renderReports();
   }
 
@@ -1697,6 +2033,30 @@
 
   function loadWarehouseDayWiseSales() {
     return loadWarehouseReport(true);
+  }
+
+  async function loadActivityReport() {
+    if (!state.activityReportDevoteeId || !state.activityReportActivityId || !state.reportMonth) {
+      showToast("Select a devotee, activity, and month first");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const report = await window.erpApi.request("reports.activityMonthly", {
+        devoteeId: state.activityReportDevoteeId,
+        activityId: state.activityReportActivityId,
+        month: state.reportMonth
+      });
+      state.activityMonthlyReport = normalizeActivityMonthlyReport(report);
+      content.innerHTML = await renderReports();
+    } catch (error) {
+      state.activityMonthlyReport = null;
+      content.innerHTML = await renderReports();
+      showToast(error.message || "Could not load activity report");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function settleActivity(activityId) {
@@ -2923,7 +3283,12 @@
     setActivityStatus,
     openActivityForm,
     cancelActivity,
-    setReportDevotee,
+    setActivityReportDevoteeSearch,
+    setActivityReportActivitySearch,
+    selectActivityReportDevotee,
+    selectActivityReportActivity,
+    loadActivityReport,
+    downloadActivityReport,
     setReportView,
     setReportWarehouse,
     setReportMonth,

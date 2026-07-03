@@ -24,6 +24,7 @@ function routeRequest_(request) {
     "stock.current": getCurrentStock_,
     "activity.unsettled": getActivityUnsettled_,
     "reports.activityLedger": function () { return getActivityLedger_(payload); },
+    "reports.activityMonthly": function () { return getActivityMonthlyReport_(payload); },
     "reports.warehouseMonthly": function () { return getWarehouseMonthlyReport_(payload); }
   };
 
@@ -742,6 +743,204 @@ function getActivityLedger_(payload) {
       String(a.activityName).localeCompare(String(b.activityName)) ||
       String(a.bookId).localeCompare(String(b.bookId));
   });
+}
+
+function getActivityMonthlyReport_(payload) {
+  const month = payload && payload.month ? String(payload.month) : Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM");
+  const window = getMonthWindow_(month);
+  const devoteeId = payload && payload.devoteeId ? String(payload.devoteeId) : "";
+  const activityId = payload && payload.activityId ? String(payload.activityId) : "";
+  if (!activityId) {
+    throw new Error("Activity is required");
+  }
+
+  const activities = readObjects_("Activities");
+  const activity = activities.find(function (row) {
+    return row["Activity ID"] === activityId;
+  });
+  if (!activity) {
+    throw new Error("Activity not found");
+  }
+  if (devoteeId && String(activity["Devotee ID"] || "") !== devoteeId) {
+    throw new Error("Selected activity does not belong to the selected devotee");
+  }
+
+  const books = readObjects_("Books").filter(function (row) {
+    return row.Active === true || row.Active === "TRUE" || row.Active === "true";
+  });
+  const booksById = {};
+  books.forEach(function (book) {
+    booksById[book["ERP Code"]] = book;
+  });
+
+  const documents = readObjects_("Documents");
+  const lines = readObjects_("DocumentLines");
+  const docsById = {};
+  documents.forEach(function (doc) {
+    docsById[doc["Document ID"]] = doc;
+  });
+
+  const allowed = ["ISSUE", "RETURN", "SALE", "COMPLIMENTARY", "UNSETTLED_OPENING"];
+  const docColumns = documents.filter(function (doc) {
+    if (doc["Activity ID"] !== activityId) {
+      return false;
+    }
+    if (String(doc.Status || "").toLowerCase() === "cancelled") {
+      return false;
+    }
+    if (allowed.indexOf(doc["Document Type"]) === -1) {
+      return false;
+    }
+    const docDate = doc["Document Date"] ? new Date(doc["Document Date"]) : null;
+    return docDate && !isNaN(docDate.getTime()) && docDate >= window.start && docDate <= window.end;
+  }).map(function (doc) {
+    return {
+      documentId: doc["Document ID"],
+      documentType: doc["Document Type"],
+      documentDate: doc["Document Date"],
+      status: doc.Status,
+      notes: doc.Notes
+    };
+  }).sort(function (a, b) {
+    const aDate = a.documentDate ? new Date(a.documentDate) : null;
+    const bDate = b.documentDate ? new Date(b.documentDate) : null;
+    const diff = (aDate ? aDate.getTime() : 0) - (bDate ? bDate.getTime() : 0);
+    if (diff !== 0) {
+      return diff;
+    }
+    return String(a.documentId).localeCompare(String(b.documentId));
+  });
+
+  const index = {};
+  lines.forEach(function (line) {
+    const doc = docsById[line["Document ID"]];
+    if (!doc || doc["Activity ID"] !== activityId) {
+      return;
+    }
+    if (String(doc.Status || "").toLowerCase() === "cancelled") {
+      return;
+    }
+    if (allowed.indexOf(doc["Document Type"]) === -1) {
+      return;
+    }
+    const docDate = doc["Document Date"] ? new Date(doc["Document Date"]) : null;
+    if (!docDate || isNaN(docDate.getTime()) || docDate < window.start || docDate > window.end) {
+      return;
+    }
+
+    const bookId = line["Book ID"];
+    if (!index[bookId]) {
+      const book = booksById[bookId] || {};
+      index[bookId] = {
+        bookId: bookId,
+        bookName: book["Book Name"] || bookId,
+        bookType: book["Book Type"] || "",
+        issueQty: 0,
+        returnQty: 0,
+        saleQty: 0,
+        complimentaryQty: 0,
+        unsettledQty: 0,
+        docMap: {},
+        worth: 0
+      };
+    }
+
+    const quantity = Number(line["Quantity"] || 0);
+    const salePrice = Number((booksById[bookId] && booksById[bookId]["Sale Price"]) || 0);
+    if (!index[bookId].docMap[doc["Document ID"]]) {
+      index[bookId].docMap[doc["Document ID"]] = {
+        issueQty: 0,
+        returnQty: 0,
+        saleQty: 0,
+        complimentaryQty: 0,
+        unsettledQty: 0
+      };
+    }
+    const docBucket = index[bookId].docMap[doc["Document ID"]];
+    const type = doc["Document Type"];
+    if (type === "ISSUE") {
+      docBucket.issueQty += quantity;
+      index[bookId].issueQty += quantity;
+      index[bookId].unsettledQty += quantity;
+    } else if (type === "UNSETTLED_OPENING") {
+      docBucket.unsettledQty += quantity;
+      index[bookId].issueQty += quantity;
+      index[bookId].unsettledQty += quantity;
+    } else if (type === "RETURN") {
+      docBucket.returnQty += quantity;
+      index[bookId].returnQty += quantity;
+      index[bookId].unsettledQty -= quantity;
+    } else if (type === "SALE") {
+      docBucket.saleQty += quantity;
+      index[bookId].saleQty += quantity;
+      index[bookId].unsettledQty -= quantity;
+    } else if (type === "COMPLIMENTARY") {
+      docBucket.complimentaryQty += quantity;
+      index[bookId].complimentaryQty += quantity;
+    }
+    index[bookId].worth += quantity * salePrice;
+  });
+
+  Object.keys(index).forEach(function (bookId) {
+    const row = index[bookId];
+    const settled = String(activity.Status || "").toLowerCase() === "completed";
+    if (settled && row.saleQty === 0) {
+      row.saleQty = Math.max(0, row.issueQty - row.returnQty);
+      row.unsettledQty = 0;
+    } else {
+      row.unsettledQty = Math.max(0, row.unsettledQty);
+    }
+  });
+
+  const rows = Object.keys(index).map(function (bookId) {
+    return index[bookId];
+  }).sort(function (a, b) {
+    return String(a.bookName).localeCompare(String(b.bookName)) || String(a.bookId).localeCompare(String(b.bookId));
+  });
+
+  const totals = {
+    issueQty: 0,
+    returnQty: 0,
+    saleQty: 0,
+    complimentaryQty: 0,
+    unsettledQty: 0,
+    worth: 0
+  };
+  rows.forEach(function (row) {
+    totals.issueQty += Number(row.issueQty || 0);
+    totals.returnQty += Number(row.returnQty || 0);
+    totals.saleQty += Number(row.saleQty || 0);
+    totals.complimentaryQty += Number(row.complimentaryQty || 0);
+    totals.unsettledQty += Number(row.unsettledQty || 0);
+    totals.worth += Number(row.worth || 0);
+    row.documentCount = Object.keys(row.docMap || {}).length;
+    row.docMapArray = docColumns.map(function (doc) {
+      return {
+        documentId: doc.documentId,
+        documentType: doc.documentType,
+        documentDate: doc.documentDate,
+        issueQty: Number((row.docMap[doc.documentId] && row.docMap[doc.documentId].issueQty) || 0),
+        returnQty: Number((row.docMap[doc.documentId] && row.docMap[doc.documentId].returnQty) || 0),
+        saleQty: Number((row.docMap[doc.documentId] && row.docMap[doc.documentId].saleQty) || 0),
+        complimentaryQty: Number((row.docMap[doc.documentId] && row.docMap[doc.documentId].complimentaryQty) || 0),
+        unsettledQty: Number((row.docMap[doc.documentId] && row.docMap[doc.documentId].unsettledQty) || 0)
+      };
+    });
+  });
+
+  return {
+    month: month,
+    devoteeId: activity["Devotee ID"] || "",
+    devoteeName: getDevoteeName_(activity["Devotee ID"]),
+    activityId: activity["Activity ID"],
+    activityName: activity.Name,
+    activityStatus: activity.Status,
+    warehouseId: activity["Warehouse ID"] || "",
+    warehouseName: getWarehouseName_(activity["Warehouse ID"]),
+    documents: docColumns,
+    rows: rows,
+    totals: totals
+  };
 }
 
 function getWarehouseMonthlyReport_(payload) {
