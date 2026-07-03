@@ -316,6 +316,38 @@ table {
   border-collapse: collapse;
 }
 
+table.warehouse-report-table {
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.warehouse-report-wrap {
+  overflow-x: visible;
+}
+
+.warehouse-report-table th,
+.warehouse-report-table td {
+  padding: 8px 6px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.warehouse-report-table th {
+  font-size: 11px;
+}
+
+.warehouse-report-table td {
+  font-size: 11px;
+}
+
+.mini-grid {
+  display: grid;
+  gap: 4px;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
 th,
 td {
   border-bottom: 1px solid var(--line);

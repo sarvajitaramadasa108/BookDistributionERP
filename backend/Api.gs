@@ -781,6 +781,8 @@ function getWarehouseMonthlyReport_(payload) {
       openingQty: 0,
       issueQty: 0,
       returnQty: 0,
+      settledIssueQty: 0,
+      settledReturnQty: 0,
       transferInQty: 0,
       transferOutQty: 0,
       saleQty: 0,
@@ -806,6 +808,9 @@ function getWarehouseMonthlyReport_(payload) {
     const inQty = Number(row["Quantity In"] || 0);
     const outQty = Number(row["Quantity Out"] || 0);
     const net = inQty - outQty;
+    const doc = docById[row["Document ID"]];
+    const activity = doc ? activityById[doc["Activity ID"]] : null;
+    const isSettledActivity = activity && String(activity.Status || "").toLowerCase() === "completed";
 
     if (rowDate && rowDate < window.start) {
       rowsByBook[bookId].openingQty += net;
@@ -818,16 +823,20 @@ function getWarehouseMonthlyReport_(payload) {
 
     if (movement === "ISSUE") {
       rowsByBook[bookId].issueQty += outQty;
+      if (isSettledActivity) {
+        rowsByBook[bookId].settledIssueQty += outQty;
+      }
     } else if (movement === "RETURN") {
       rowsByBook[bookId].returnQty += inQty;
+      if (isSettledActivity) {
+        rowsByBook[bookId].settledReturnQty += inQty;
+      }
     } else if (movement === "TRANSFER_IN") {
       rowsByBook[bookId].transferInQty += inQty;
-      const doc = docById[row["Document ID"]];
       const fromName = doc ? getWarehouseName_(doc["From Warehouse ID"]) : "";
       rowsByBook[bookId].transferBreakdown[fromName || "Transfer In"] = (rowsByBook[bookId].transferBreakdown[fromName || "Transfer In"] || 0) + inQty;
     } else if (movement === "TRANSFER_OUT") {
       rowsByBook[bookId].transferOutQty += outQty;
-      const doc = docById[row["Document ID"]];
       const toName = doc ? getWarehouseName_(doc["To Warehouse ID"]) : "";
       rowsByBook[bookId].transferBreakdown[toName || "Transfer Out"] = (rowsByBook[bookId].transferBreakdown[toName || "Transfer Out"] || 0) + outQty;
     } else if (movement === "SALE") {
@@ -856,6 +865,14 @@ function getWarehouseMonthlyReport_(payload) {
       if (quantity > 0) {
         rowsByBook[row.bookId].unsettledQty += quantity;
       }
+    });
+  }
+
+  if ((warehouse["Warehouse Name"] || "").toLowerCase().indexOf("gmb") === 0) {
+    Object.keys(rowsByBook).forEach(function (bookId) {
+      const row = rowsByBook[bookId];
+      const settledNet = Math.max(0, Number(row.settledIssueQty || 0) - Number(row.settledReturnQty || 0));
+      row.saleQty += settledNet;
     });
   }
 

@@ -494,6 +494,7 @@
                   <span>Month</span>
                   <input type="month" value="${escapeAttribute(state.reportMonth)}" onchange="window.erpApp.setReportMonth(this.value)">
                 </label>
+                <button class="button secondary" type="button" onclick="window.erpApp.downloadWarehouseReport()">Download Excel</button>
               </div>
             </div>
             ${state.warehouseMonthlyReport ? warehouseMonthlyMarkup(state.warehouseMonthlyReport) : '<div class="empty-state">No warehouse report loaded.</div>'}
@@ -1105,18 +1106,22 @@
     }
     const isMain = report.reportMode === "main";
     const transferTargets = isMain
-      ? state.warehouses.filter((warehouse) => warehouse.warehouseId !== report.warehouseId && (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0)
+      ? state.warehouses.filter((warehouse) =>
+          warehouse.warehouseId !== report.warehouseId &&
+          warehouse.active &&
+          String(warehouse.type || "").toLowerCase() !== "temporary" &&
+          (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0)
       : [];
     return `
-      <div class="table-wrap">
-        <table>
+      <div class="table-wrap warehouse-report-wrap">
+        <table class="warehouse-report-table">
           <thead>
             <tr>
               <th>ERP Code</th>
               <th>Book</th>
               <th>Opening</th>
               ${isMain
-                ? `${transferTargets.map((warehouse) => `<th>Transfer to ${escapeHtml(warehouse.name)}</th>`).join("")}<th>Issue</th><th>Return</th><th>Complimentary</th><th>Unsettled</th><th>Closing</th>`
+                ? `${transferTargets.map((warehouse) => `<th>To ${escapeHtml(warehouse.name)}</th>`).join("")}<th>Sales</th><th>Complimentary</th><th>Unsettled</th><th>Closing</th>`
                 : `<th>Transfer In</th><th>Sales</th><th>Closing</th><th>Day Sales</th>`}
             </tr>
           </thead>
@@ -1146,9 +1151,81 @@
         <td><strong>${escapeHtml(row.bookName)}</strong></td>
         <td>${Number(row.openingQty || 0)}</td>
         ${isMain
-          ? `${transferTargets.map((warehouse) => `<td>${Number(((row.transferMap || {})[warehouse.name]) || 0)}</td>`).join("")}<td>${Number(row.issueQty || 0)}</td><td>${Number(row.returnQty || 0)}</td><td>${Number(row.complimentaryQty || 0)}</td><td>${Number(row.unsettledQty || 0)}</td><td><strong>${Number(row.closingQty || 0)}</strong></td>`
+          ? `${transferTargets.map((warehouse) => `<td>${Number(((row.transferMap || {})[warehouse.name]) || 0)}</td>`).join("")}<td>${Number(row.saleQty || 0)}</td><td>${Number(row.complimentaryQty || 0)}</td><td>${Number(row.unsettledQty || 0)}</td><td><strong>${Number(row.closingQty || 0)}</strong></td>`
           : `<td>${Number(row.transferInQty || 0)}</td><td>${Number(row.saleQty || 0)}</td><td><strong>${Number(row.closingQty || 0)}</strong></td><td>${dayBreakdown}</td>`}
       </tr>
+    `;
+  }
+
+  function downloadWarehouseReport() {
+    const report = state.warehouseMonthlyReport;
+    if (!report || !report.rows) {
+      showToast("Load a warehouse report first");
+      return;
+    }
+
+    const html = buildWarehouseReportExcel(report);
+    const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const safeWarehouse = String(report.warehouseName || "Warehouse").replace(/[^\w.-]+/g, "_");
+    link.href = url;
+    link.download = `${safeWarehouse}-${report.month || "report"}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function buildWarehouseReportExcel(report) {
+    const isMain = report.reportMode === "main";
+    const transferTargets = isMain
+      ? state.warehouses.filter((warehouse) =>
+          warehouse.warehouseId !== report.warehouseId &&
+          warehouse.active &&
+          String(warehouse.type || "").toLowerCase() !== "temporary" &&
+          (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0)
+      : [];
+    const headerCells = ["ERP Code", "Book", "Opening"];
+    if (isMain) {
+      transferTargets.forEach((warehouse) => headerCells.push(`To ${warehouse.name}`));
+      headerCells.push("Sales", "Complimentary", "Unsettled", "Closing");
+    } else {
+      headerCells.push("Transfer In", "Sales", "Closing");
+      report.dayColumns.forEach((day) => headerCells.push(day));
+    }
+
+    const rows = report.rows.map((row) => {
+      const cells = [row.bookId || "", row.bookName || "", Number(row.openingQty || 0)];
+      if (isMain) {
+        transferTargets.forEach((warehouse) => cells.push(Number(((row.transferMap || {})[warehouse.name]) || 0)));
+        cells.push(Number(row.saleQty || 0), Number(row.complimentaryQty || 0), Number(row.unsettledQty || 0), Number(row.closingQty || 0));
+      } else {
+        cells.push(Number(row.transferInQty || 0), Number(row.saleQty || 0), Number(row.closingQty || 0));
+        report.dayColumns.forEach((day) => cells.push(Number((row.daySalesMap && row.daySalesMap[day]) || 0)));
+      }
+      return `<tr>${cells.map((cell) => `<td>${escapeHtml(String(cell))}</td>`).join("")}</tr>`;
+    }).join("");
+
+    return `
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 11px; }
+            th, td { border: 1px solid #999; padding: 4px 6px; vertical-align: top; }
+            th { background: #e9edf5; }
+          </style>
+        </head>
+        <body>
+          <table>
+            <thead>
+              <tr>${headerCells.map((cell) => `<th>${escapeHtml(cell)}</th>`).join("")}</tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </body>
+      </html>
     `;
   }
 
@@ -2459,6 +2536,7 @@
     setReportDevotee,
     setReportWarehouse,
     setReportMonth,
+    downloadWarehouseReport,
     settleActivity,
     openOpeningStockForm,
     addOpeningLine,
