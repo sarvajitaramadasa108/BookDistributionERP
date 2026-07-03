@@ -19,6 +19,9 @@
     activityReportActivitySearch: "",
     showWarehouseDayWiseSales: false,
     issueDocumentType: "ISSUE",
+    purchaseDraft: {},
+    purchaseLines: [],
+    purchaseImportName: "",
     documents: [],
     issueDraft: {},
     issueLines: [],
@@ -415,6 +418,7 @@
           <div class="row-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">Opening Stock</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openUnsettledOpeningForm()">Unsettled Opening</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openPurchaseForm()">Purchase Input</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openSaleForm()">Sale Books</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Return Books</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Books</button>
@@ -2473,6 +2477,7 @@
       OPENING: "good",
       UNSETTLED_OPENING: "good",
       RECEIVE: "good",
+      PURCHASE: "good",
       RETURN: "good",
       TRANSFER: "warn",
       ISSUE: "warn",
@@ -2605,6 +2610,303 @@
 
   function blankOpeningLine() {
     return { bookId: "", quantity: 1, rate: 0 };
+  }
+
+  function openPurchaseForm() {
+    ensureCurrentStockLoaded().then(() => {
+      state.purchaseDraft = {
+        documentDate: new Date().toISOString().slice(0, 10),
+        toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || state.warehouses[0]?.warehouseId || "",
+        notes: ""
+      };
+      state.purchaseLines = [blankPurchaseLine()];
+      state.purchaseImportName = "";
+      renderPurchaseModal();
+    });
+  }
+
+  function blankPurchaseLine() {
+    return {
+      erpCode: "",
+      bookName: "",
+      bookType: "",
+      quantity: 1,
+      purchasePrice: 0,
+      salePrice: 0
+    };
+  }
+
+  function renderPurchaseModal() {
+    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
+    const draft = state.purchaseDraft;
+
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+      <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="purchaseFormTitle">
+        <div class="modal-header">
+          <h2 id="purchaseFormTitle">Purchase Input</h2>
+          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+        </div>
+        <form class="form-grid" id="purchaseForm">
+          <label class="field">
+            <span>Date</span>
+            <input name="documentDate" type="date" value="${escapeAttribute(draft.documentDate)}" required>
+          </label>
+          <label class="field">
+            <span>Warehouse</span>
+            <select name="toWarehouseId" required>
+              <option value="">Select warehouse</option>
+              ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.toWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field wide-field">
+            <span>Notes</span>
+            <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Purchase or input stock note">
+          </label>
+          <div class="wide-field">
+            <div class="line-editor-header">
+              <h3>Purchase lines</h3>
+              <div class="row-actions">
+                <button class="small-button" type="button" onclick="window.erpApp.downloadPurchaseSample()">Download Sample</button>
+                <button class="small-button" type="button" onclick="document.getElementById('purchaseImportInput').click()">Import Excel</button>
+                <button class="small-button" type="button" onclick="window.erpApp.addPurchaseLine()">Add Line</button>
+              </div>
+            </div>
+            <input id="purchaseImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importPurchaseFile(this.files[0])">
+            <div class="metric-note" style="margin-bottom:10px;">Leave ERP Code blank for new books. If the book name does not already exist, it will be created automatically on save.</div>
+            ${purchaseLinesMarkup()}
+            ${state.purchaseImportName ? `<div class="metric-note" style="margin-top:8px;">Loaded from ${escapeHtml(state.purchaseImportName)}</div>` : ""}
+          </div>
+          <div class="form-actions">
+            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+            <button class="button" type="submit" ${state.purchaseLines.length ? "" : "disabled"}>Post Purchase Input</button>
+          </div>
+        </form>
+      </section>
+    `;
+
+    document.getElementById("purchaseForm").addEventListener("submit", savePurchaseDocument);
+  }
+
+  function purchaseLinesMarkup() {
+    return `
+      <div class="line-table purchase-lines">
+        ${state.purchaseLines.map((line, index) => `
+          <div class="line-row purchase-line-row">
+            <label class="field">
+              <span>ERP Code</span>
+              <input type="text" value="${escapeAttribute(line.erpCode || "")}" placeholder="Optional" oninput="window.erpApp.updatePurchaseLine(${index}, 'erpCode', this.value)">
+            </label>
+            <label class="field">
+              <span>Book Name</span>
+              <input type="text" value="${escapeAttribute(line.bookName || "")}" placeholder="Enter book name" oninput="window.erpApp.updatePurchaseLine(${index}, 'bookName', this.value)">
+            </label>
+            <label class="field">
+              <span>Book Type</span>
+              <input type="text" value="${escapeAttribute(line.bookType || "")}" placeholder="General" oninput="window.erpApp.updatePurchaseLine(${index}, 'bookType', this.value)">
+            </label>
+            <label class="field">
+              <span>Qty</span>
+              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" oninput="window.erpApp.updatePurchaseLine(${index}, 'quantity', this.value)" required>
+            </label>
+            <label class="field">
+              <span>Purchase</span>
+              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.purchasePrice)}" oninput="window.erpApp.updatePurchaseLine(${index}, 'purchasePrice', this.value)">
+            </label>
+            <label class="field">
+              <span>Sale</span>
+              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.salePrice)}" oninput="window.erpApp.updatePurchaseLine(${index}, 'salePrice', this.value)">
+            </label>
+            <button class="small-button danger line-remove purchase-remove" type="button" onclick="window.erpApp.removePurchaseLine(${index})">Remove</button>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function addPurchaseLine() {
+    syncPurchaseDraft();
+    state.purchaseLines.push(blankPurchaseLine());
+    renderPurchaseModal();
+  }
+
+  function removePurchaseLine(index) {
+    syncPurchaseDraft();
+    state.purchaseLines.splice(index, 1);
+    if (!state.purchaseLines.length) {
+      state.purchaseLines.push(blankPurchaseLine());
+    }
+    renderPurchaseModal();
+  }
+
+  function updatePurchaseLine(index, key, value) {
+    if (!state.purchaseLines[index]) return;
+    if (key === "quantity" || key === "purchasePrice" || key === "salePrice") {
+      state.purchaseLines[index][key] = Number(value || 0);
+      return;
+    }
+    state.purchaseLines[index][key] = value;
+  }
+
+  function syncPurchaseDraft() {
+    const form = document.getElementById("purchaseForm");
+    if (!form) return;
+    const data = new FormData(form);
+    state.purchaseDraft = {
+      documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
+      toWarehouseId: data.get("toWarehouseId") || "",
+      notes: data.get("notes") || ""
+    };
+  }
+
+  function downloadPurchaseSample() {
+    const rows = [
+      ["ERP Code", "Book Name", "Book Type", "Purchase Price", "Sale Price", "Quantity"],
+      ["", "Bhagavad Gita", "General", "50", "60", "100"]
+    ];
+    if (window.XLSX && window.XLSX.utils) {
+      const sheet = window.XLSX.utils.aoa_to_sheet(rows);
+      const workbook = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(workbook, sheet, "Purchase Input");
+      window.XLSX.writeFile(workbook, "purchase-input-sample.xlsx");
+      return;
+    }
+    const csv = rows.map((row) => row.map((cell) => {
+      const text = String(cell || "");
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "purchase-input-sample.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importPurchaseFile(file) {
+    if (!file) return;
+    try {
+      const name = file.name || "import";
+      const lower = name.toLowerCase();
+      let rows = [];
+      if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+        if (!window.XLSX) {
+          showToast("Excel import library is not loaded");
+          return;
+        }
+        const buffer = await file.arrayBuffer();
+        const workbook = window.XLSX.read(buffer, { type: "array" });
+        const sheet = workbook.SheetNames[0];
+        rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { defval: "" });
+      } else {
+        const text = await file.text();
+        rows = parseCsvRows(text);
+      }
+
+      state.purchaseLines = rows.map((row) => ({
+        erpCode: String(row["ERP Code"] || row.erpCode || row["ERP"] || "").trim(),
+        bookName: String(row["Book Name"] || row.bookName || row["Name"] || "").trim(),
+        bookType: String(row["Book Type"] || row.bookType || row["Type"] || "General").trim() || "General",
+        quantity: Number(row["Quantity"] || row.quantity || 0),
+        purchasePrice: Number(row["Purchase Price"] || row.purchasePrice || row["Distributor Price"] || row.rate || 0),
+        salePrice: Number(row["Sale Price"] || row.salePrice || row.mrp || 0)
+      })).filter((row) => row.bookName || row.erpCode);
+      if (!state.purchaseLines.length) {
+        state.purchaseLines = [blankPurchaseLine()];
+        showToast("No purchase rows found in the file");
+      }
+      state.purchaseImportName = file.name;
+      renderPurchaseModal();
+    } catch (error) {
+      showToast(error.message || "Could not read the import file");
+    } finally {
+      const input = document.getElementById("purchaseImportInput");
+      if (input) {
+        input.value = "";
+      }
+    }
+  }
+
+  function parseCsvRows(text) {
+    const lines = String(text || "").trim().split(/\r?\n/).filter(Boolean);
+    if (!lines.length) return [];
+    const headers = splitCsvLine(lines[0]).map((header) => header.trim());
+    return lines.slice(1).map((line) => {
+      const values = splitCsvLine(line);
+      const row = {};
+      headers.forEach((header, index) => {
+        row[header] = values[index] !== undefined ? values[index] : "";
+      });
+      return row;
+    });
+  }
+
+  function splitCsvLine(line) {
+    const values = [];
+    let current = "";
+    let quoted = false;
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index];
+      const next = line[index + 1];
+      if (char === '"' && quoted && next === '"') {
+        current += '"';
+        index += 1;
+      } else if (char === '"') {
+        quoted = !quoted;
+      } else if (char === ',' && !quoted) {
+        values.push(current);
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    values.push(current);
+    return values;
+  }
+
+  async function savePurchaseDocument(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const lines = state.purchaseLines
+      .filter((line) => (line.bookName || line.erpCode) && Number(line.quantity || 0) > 0)
+      .map((line) => ({
+        bookId: line.erpCode ? String(line.erpCode).trim() : "",
+        erpCode: line.erpCode ? String(line.erpCode).trim() : "",
+        bookName: String(line.bookName || "").trim(),
+        bookType: String(line.bookType || "General").trim() || "General",
+        quantity: Number(line.quantity),
+        purchasePrice: Number(line.purchasePrice || 0),
+        salePrice: Number(line.salePrice || 0),
+        rate: Number(line.purchasePrice || 0)
+      }));
+
+    if (!lines.length) {
+      showToast("Add at least one purchase line");
+      return;
+    }
+
+    const payload = {
+      documentType: "PURCHASE",
+      documentDate: data.get("documentDate"),
+      toWarehouseId: data.get("toWarehouseId"),
+      status: "Posted",
+      notes: data.get("notes").trim(),
+      lines
+    };
+
+    setLoading(true);
+    try {
+      const result = await window.erpApi.request("documents.create", payload);
+      closeModal();
+      content.innerHTML = await renderDocuments();
+      showToast(`Purchase input posted: ${result.documentId}`);
+    } catch (error) {
+      showToast(error.message || "Could not post purchase input");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function renderOpeningStockModal() {
@@ -3694,9 +3996,15 @@
     backToComplimentarySummary,
     settleActivity,
     openOpeningStockForm,
+    openPurchaseForm,
     addOpeningLine,
     removeOpeningLine,
     updateOpeningLine,
+    addPurchaseLine,
+    removePurchaseLine,
+    updatePurchaseLine,
+    downloadPurchaseSample,
+    importPurchaseFile,
     openUnsettledOpeningForm,
     addUnsettledLine,
     removeUnsettledLine,

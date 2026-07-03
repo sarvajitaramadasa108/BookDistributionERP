@@ -678,6 +678,10 @@ tbody tr:hover td {
   background: #ffffff;
 }
 
+.purchase-line-row {
+  grid-template-columns: minmax(120px, 0.75fr) minmax(220px, 1.4fr) minmax(120px, 0.8fr) minmax(90px, 0.35fr) minmax(110px, 0.5fr) minmax(110px, 0.5fr) auto;
+}
+
 .book-picker {
   display: grid;
   gap: 8px;
@@ -795,6 +799,10 @@ tbody tr:hover td {
   }
 
   .line-row {
+    grid-template-columns: 1fr;
+  }
+
+  .purchase-line-row {
     grid-template-columns: 1fr;
   }
 

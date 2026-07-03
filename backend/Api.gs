@@ -463,6 +463,13 @@ function getDevoteeName_(devoteeId) {
 }
 
 function createDocument_(payload) {
+  payload = payload || {};
+  payload.lines = Array.isArray(payload.lines) ? payload.lines : [];
+  if (payload.documentType === "PURCHASE") {
+    payload.lines = payload.lines.map(function (line) {
+      return resolvePurchaseLine_(line);
+    });
+  }
   validateDocument_(payload);
   const now = new Date();
   const documentId = nextId_("DOC", "Documents", "Document ID");
@@ -507,6 +514,62 @@ function createDocument_(payload) {
   return { documentId: documentId };
 }
 
+function resolvePurchaseLine_(line) {
+  const rawCode = String(line.bookId || line.erpCode || "").trim();
+  const rawName = String(line.bookName || line.name || "").trim();
+  const bookType = String(line.bookType || line.category || "General").trim() || "General";
+  const purchasePrice = Number(line.purchasePrice || line.rate || 0);
+  const salePrice = Number(line.salePrice || line.mrp || 0);
+  const quantity = Number(line.quantity || 0);
+  let book = null;
+
+  if (rawCode) {
+    book = readObjects_("Books").find(function (row) {
+      return String(row["ERP Code"] || "") === rawCode;
+    });
+  }
+
+  if (!book && rawName) {
+    book = readObjects_("Books").find(function (row) {
+      return String(row["Book Name"] || "").toLowerCase() === rawName.toLowerCase();
+    });
+  }
+
+  if (!book) {
+    if (!rawName) {
+      throw new Error("Book name is required for purchase input");
+    }
+    const erpCode = rawCode || nextId_("BK", "Books", "ERP Code");
+    createBook_({
+      erpCode: erpCode,
+      name: rawName,
+      bookType: bookType,
+      purchasePrice: purchasePrice,
+      salePrice: salePrice,
+      active: true
+    });
+    return {
+      bookId: erpCode,
+      quantity: quantity,
+      rate: purchasePrice,
+      purchasePrice: purchasePrice,
+      salePrice: salePrice,
+      bookName: rawName,
+      bookType: bookType
+    };
+  }
+
+  return {
+    bookId: book["ERP Code"],
+    quantity: quantity,
+    rate: purchasePrice,
+    purchasePrice: purchasePrice,
+    salePrice: salePrice,
+    bookName: book["Book Name"],
+    bookType: book["Book Type"]
+  };
+}
+
 function mapDocument_(row) {
   return {
     documentId: row["Document ID"],
@@ -534,7 +597,7 @@ function appendLedgerRows_(documentId, lineId, documentType, documentDate, paylo
     return;
   }
 
-  const inwardTypes = ["OPENING", "RECEIVE", "RETURN"];
+  const inwardTypes = ["OPENING", "RECEIVE", "RETURN", "PURCHASE"];
   const quantityIn = inwardTypes.indexOf(documentType) !== -1 ? quantity : 0;
   const quantityOut = inwardTypes.indexOf(documentType) !== -1 ? 0 : quantity;
   const warehouseId = payload.warehouseId || payload.fromWarehouseId || payload.toWarehouseId;
@@ -577,6 +640,10 @@ function validateDocument_(payload) {
 
   if (payload.documentType === "UNSETTLED_OPENING" && !payload.fromWarehouseId) {
     throw new Error("Source warehouse is required for unsettled opening documents");
+  }
+
+  if (payload.documentType === "PURCHASE" && !payload.toWarehouseId) {
+    throw new Error("Warehouse is required for purchase input documents");
   }
 
   if (payload.documentType === "RETURN" && !activityHasIssue_(payload.activityId) && !activityHasUnsettledSeed_(payload.activityId)) {
