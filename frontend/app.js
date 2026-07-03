@@ -14,12 +14,16 @@
     documents: [],
     issueDraft: {},
     issueLines: [],
+    issueBookQueries: [],
     receiveDraft: {},
     receiveLines: [],
+    receiveBookQueries: [],
     transferDraft: {},
     transferLines: [],
+    transferBookQueries: [],
     openingDraft: {},
     openingLines: [],
+    openingBookQueries: [],
     currentStock: []
   };
 
@@ -341,7 +345,7 @@
           <h2>Stock Documents</h2>
           <div class="row-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">Opening Stock</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Receive Books</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Return Books</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Books</button>
             <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Books</button>
           </div>
@@ -349,7 +353,7 @@
         <div class="panel-body">
           <div class="grid metrics">
             ${metric("Issue", "Out", "Books sent from warehouse to activity or location")}
-            ${metric("Receive", "In", "Balance stock received back")}
+            ${metric("Return", "In", "Books received back from an issued activity")}
             ${metric("Sale", "Out", "Books distributed and amount recorded")}
             ${metric("Return", "In", "Returned books restored or marked damaged")}
           </div>
@@ -978,6 +982,135 @@
     return `${book.name || book["Book Name"] || "-"} - ${getBookType(book)}`;
   }
 
+  function getBookPickerState(kind) {
+    if (kind === "issue") return state.issueBookQueries;
+    if (kind === "receive") return state.receiveBookQueries;
+    if (kind === "transfer") return state.transferBookQueries;
+    if (kind === "opening") return state.openingBookQueries;
+    return [];
+  }
+
+  function ensureBookPickerState(kind, index) {
+    const bucket = getBookPickerState(kind);
+    while (bucket.length <= index) {
+      bucket.push("");
+    }
+    return bucket;
+  }
+
+  function setBookPickerQuery(kind, index, value) {
+    const bucket = ensureBookPickerState(kind, index);
+    bucket[index] = value;
+    rerenderDocumentModal(kind, index, value);
+  }
+
+  function pickBookFromPicker(kind, index, bookId) {
+    const line = getDocumentLineByKind(kind, index);
+    if (!line) return;
+    line.bookId = bookId;
+    line.quantity = Number(line.quantity || 1);
+    line.rate = Number(line.rate || 0);
+    const book = getBook(bookId);
+    const bucket = ensureBookPickerState(kind, index);
+    bucket[index] = getBookPickerDisplayLabel(book);
+    rerenderDocumentModal(kind, index, bucket[index]);
+  }
+
+  function getBookPickerDisplayLabel(book) {
+    return `${book.name || book["Book Name"] || "-"}${book.bookType || book.category || book["Book Type"] ? ` - ${book.bookType || book.category || book["Book Type"]}` : ""}`;
+  }
+
+  function filterBooksForPicker(activeBooks, query, warehouseId) {
+    const needle = String(query || "").trim().toLowerCase();
+    return activeBooks
+      .filter((book) => {
+        const bookId = book.erpCode || book.bookId;
+        if (warehouseId && getAvailableStock(warehouseId, bookId) <= 0) {
+          return false;
+        }
+        if (!needle) return true;
+        const haystack = [bookId, book.name, book["Book Name"], getBookType(book)].join(" ").toLowerCase();
+        return haystack.indexOf(needle) !== -1;
+      })
+      .slice(0, 12);
+  }
+
+  function bookPickerMarkup(kind, index, activeBooks, line, query, warehouseId) {
+    const bookId = line.bookId || "";
+    const selectedBook = bookId ? getBook(bookId) : null;
+    const activeQuery = String(query || "");
+    const filteredBooks = filterBooksForPicker(activeBooks, activeQuery, warehouseId);
+    const availabilityHint = warehouseId ? `Stock at ${getWarehouseName(warehouseId)}` : "Type to search";
+    return `
+      <div class="book-picker">
+        <label class="field">
+          <span>Search Book</span>
+          <input
+            type="search"
+            data-book-picker="${kind}-${index}"
+            value="${escapeAttribute(activeQuery || (selectedBook ? getBookPickerDisplayLabel(selectedBook) : ""))}"
+            placeholder="Type ERP code or name"
+            autocomplete="off"
+            oninput="window.erpApp.setBookPickerQuery('${kind}', ${index}, this.value)">
+        </label>
+        <div class="book-picker-results">
+          ${filteredBooks.length ? filteredBooks.map((book) => {
+            const itemId = book.erpCode || book.bookId;
+            const selected = itemId === bookId;
+            const avail = warehouseId ? getAvailableStock(warehouseId, itemId) : null;
+            return `
+              <button
+                class="book-picker-item ${selected ? "selected" : ""}"
+                type="button"
+                onclick="window.erpApp.pickBookFromPicker('${kind}', ${index}, '${escapeAttribute(itemId)}')">
+                <span class="book-picker-name">${escapeHtml(getBookPickerDisplayLabel(book))}</span>
+                <span class="book-picker-meta">${escapeHtml(itemId)}${avail !== null ? ` | Avail ${avail}` : ""}</span>
+              </button>
+            `;
+          }).join("") : `<div class="book-picker-empty">${escapeHtml(activeQuery ? `No books match "${activeQuery}".` : availabilityHint)}</div>`}
+        </div>
+        ${selectedBook ? `<div class="book-picker-selected">Selected: ${escapeHtml(getBookPickerDisplayLabel(selectedBook))}</div>` : ""}
+      </div>
+    `;
+  }
+
+  function getDocumentLineByKind(kind, index) {
+    if (kind === "issue") return state.issueLines[index];
+    if (kind === "receive") return state.receiveLines[index];
+    if (kind === "transfer") return state.transferLines[index];
+    if (kind === "opening") return state.openingLines[index];
+    return null;
+  }
+
+  function rerenderDocumentModal(kind, index, value) {
+    if (kind === "issue") {
+      renderIssueModal();
+    } else if (kind === "receive") {
+      renderReceiveModal();
+    } else if (kind === "transfer") {
+      renderTransferModal();
+    } else if (kind === "opening") {
+      renderOpeningStockModal();
+    }
+    if (index === undefined) {
+      return;
+    }
+    requestAnimationFrame(function () {
+      const selector = '[data-book-picker="' + kind + '-' + index + '"]';
+      const input = document.querySelector(selector);
+      if (input) {
+        input.focus();
+        if (typeof value === "string") {
+          input.setSelectionRange(value.length, value.length);
+        }
+      }
+    });
+  }
+
+  function getIssuedActivityOptions() {
+    return state.activities.filter((activity) => state.documents.some((document) => document.activityId === activity.activityId && document.documentType === "ISSUE"));
+  }
+
   function isMainAdmin() {
     return appConfig.currentUserRole === "mainAdmin";
   }
@@ -1009,6 +1142,7 @@
       notes: ""
     };
     state.issueLines = [blankIssueLine()];
+    state.issueBookQueries = [""];
     renderIssueModal();
   }
 
@@ -1023,6 +1157,7 @@
       notes: "Opening stock as on date"
     };
     state.openingLines = [blankOpeningLine()];
+    state.openingBookQueries = [""];
     renderOpeningStockModal();
   }
 
@@ -1081,16 +1216,7 @@
       <div class="line-table">
         ${state.openingLines.map((line, index) => `
           <div class="line-row">
-            <label class="field">
-              <span>Book</span>
-              <select onchange="window.erpApp.updateOpeningLine(${index}, 'bookId', this.value)" required>
-                <option value="">Select book</option>
-                ${activeBooks.map((book) => {
-                  const bookId = book.erpCode || book.bookId;
-                  return `<option value="${escapeAttribute(bookId)}" ${line.bookId === bookId ? "selected" : ""}>${escapeHtml(getBookOptionLabel(book))}</option>`;
-                }).join("")}
-              </select>
-            </label>
+            ${bookPickerMarkup("opening", index, activeBooks, line, state.openingBookQueries[index] || "")}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateOpeningLine(${index}, 'quantity', this.value)" required>
@@ -1109,14 +1235,17 @@
   function addOpeningLine() {
     syncOpeningDraft();
     state.openingLines.push(blankOpeningLine());
+    state.openingBookQueries.push("");
     renderOpeningStockModal();
   }
 
   function removeOpeningLine(index) {
     syncOpeningDraft();
     state.openingLines.splice(index, 1);
+    state.openingBookQueries.splice(index, 1);
     if (!state.openingLines.length) {
       state.openingLines.push(blankOpeningLine());
+      state.openingBookQueries.push("");
     }
     renderOpeningStockModal();
   }
@@ -1239,17 +1368,7 @@
       <div class="line-table">
         ${state.issueLines.map((line, index) => `
           <div class="line-row">
-            <label class="field">
-              <span>Book</span>
-              <select onchange="window.erpApp.updateIssueLine(${index}, 'bookId', this.value)" required>
-                <option value="">Select book</option>
-                ${activeBooks.map((book) => {
-                  const bookId = book.erpCode || book.bookId;
-                  const available = fromWarehouseId ? getAvailableStock(fromWarehouseId, bookId) : 0;
-                  return `<option value="${escapeAttribute(bookId)}" ${line.bookId === bookId ? "selected" : ""}>${escapeHtml(getBookOptionLabel(book))}${available > 0 ? ` (Avail: ${available})` : ""}</option>`;
-                }).join("")}
-              </select>
-            </label>
+            ${bookPickerMarkup("issue", index, activeBooks, line, state.issueBookQueries[index] || "", fromWarehouseId)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateIssueLine(${index}, 'quantity', this.value)" required>
@@ -1268,14 +1387,17 @@
   function addIssueLine() {
     syncIssueDraft();
     state.issueLines.push(blankIssueLine());
+    state.issueBookQueries.push("");
     renderIssueModal();
   }
 
   function removeIssueLine(index) {
     syncIssueDraft();
     state.issueLines.splice(index, 1);
+    state.issueBookQueries.splice(index, 1);
     if (!state.issueLines.length) {
       state.issueLines.push(blankIssueLine());
+      state.issueBookQueries.push("");
     }
     renderIssueModal();
   }
@@ -1338,12 +1460,15 @@
   }
 
   function openReceiveForm() {
+    const activityId = getIssuedActivityOptions()[0]?.activityId || "";
     state.receiveDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
-      toWarehouseId: "",
+      toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
+      activityId,
       notes: ""
     };
     state.receiveLines = [blankReceiveLine()];
+    state.receiveBookQueries = [""];
     renderReceiveModal();
   }
 
@@ -1354,18 +1479,19 @@
   function renderReceiveModal() {
     const activeBooks = state.books.filter((book) => book.active !== false);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
+    const issuedActivities = getIssuedActivityOptions();
     const draft = state.receiveDraft;
 
     modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
       <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="receiveFormTitle">
         <div class="modal-header">
-          <h2 id="receiveFormTitle">Receive Books</h2>
+          <h2 id="receiveFormTitle">Return Books</h2>
           <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
         </div>
         <form class="form-grid" id="receiveForm">
           <label class="field">
-            <span>Receive Date</span>
+            <span>Return Date</span>
             <input name="documentDate" type="date" value="${escapeAttribute(draft.documentDate)}" required>
           </label>
           <label class="field">
@@ -1375,20 +1501,29 @@
               ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.toWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
             </select>
           </label>
+          ${issuedActivities.length ? `
+            <label class="field wide-field">
+              <span>Activity</span>
+              <select name="activityId" required>
+                <option value="">Select issued activity</option>
+                ${issuedActivities.map((activity) => `<option value="${escapeAttribute(activity.activityId)}" ${draft.activityId === activity.activityId ? "selected" : ""}>${escapeHtml(activity.name)} (${escapeHtml(getWarehouseName(activity.warehouseId))})</option>`).join("")}
+              </select>
+            </label>
+          ` : '<div class="empty-state wide-field">Create an issue for an activity first. Returns can only be posted against activities that already have issue entries.</div>'}
           <label class="field wide-field">
             <span>Notes</span>
-            <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Supplier, source, or receipt note">
+            <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Return note">
           </label>
           <div class="wide-field">
             <div class="line-editor-header">
               <h3>Books</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addReceiveLine()">Add Line</button>
             </div>
-            ${activeBooks.length ? receiveLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before receiving stock.</div>'}
+            ${activeBooks.length ? receiveLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before posting returns.</div>'}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit" ${activeBooks.length ? "" : "disabled"}>Post Receipt</button>
+            <button class="button" type="submit" ${(activeBooks.length && issuedActivities.length) ? "" : "disabled"}>Post Return</button>
           </div>
         </form>
       </section>
@@ -1402,13 +1537,7 @@
       <div class="line-table">
         ${state.receiveLines.map((line, index) => `
           <div class="line-row">
-            <label class="field">
-              <span>Book</span>
-              <select onchange="window.erpApp.updateReceiveLine(${index}, 'bookId', this.value)" required>
-                <option value="">Select book</option>
-                ${activeBooks.map((book) => `<option value="${escapeAttribute(book.erpCode || book.bookId)}" ${line.bookId === (book.erpCode || book.bookId) ? "selected" : ""}>${escapeHtml(getBookOptionLabel(book))}</option>`).join("")}
-              </select>
-            </label>
+            ${bookPickerMarkup("receive", index, activeBooks, line, state.receiveBookQueries[index] || "")}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateReceiveLine(${index}, 'quantity', this.value)" required>
@@ -1427,14 +1556,17 @@
   function addReceiveLine() {
     syncReceiveDraft();
     state.receiveLines.push(blankReceiveLine());
+    state.receiveBookQueries.push("");
     renderReceiveModal();
   }
 
   function removeReceiveLine(index) {
     syncReceiveDraft();
     state.receiveLines.splice(index, 1);
+    state.receiveBookQueries.splice(index, 1);
     if (!state.receiveLines.length) {
       state.receiveLines.push(blankReceiveLine());
+      state.receiveBookQueries.push("");
     }
     renderReceiveModal();
   }
@@ -1451,6 +1583,7 @@
     state.receiveDraft = {
       documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
       toWarehouseId: data.get("toWarehouseId") || "",
+      activityId: data.get("activityId") || "",
       notes: data.get("notes") || ""
     };
   }
@@ -1473,9 +1606,10 @@
     }
 
     const payload = {
-      documentType: "RECEIVE",
+      documentType: "RETURN",
       documentDate: data.get("documentDate"),
       toWarehouseId: data.get("toWarehouseId"),
+      activityId: data.get("activityId"),
       status: "Posted",
       notes: data.get("notes").trim(),
       lines
@@ -1486,7 +1620,7 @@
       const result = await window.erpApi.request("documents.create", payload);
       closeModal();
       content.innerHTML = await renderDocuments();
-      showToast(`Receipt posted: ${result.documentId}`);
+      showToast(`Return posted: ${result.documentId}`);
     } catch (error) {
       showToast(error.message || "Could not post receipt");
     } finally {
@@ -1502,6 +1636,7 @@
       notes: ""
     };
     state.transferLines = [blankTransferLine()];
+    state.transferBookQueries = [""];
     renderTransferModal();
   }
 
@@ -1571,17 +1706,7 @@
       <div class="line-table">
         ${state.transferLines.map((line, index) => `
           <div class="line-row">
-            <label class="field">
-              <span>Book</span>
-              <select onchange="window.erpApp.updateTransferLine(${index}, 'bookId', this.value)" required>
-                <option value="">Select book</option>
-                ${activeBooks.map((book) => {
-                  const bookId = book.erpCode || book.bookId;
-                  const available = fromWarehouseId ? getAvailableStock(fromWarehouseId, bookId) : 0;
-                  return `<option value="${escapeAttribute(bookId)}" ${line.bookId === bookId ? "selected" : ""}>${escapeHtml(getBookOptionLabel(book))}${available > 0 ? ` (Avail: ${available})` : ""}</option>`;
-                }).join("")}
-              </select>
-            </label>
+            ${bookPickerMarkup("transfer", index, activeBooks, line, state.transferBookQueries[index] || "", fromWarehouseId)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateTransferLine(${index}, 'quantity', this.value)" required>
@@ -1600,14 +1725,17 @@
   function addTransferLine() {
     syncTransferDraft();
     state.transferLines.push(blankTransferLine());
+    state.transferBookQueries.push("");
     renderTransferModal();
   }
 
   function removeTransferLine(index) {
     syncTransferDraft();
     state.transferLines.splice(index, 1);
+    state.transferBookQueries.splice(index, 1);
     if (!state.transferLines.length) {
       state.transferLines.push(blankTransferLine());
+      state.transferBookQueries.push("");
     }
     renderTransferModal();
   }
@@ -1779,6 +1907,8 @@
     addOpeningLine,
     removeOpeningLine,
     updateOpeningLine,
+    setBookPickerQuery,
+    pickBookFromPicker,
     openIssueForm,
     addIssueLine,
     removeIssueLine,

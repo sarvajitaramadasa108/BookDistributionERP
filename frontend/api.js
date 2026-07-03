@@ -253,6 +253,16 @@
   }
 
   function createMockDocument(payload) {
+    if (payload.documentType === "ISSUE" && !payload.activityId) {
+      throw new Error("Activity is required for issue documents");
+    }
+    if ((payload.documentType === "RECEIVE" || payload.documentType === "RETURN") && !payload.activityId) {
+      throw new Error("Activity is required for return documents");
+    }
+    if ((payload.documentType === "RECEIVE" || payload.documentType === "RETURN") && !activityHasIssueMock(payload.activityId)) {
+      throw new Error("Return can be posted only for an activity that already has issue entries");
+    }
+
     const documentId = nextMockId("DOC", mockData.documents, "documentId");
     const document = {
       documentId,
@@ -271,6 +281,10 @@
     mockData.documents.push(document);
     saveMockData();
     return { documentId };
+  }
+
+  function activityHasIssueMock(activityId) {
+    return mockData.documents.some((document) => document.activityId === activityId && document.documentType === "ISSUE" && document.status !== "Cancelled");
   }
 
   function getMockCurrentStock() {

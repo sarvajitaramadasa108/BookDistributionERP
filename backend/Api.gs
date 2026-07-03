@@ -526,6 +526,19 @@ function validateDocument_(payload) {
   if (!payload.lines || !payload.lines.length) {
     throw new Error("At least one document line is required");
   }
+
+  if (payload.documentType === "ISSUE" && !payload.activityId) {
+    throw new Error("Activity is required for issue documents");
+  }
+
+  if ((payload.documentType === "RECEIVE" || payload.documentType === "RETURN") && !payload.activityId) {
+    throw new Error("Activity is required for return documents");
+  }
+
+  if ((payload.documentType === "RECEIVE" || payload.documentType === "RETURN") && !activityHasIssue_(payload.activityId)) {
+    throw new Error("Return can be posted only for an activity that already has issue entries");
+  }
+
   payload.lines.forEach(function (line) {
     if (!line.bookId) {
       throw new Error("Book ID is required on every line");
@@ -533,6 +546,15 @@ function validateDocument_(payload) {
     if (Number(line.quantity || 0) <= 0) {
       throw new Error("Quantity must be greater than zero");
     }
+  });
+}
+
+function activityHasIssue_(activityId) {
+  if (!activityId) {
+    return false;
+  }
+  return readObjects_("Documents").some(function (row) {
+    return row["Activity ID"] === activityId && row["Document Type"] === "ISSUE" && row.Status !== "Cancelled";
   });
 }
 
