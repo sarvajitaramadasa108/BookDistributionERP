@@ -436,12 +436,24 @@
     if (unsettledResult.status === "rejected") reportErrors.push("Unsettled stock");
     if (activityLedgerResult.status === "rejected") reportErrors.push("Activity ledger");
 
-    state.currentStock = stockResult.status === "fulfilled" ? stockResult.value.map(normalizeStockRow) : [];
-    state.books = booksResult.status === "fulfilled" ? booksResult.value : [];
-    state.warehouses = warehousesResult.status === "fulfilled" ? warehousesResult.value.map(normalizeWarehouse) : [];
-    state.devotees = devoteesResult.status === "fulfilled" ? devoteesResult.value.map(normalizeDevotee) : [];
-    state.activityUnsettled = unsettledResult.status === "fulfilled" ? unsettledResult.value.map(normalizeActivityUnsettled) : [];
-    state.activityLedger = activityLedgerResult.status === "fulfilled" ? activityLedgerResult.value.map(normalizeActivityLedger) : [];
+    if (stockResult.status === "fulfilled") {
+      state.currentStock = stockResult.value.map(normalizeStockRow);
+    }
+    if (booksResult.status === "fulfilled") {
+      state.books = booksResult.value;
+    }
+    if (warehousesResult.status === "fulfilled") {
+      state.warehouses = warehousesResult.value.map(normalizeWarehouse);
+    }
+    if (devoteesResult.status === "fulfilled") {
+      state.devotees = devoteesResult.value.map(normalizeDevotee);
+    }
+    if (unsettledResult.status === "fulfilled") {
+      state.activityUnsettled = unsettledResult.value.map(normalizeActivityUnsettled);
+    }
+    if (activityLedgerResult.status === "fulfilled") {
+      state.activityLedger = activityLedgerResult.value.map(normalizeActivityLedger);
+    }
 
     if (!state.reportWarehouseId) {
       state.reportWarehouseId = state.warehouses.find((warehouse) => (warehouse.name || "").toLowerCase().indexOf("gmb") === 0)?.warehouseId || state.warehouses[0]?.warehouseId || "";
@@ -487,8 +499,8 @@
                 <label class="field compact-field">
                   <span>Warehouse</span>
                   <select onchange="window.erpApp.setReportWarehouse(this.value)">
-                  ${state.warehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${state.reportWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
-                </select>
+                    ${state.warehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${state.reportWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
+                  </select>
               </label>
                 <label class="field compact-field">
                   <span>Month</span>
