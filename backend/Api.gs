@@ -494,7 +494,7 @@ function appendLedgerRows_(documentId, lineId, documentType, documentDate, paylo
     return;
   }
 
-  const inwardTypes = ["RECEIVE", "RETURN"];
+  const inwardTypes = ["OPENING", "RECEIVE", "RETURN"];
   const quantityIn = inwardTypes.indexOf(documentType) !== -1 ? quantity : 0;
   const quantityOut = inwardTypes.indexOf(documentType) !== -1 ? 0 : quantity;
   const warehouseId = payload.warehouseId || payload.fromWarehouseId || payload.toWarehouseId;

@@ -18,6 +18,8 @@
     receiveLines: [],
     transferDraft: {},
     transferLines: [],
+    openingDraft: {},
+    openingLines: [],
     currentStock: []
   };
 
@@ -338,6 +340,7 @@
         <div class="panel-header">
           <h2>Stock Documents</h2>
           <div class="row-actions">
+            <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">Opening Stock</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Receive Books</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Books</button>
             <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Books</button>
@@ -378,7 +381,7 @@
             ${rows.slice().reverse().map((row) => `
               <tr>
                 <td>${escapeHtml(row.documentId)}</td>
-                <td>${status(row.documentType, row.documentType === "ISSUE" ? "warn" : "good")}</td>
+                <td>${status(row.documentType, documentTone(row.documentType))}</td>
                 <td>${escapeHtml(toInputDate(row.documentDate) || "-")}</td>
                 <td>${escapeHtml(getWarehouseName(row.fromWarehouseId))}</td>
                 <td>${escapeHtml(getWarehouseName(row.toWarehouseId))}</td>
@@ -984,6 +987,20 @@
     return activity ? activity.name : activityId || "-";
   }
 
+  function documentTone(documentType) {
+    const toneByType = {
+      OPENING: "good",
+      RECEIVE: "good",
+      RETURN: "good",
+      TRANSFER: "warn",
+      ISSUE: "warn",
+      COMPLIMENTARY: "bad",
+      SALE: "bad",
+      ADJUSTMENT: "warn"
+    };
+    return toneByType[documentType] || "warn";
+  }
+
   function openIssueForm() {
     state.issueDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
@@ -997,6 +1014,166 @@
 
   function blankIssueLine() {
     return { bookId: "", quantity: 1, rate: 0 };
+  }
+
+  function openOpeningStockForm() {
+    state.openingDraft = {
+      documentDate: new Date().toISOString().slice(0, 10),
+      toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
+      notes: "Opening stock as on date"
+    };
+    state.openingLines = [blankOpeningLine()];
+    renderOpeningStockModal();
+  }
+
+  function blankOpeningLine() {
+    return { bookId: "", quantity: 1, rate: 0 };
+  }
+
+  function renderOpeningStockModal() {
+    const activeBooks = state.books.filter((book) => book.active !== false);
+    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
+    const draft = state.openingDraft;
+
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+      <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="openingFormTitle">
+        <div class="modal-header">
+          <h2 id="openingFormTitle">Opening Stock</h2>
+          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+        </div>
+        <form class="form-grid" id="openingForm">
+          <label class="field">
+            <span>Date</span>
+            <input name="documentDate" type="date" value="${escapeAttribute(draft.documentDate)}" required>
+          </label>
+          <label class="field">
+            <span>Warehouse</span>
+            <select name="toWarehouseId" required>
+              <option value="">Select warehouse</option>
+              ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.toWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field wide-field">
+            <span>Notes</span>
+            <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Opening stock note">
+          </label>
+          <div class="wide-field">
+            <div class="line-editor-header">
+              <h3>Books</h3>
+              <button class="small-button" type="button" onclick="window.erpApp.addOpeningLine()">Add Line</button>
+            </div>
+            ${activeBooks.length ? openingLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before posting opening stock.</div>'}
+          </div>
+          <div class="form-actions">
+            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+            <button class="button" type="submit" ${activeBooks.length ? "" : "disabled"}>Post Opening Stock</button>
+          </div>
+        </form>
+      </section>
+    `;
+
+    document.getElementById("openingForm").addEventListener("submit", saveOpeningStock);
+  }
+
+  function openingLinesMarkup(activeBooks) {
+    return `
+      <div class="line-table">
+        ${state.openingLines.map((line, index) => `
+          <div class="line-row">
+            <label class="field">
+              <span>Book</span>
+              <select onchange="window.erpApp.updateOpeningLine(${index}, 'bookId', this.value)" required>
+                <option value="">Select book</option>
+                ${activeBooks.map((book) => {
+                  const bookId = book.erpCode || book.bookId;
+                  return `<option value="${escapeAttribute(bookId)}" ${line.bookId === bookId ? "selected" : ""}>${escapeHtml(getBookOptionLabel(book))}</option>`;
+                }).join("")}
+              </select>
+            </label>
+            <label class="field">
+              <span>Qty</span>
+              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateOpeningLine(${index}, 'quantity', this.value)" required>
+            </label>
+            <label class="field">
+              <span>Cost</span>
+              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.rate)}" onchange="window.erpApp.updateOpeningLine(${index}, 'rate', this.value)">
+            </label>
+            <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeOpeningLine(${index})">Remove</button>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function addOpeningLine() {
+    syncOpeningDraft();
+    state.openingLines.push(blankOpeningLine());
+    renderOpeningStockModal();
+  }
+
+  function removeOpeningLine(index) {
+    syncOpeningDraft();
+    state.openingLines.splice(index, 1);
+    if (!state.openingLines.length) {
+      state.openingLines.push(blankOpeningLine());
+    }
+    renderOpeningStockModal();
+  }
+
+  function updateOpeningLine(index, key, value) {
+    if (!state.openingLines[index]) return;
+    state.openingLines[index][key] = key === "bookId" ? value : Number(value || 0);
+  }
+
+  function syncOpeningDraft() {
+    const form = document.getElementById("openingForm");
+    if (!form) return;
+    const data = new FormData(form);
+    state.openingDraft = {
+      documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
+      toWarehouseId: data.get("toWarehouseId") || "",
+      notes: data.get("notes") || ""
+    };
+  }
+
+  async function saveOpeningStock(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const lines = state.openingLines
+      .filter((line) => line.bookId && Number(line.quantity || 0) > 0)
+      .map((line) => ({
+        bookId: line.bookId,
+        quantity: Number(line.quantity),
+        rate: Number(line.rate || 0)
+      }));
+
+    if (!lines.length) {
+      showToast("Add at least one book line");
+      return;
+    }
+
+    const payload = {
+      documentType: "OPENING",
+      documentDate: data.get("documentDate"),
+      toWarehouseId: data.get("toWarehouseId"),
+      status: "Posted",
+      notes: data.get("notes").trim(),
+      lines
+    };
+
+    setLoading(true);
+    try {
+      const result = await window.erpApi.request("documents.create", payload);
+      closeModal();
+      content.innerHTML = await renderDocuments();
+      showToast(`Opening stock posted: ${result.documentId}`);
+    } catch (error) {
+      showToast(error.message || "Could not post opening stock");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function renderIssueModal() {
@@ -1598,6 +1775,10 @@
     setActivityStatus,
     openActivityForm,
     cancelActivity,
+    openOpeningStockForm,
+    addOpeningLine,
+    removeOpeningLine,
+    updateOpeningLine,
     openIssueForm,
     addIssueLine,
     removeIssueLine,

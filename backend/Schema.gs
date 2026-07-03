@@ -11,4 +11,4 @@ const ERP_SCHEMA = {
   AuditLog: ["Log ID", "Timestamp", "User", "Action", "Entity", "Entity ID", "Details"]
 };
 
-const ERP_DOCUMENT_TYPES = ["ISSUE", "RECEIVE", "SALE", "RETURN", "TRANSFER", "ADJUSTMENT"];
+const ERP_DOCUMENT_TYPES = ["OPENING", "ISSUE", "COMPLIMENTARY", "RECEIVE", "SALE", "RETURN", "TRANSFER", "ADJUSTMENT"];

@@ -283,7 +283,7 @@
           return;
         }
 
-        const inwardTypes = ["RECEIVE", "RETURN"];
+        const inwardTypes = ["OPENING", "RECEIVE", "RETURN"];
         const quantity = inwardTypes.includes(document.documentType) ? Number(line.quantity || 0) : -Number(line.quantity || 0);
         addMockStock(index, document.toWarehouseId || document.fromWarehouseId, line.bookId, quantity);
       });
