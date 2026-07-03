@@ -414,7 +414,7 @@
   }
 
   async function renderReports() {
-    const [stock, books, warehouses, devotees, unsettled, activityLedger] = await Promise.all([
+    const results = await Promise.allSettled([
       window.erpApi.request("stock.current"),
       window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
       window.erpApi.request("warehouses.list"),
@@ -422,14 +422,29 @@
       window.erpApi.request("activity.unsettled"),
       window.erpApi.request("reports.activityLedger", { devoteeId: state.reportDevoteeId })
     ]);
-    state.currentStock = stock.map(normalizeStockRow);
-    state.books = books;
-    state.warehouses = warehouses.map(normalizeWarehouse);
-    state.devotees = devotees.map(normalizeDevotee);
-    state.activityUnsettled = unsettled.map(normalizeActivityUnsettled);
-    state.activityLedger = activityLedger.map(normalizeActivityLedger);
+    const stockResult = results[0];
+    const booksResult = results[1];
+    const warehousesResult = results[2];
+    const devoteesResult = results[3];
+    const unsettledResult = results[4];
+    const activityLedgerResult = results[5];
+    const reportErrors = [];
+    if (stockResult.status === "rejected") reportErrors.push("Current stock");
+    if (booksResult.status === "rejected") reportErrors.push("Books");
+    if (warehousesResult.status === "rejected") reportErrors.push("Warehouses");
+    if (devoteesResult.status === "rejected") reportErrors.push("Devotees");
+    if (unsettledResult.status === "rejected") reportErrors.push("Unsettled stock");
+    if (activityLedgerResult.status === "rejected") reportErrors.push("Activity ledger");
+
+    state.currentStock = stockResult.status === "fulfilled" ? stockResult.value.map(normalizeStockRow) : [];
+    state.books = booksResult.status === "fulfilled" ? booksResult.value : [];
+    state.warehouses = warehousesResult.status === "fulfilled" ? warehousesResult.value.map(normalizeWarehouse) : [];
+    state.devotees = devoteesResult.status === "fulfilled" ? devoteesResult.value.map(normalizeDevotee) : [];
+    state.activityUnsettled = unsettledResult.status === "fulfilled" ? unsettledResult.value.map(normalizeActivityUnsettled) : [];
+    state.activityLedger = activityLedgerResult.status === "fulfilled" ? activityLedgerResult.value.map(normalizeActivityLedger) : [];
+
     if (!state.reportWarehouseId) {
-      state.reportWarehouseId = warehouses.find((warehouse) => (warehouse.name || "").toLowerCase().indexOf("gmb") === 0)?.warehouseId || warehouses[0]?.warehouseId || "";
+      state.reportWarehouseId = state.warehouses.find((warehouse) => (warehouse.name || "").toLowerCase().indexOf("gmb") === 0)?.warehouseId || state.warehouses[0]?.warehouseId || "";
     }
     if (!state.reportMonth) {
       state.reportMonth = new Date().toISOString().slice(0, 7);
@@ -437,10 +452,14 @@
 
     let warehouseReport = null;
     if (state.reportWarehouseId) {
-      warehouseReport = await window.erpApi.request("reports.warehouseMonthly", {
-        warehouseId: state.reportWarehouseId,
-        month: state.reportMonth
-      });
+      try {
+        warehouseReport = await window.erpApi.request("reports.warehouseMonthly", {
+          warehouseId: state.reportWarehouseId,
+          month: state.reportMonth
+        });
+      } catch (error) {
+        warehouseReport = null;
+      }
     }
     state.warehouseMonthlyReport = warehouseReport ? normalizeWarehouseMonthlyReport(warehouseReport) : null;
 
@@ -460,6 +479,7 @@
             ${metric("Activities Open", unsettledActivities, "Activities with unsettled balance")}
             ${metric("Ledger Rows", state.activityLedger.length, "Devotee-linked activity rows")}
           </div>
+          ${reportErrors.length ? `<div class="empty-state">Some report sources are unavailable right now: ${escapeHtml(reportErrors.join(", "))}.</div>` : ""}
           <div class="section-gap">
             <div class="panel-header compact-header">
               <h2>Warehouse Summary</h2>
@@ -467,9 +487,9 @@
                 <label class="field compact-field">
                   <span>Warehouse</span>
                   <select onchange="window.erpApp.setReportWarehouse(this.value)">
-                    ${state.warehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${state.reportWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
-                  </select>
-                </label>
+                  ${state.warehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${state.reportWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
+                </select>
+              </label>
                 <label class="field compact-field">
                   <span>Month</span>
                   <input type="month" value="${escapeAttribute(state.reportMonth)}" onchange="window.erpApp.setReportMonth(this.value)">
