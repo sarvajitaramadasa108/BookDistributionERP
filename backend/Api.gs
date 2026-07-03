@@ -1,8 +1,25 @@
+var CURRENT_USER_ = null;
+
 function routeRequest_(request) {
   const action = request.action;
   const payload = request.payload || {};
+  const publicActions = {
+    "auth.login": true,
+    "auth.me": true,
+    "system.setup": true
+  };
+  CURRENT_USER_ = publicActions[action] ? null : getSessionUser_(payload.sessionToken);
+  if (!publicActions[action] && !CURRENT_USER_) {
+    throw new Error("Please log in to continue");
+  }
   const routes = {
     "system.setup": setupDatabase,
+    "auth.login": function () { return authLogin_(payload); },
+    "auth.me": function () { return CURRENT_USER_ || null; },
+    "auth.logout": function () { return authLogout_(payload); },
+    "users.list": function () { return readUsers_(); },
+    "users.create": function () { return createUser_(payload); },
+    "users.update": function () { return updateUser_(payload); },
     "dashboard.summary": getDashboardSummary_,
     "books.list": function () { return readObjects_("Books").map(function (row) { return mapBook_(row, false); }); },
     "books.adminList": function () { return readObjects_("Books").map(function (row) { return mapBook_(row, true); }); },
@@ -32,7 +49,182 @@ function routeRequest_(request) {
   if (!routes[action]) {
     throw new Error("Unknown action: " + action);
   }
-  return routes[action]();
+  const result = routes[action]();
+  CURRENT_USER_ = null;
+  return result;
+}
+
+function readUsers_() {
+  return readObjects_("Users").map(function (row) {
+    return mapUser_(row);
+  });
+}
+
+function mapUser_(row) {
+  return {
+    userId: row["User ID"],
+    name: row.Name,
+    username: row.Username,
+    role: row.Role,
+    active: row.Active === true || row.Active === "TRUE" || row.Active === "true",
+    createdAt: row["Created At"],
+    updatedAt: row["Updated At"]
+  };
+}
+
+function getUserByUsername_(username, excludeUserId) {
+  const normalized = String(username || "").trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  return readObjects_("Users").find(function (row) {
+    if (excludeUserId && row["User ID"] === excludeUserId) {
+      return false;
+    }
+    return String(row.Username || "").trim().toLowerCase() === normalized;
+  }) || null;
+}
+
+function authLogin_(payload) {
+  const username = String(payload.username || "").trim().toLowerCase();
+  const password = String(payload.password || "");
+  if (!username || !password) {
+    throw new Error("Username and password are required");
+  }
+
+  const userRow = getUserByUsername_(username);
+
+  if (!userRow) {
+    throw new Error("Invalid username or password");
+  }
+  if (!(userRow.Active === true || userRow.Active === "TRUE" || userRow.Active === "true")) {
+    throw new Error("This account is inactive");
+  }
+  if (hashPassword_(password) !== String(userRow["Password Hash"] || "")) {
+    throw new Error("Invalid username or password");
+  }
+
+  const token = Utilities.getUuid();
+  CacheService.getScriptCache().put("session:" + token, JSON.stringify({
+    userId: userRow["User ID"],
+    name: userRow.Name,
+    username: userRow.Username,
+    role: userRow.Role
+  }), 21600);
+  return {
+    sessionToken: token,
+    user: mapUser_(userRow)
+  };
+}
+
+function authLogout_(payload) {
+  if (payload.sessionToken) {
+    CacheService.getScriptCache().remove("session:" + payload.sessionToken);
+  }
+  return { ok: true };
+}
+
+function getSessionUser_(sessionToken) {
+  if (!sessionToken) {
+    return null;
+  }
+  const cached = CacheService.getScriptCache().get("session:" + sessionToken);
+  if (!cached) {
+    return null;
+  }
+  try {
+    return JSON.parse(cached);
+  } catch (error) {
+    return null;
+  }
+}
+
+function createUser_(payload) {
+  validateUserPayload_(payload);
+  if (getUserByUsername_(payload.username)) {
+    throw new Error("Username already exists");
+  }
+  const now = new Date();
+  const user = {
+    "User ID": nextId_("USR", "Users", "User ID"),
+    "Name": payload.name,
+    "Username": payload.username,
+    "Password Hash": hashPassword_(payload.password),
+    "Role": payload.role || "storeIncharge",
+    "Active": payload.active !== false,
+    "Created At": now,
+    "Updated At": now
+  };
+  appendObject_("Users", user);
+  logAudit_("users.create", "Users", user["User ID"], JSON.stringify({ name: user["Name"], username: user["Username"], role: user["Role"], active: user["Active"] }));
+  return mapUser_(user);
+}
+
+function updateUser_(payload) {
+  const userId = payload.userId;
+  if (!userId) {
+    throw new Error("User ID is required");
+  }
+  validateUserPayload_(payload, true);
+  if (payload.username && getUserByUsername_(payload.username, userId)) {
+    throw new Error("Username already exists");
+  }
+  const sheet = getSheet_("Users");
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0];
+  const idIndex = headers.indexOf("User ID");
+  const rowIndex = values.findIndex(function (row, index) {
+    return index > 0 && row[idIndex] === userId;
+  });
+  if (rowIndex === -1) {
+    throw new Error("User not found");
+  }
+
+  const current = {};
+  headers.forEach(function (header, index) {
+    current[header] = values[rowIndex][index];
+  });
+
+  const updated = {
+    "User ID": userId,
+    "Name": payload.name || current["Name"],
+    "Username": payload.username || current["Username"],
+    "Password Hash": payload.password ? hashPassword_(payload.password) : current["Password Hash"],
+    "Role": payload.role || current["Role"] || "storeIncharge",
+    "Active": payload.active !== undefined ? payload.active : (current["Active"] === true || current["Active"] === "TRUE" || current["Active"] === "true"),
+    "Created At": current["Created At"] || new Date(),
+    "Updated At": new Date()
+  };
+
+  sheet.getRange(rowIndex + 1, 1, 1, headers.length).setValues([headers.map(function (header) {
+    return updated[header] === undefined ? "" : updated[header];
+  })]);
+  logAudit_("users.update", "Users", userId, JSON.stringify({ name: updated["Name"], username: updated["Username"], role: updated["Role"], active: updated["Active"] }));
+  return mapUser_(updated);
+}
+
+function validateUserPayload_(payload, isUpdate) {
+  if (!payload.name && !isUpdate) {
+    throw new Error("Name is required");
+  }
+  if (!payload.username && !isUpdate) {
+    throw new Error("Username is required");
+  }
+  if (!payload.password && !isUpdate) {
+    throw new Error("Password is required");
+  }
+  if (payload.password && String(payload.password).length < 4) {
+    throw new Error("Password must be at least 4 characters");
+  }
+  const allowedRoles = ["mainAdmin", "storeIncharge"];
+  if (payload.role && allowedRoles.indexOf(payload.role) === -1) {
+    throw new Error("Invalid user role");
+  }
+}
+
+function hashPassword_(password) {
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(password));
+  return Utilities.base64Encode(digest);
 }
 
 function createBook_(payload) {
@@ -487,7 +679,7 @@ function createDocument_(payload) {
     "Status": payload.status || "Posted",
     "Notes": payload.notes || "",
     "Created At": now,
-    "Created By": payload.createdBy || "Admin",
+    "Created By": payload.createdBy || getCurrentUserLabel_(),
     "Updated At": now
   });
 
@@ -1324,10 +1516,17 @@ function logAudit_(action, entity, entityId, details) {
   appendObject_("AuditLog", {
     "Log ID": nextId_("LOG", "AuditLog", "Log ID"),
     "Timestamp": new Date(),
-    "User": Session.getActiveUser().getEmail() || "Unknown",
+    "User": getCurrentUserLabel_(),
     "Action": action,
     "Entity": entity,
     "Entity ID": entityId,
     "Details": details || ""
   });
+}
+
+function getCurrentUserLabel_() {
+  if (CURRENT_USER_ && CURRENT_USER_.username) {
+    return CURRENT_USER_.name ? CURRENT_USER_.name + " (" + CURRENT_USER_.username + ")" : CURRENT_USER_.username;
+  }
+  return Session.getActiveUser().getEmail() || "Unknown";
 }

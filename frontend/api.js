@@ -55,20 +55,29 @@
       { activityId: "ACT-001", name: "Simhachalam Stall", type: "Stall", devoteeId: "DEV-0007", devoteeName: "KKRP", warehouse: "Simhachalam", status: "Running" },
       { activityId: "ACT-002", name: "Annavaram Daily Stall", type: "Daily", devoteeId: "DEV-0010", devoteeName: "ADKP", warehouse: "Annavaram", status: "Running" }
     ],
-    documents: []
+    documents: [],
+    users: [
+      { userId: "USR-0001", name: "Admin", username: "admin", password: "admin123", role: "mainAdmin", active: true },
+      { userId: "USR-0002", name: "Store Incharge", username: "incharge", password: "incharge123", role: "storeIncharge", active: true }
+    ],
+    sessions: {}
   };
 
   const mockData = loadMockData();
 
   async function request(action, payload) {
+    const requestPayload = { ...(payload || {}) };
+    if (action !== "auth.login" && action !== "system.setup") {
+      requestPayload.sessionToken = getSessionToken();
+    }
     if (config.mockMode || !config.apiBaseUrl) {
-      return mockResponse(action, payload || {});
+      return mockResponse(action, requestPayload);
     }
 
     const response = await fetch(config.apiBaseUrl, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ action, payload: payload || {} })
+      body: JSON.stringify({ action, payload: requestPayload })
     });
 
     const raw = await response.text();
@@ -98,6 +107,12 @@
       "books.bulkUpsert": () => bulkUpsertMockBooks(payload),
       "warehouses.list": mockData.warehouses,
       "devotees.list": mockData.devotees,
+      "users.list": mockData.users.map(({ password, ...user }) => user),
+      "auth.me": () => mockAuthMe(payload),
+      "auth.login": () => mockAuthLogin(payload),
+      "auth.logout": () => mockAuthLogout(payload),
+      "users.create": () => createMockUser(payload),
+      "users.update": () => updateMockUser(payload),
       "warehouses.create": () => createMockWarehouse(payload),
       "warehouses.update": () => updateMockWarehouse(payload),
       "warehouses.delete": () => deleteMockWarehouse(payload),
@@ -142,6 +157,8 @@
         }))
       : clone.activities;
     clone.documents = Array.isArray(source.documents) ? source.documents : clone.documents;
+    clone.users = Array.isArray(source.users) && source.users.length ? source.users : clone.users;
+    clone.sessions = source.sessions || clone.sessions;
     return clone;
   }
 
@@ -151,6 +168,85 @@
     } catch (error) {
       console.warn("Could not save mock data", error);
     }
+  }
+
+  function getSessionToken() {
+    try {
+      return window.localStorage.getItem("hkm-session-token") || config.sessionToken || "";
+    } catch (error) {
+      return config.sessionToken || "";
+    }
+  }
+
+  function mockAuthLogin(payload) {
+    const username = String(payload.username || "").trim().toLowerCase();
+    const password = String(payload.password || "");
+    const user = mockData.users.find((item) => String(item.username || "").trim().toLowerCase() === username);
+    if (!user || !user.active) {
+      throw new Error("Invalid username or password");
+    }
+    if (String(user.password || "") !== password) {
+      throw new Error("Invalid username or password");
+    }
+    const token = `mock-${user.username}`;
+    mockData.sessions[token] = { userId: user.userId, name: user.name, username: user.username, role: user.role };
+    saveMockData();
+    return {
+      sessionToken: token,
+      user: { userId: user.userId, name: user.name, username: user.username, role: user.role, active: user.active }
+    };
+  }
+
+  function mockAuthMe(payload) {
+    const session = mockData.sessions[payload.sessionToken];
+    if (!session) {
+      return null;
+    }
+    const user = mockData.users.find((item) => item.userId === session.userId);
+    return user ? { userId: user.userId, name: user.name, username: user.username, role: user.role, active: user.active } : null;
+  }
+
+  function mockAuthLogout(payload) {
+    if (payload.sessionToken && mockData.sessions[payload.sessionToken]) {
+      delete mockData.sessions[payload.sessionToken];
+      saveMockData();
+    }
+    return { ok: true };
+  }
+
+  function createMockUser(payload) {
+    const user = normalizeMockUser(payload);
+    user.userId = nextMockId("USR", mockData.users, "userId");
+    mockData.users.push(user);
+    saveMockData();
+    return { ...user, password: undefined };
+  }
+
+  function updateMockUser(payload) {
+    const index = mockData.users.findIndex((item) => item.userId === payload.userId);
+    if (index === -1) {
+      throw new Error("User not found");
+    }
+    const current = mockData.users[index];
+    const updated = { ...current, ...normalizeMockUser(payload), userId: current.userId };
+    if (!payload.password) {
+      updated.password = current.password;
+    }
+    mockData.users[index] = updated;
+    saveMockData();
+    const { password, ...safe } = updated;
+    return safe;
+  }
+
+  function normalizeMockUser(payload) {
+    return {
+      userId: payload.userId || "",
+      name: String(payload.name || "").trim(),
+      username: String(payload.username || "").trim(),
+      password: String(payload.password || "").trim(),
+      role: String(payload.role || "storeIncharge").trim(),
+      active: payload.active !== false
+    };
   }
 
   function createMockBook(payload) {

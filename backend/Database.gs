@@ -6,6 +6,7 @@ function setupDatabase() {
   migrateActivitiesSheet_();
   seedSettings_();
   seedDevotees_();
+  seedUsers_();
   backfillBlankActivityDevotees_();
   seedStarterWarehouses_();
   return { ok: true, message: "Database setup completed", sheets: Object.keys(ERP_SCHEMA) };
@@ -103,6 +104,43 @@ function seedDevotees_() {
     sheet.appendRow([
       "DEV-" + String(index + 1).padStart(4, "0"),
       name,
+      true,
+      now,
+      now
+    ]);
+  });
+}
+
+function seedUsers_() {
+  const sheet = getSheet_("Users");
+  const rows = readObjects_("Users");
+  if (rows.length > 0) {
+    return;
+  }
+
+  const now = new Date();
+  [
+    {
+      id: "USR-0001",
+      name: "Admin",
+      username: "admin",
+      password: "admin123",
+      role: "mainAdmin"
+    },
+    {
+      id: "USR-0002",
+      name: "Store Incharge",
+      username: "incharge",
+      password: "incharge123",
+      role: "storeIncharge"
+    }
+  ].forEach(function (user) {
+    sheet.appendRow([
+      user.id,
+      user.name,
+      user.username,
+      hashPassword_(user.password),
+      user.role,
       true,
       now,
       now

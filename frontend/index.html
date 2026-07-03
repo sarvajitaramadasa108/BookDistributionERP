@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
+    <div class="auth-root hidden" id="authRoot"></div>
     <div class="app-shell" id="appShell">
       <aside class="sidebar" id="sidebar">
         <div class="brand">
@@ -35,7 +36,7 @@
             <h1 id="pageTitle">Home</h1>
             <p id="pageSubtitle">Daily view of distribution, stock, and active service.</p>
           </div>
-          <div class="user-chip">Admin</div>
+          <button class="user-chip" id="userChip" type="button" onclick="window.erpApp.logout()">Guest</button>
         </header>
 
         <section class="content" id="content" aria-live="polite"></section>

@@ -8,7 +8,7 @@ const ERP_SCHEMA = {
   Documents: ["Document ID", "Document Type", "Document Date", "From Warehouse ID", "To Warehouse ID", "Activity ID", "Volunteer ID", "Status", "Notes", "Created At", "Created By", "Updated At"],
   DocumentLines: ["Line ID", "Document ID", "Book ID", "Quantity", "Rate", "Amount", "Line Notes"],
   StockLedger: ["Ledger ID", "Document ID", "Document Line ID", "Ledger Date", "Warehouse ID", "Activity ID", "Book ID", "Movement Type", "Quantity In", "Quantity Out", "Rate", "Amount", "Created At"],
-  Users: ["User ID", "Name", "Email", "Role", "Active", "Created At", "Updated At"],
+  Users: ["User ID", "Name", "Username", "Password Hash", "Role", "Active", "Created At", "Updated At"],
   AuditLog: ["Log ID", "Timestamp", "User", "Action", "Entity", "Entity ID", "Details"]
 };
 

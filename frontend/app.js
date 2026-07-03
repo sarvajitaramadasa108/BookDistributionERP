@@ -19,6 +19,8 @@
     activityReportActivitySearch: "",
     showWarehouseDayWiseSales: false,
     issueDocumentType: "ISSUE",
+    currentUser: null,
+    sessionToken: "",
     purchaseDraft: {},
     purchaseLines: [],
     purchaseImportName: "",
@@ -76,6 +78,8 @@
   const sidebarToggleButton = document.getElementById("sidebarToggleButton");
   const loadingOverlay = document.getElementById("loadingOverlay");
   const toastStack = document.getElementById("toastStack");
+  const authRoot = document.getElementById("authRoot");
+  const userChip = document.getElementById("userChip");
   const modalRoot = document.getElementById("modalRoot");
 
   try {
@@ -758,6 +762,7 @@
 
   async function renderSettings() {
     const config = window.ERP_CONFIG || {};
+    state.users = await window.erpApi.request("users.list");
     return `
       <section class="card">
         <div class="panel-header"><h2>Backend Connection</h2></div>
@@ -767,11 +772,146 @@
               <tr><th>App Name</th><td>${escapeHtml(config.appName)}</td></tr>
               <tr><th>API URL</th><td>${escapeHtml(config.apiBaseUrl || "Not connected yet")}</td></tr>
               <tr><th>Mode</th><td>${config.mockMode ? "Mock data" : "Live Apps Script"}</td></tr>
+              <tr><th>Current User</th><td>${escapeHtml(state.currentUser ? `${state.currentUser.name} (${state.currentUser.role})` : "-")}</td></tr>
             </tbody>
           </table>
         </div>
       </section>
+      <section class="card" style="margin-top:18px;">
+        <div class="panel-header">
+          <h2>User Master</h2>
+          <button class="button" type="button" onclick="window.erpApp.openUserForm()">Add User</button>
+        </div>
+        <div class="panel-body">
+          ${renderUsersMarkup(state.users)}
+        </div>
+      </section>
     `;
+  }
+
+  function renderUsersMarkup(rows) {
+    if (!rows || !rows.length) {
+      return '<div class="empty-state">No users found.</div>';
+    }
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>User ID</th>
+              <th>Name</th>
+              <th>Username</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.userId || "-")}</td>
+                <td>${escapeHtml(row.name || "-")}</td>
+                <td>${escapeHtml(row.username || "-")}</td>
+                <td>${escapeHtml(row.role || "-")}</td>
+                <td>${status(row.active ? "Active" : "Inactive", row.active ? "good" : "warn")}</td>
+                <td>
+                  <div class="row-actions">
+                    <button class="small-button" type="button" onclick="window.erpApp.openUserForm('${escapeAttribute(row.userId)}')">Edit</button>
+                  </div>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function openUserForm(userId) {
+    const user = state.users.find((item) => item.userId === userId) || {
+      userId: "",
+      name: "",
+      username: "",
+      role: "storeIncharge",
+      active: true
+    };
+    const isEdit = Boolean(user.userId);
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="userFormTitle">
+        <div class="modal-header">
+          <h2 id="userFormTitle">${isEdit ? "Edit User" : "Add User"}</h2>
+          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+        </div>
+        <form class="form-grid" id="userForm">
+          <input type="hidden" name="userId" value="${escapeAttribute(user.userId)}">
+          <label class="field wide-field">
+            <span>Name</span>
+            <input name="name" required value="${escapeAttribute(user.name)}" placeholder="User name">
+          </label>
+          <label class="field">
+            <span>Username</span>
+            <input name="username" required value="${escapeAttribute(user.username)}" placeholder="admin">
+          </label>
+          <label class="field">
+            <span>Password ${isEdit ? "(leave blank to keep)" : ""}</span>
+            <input name="password" type="password" ${isEdit ? "" : "required"} placeholder="Password">
+          </label>
+          <label class="field">
+            <span>Role</span>
+            <select name="role" required>
+              <option value="mainAdmin" ${user.role === "mainAdmin" ? "selected" : ""}>Admin</option>
+              <option value="storeIncharge" ${user.role === "storeIncharge" ? "selected" : ""}>Store Incharge</option>
+            </select>
+          </label>
+          <label class="check-field">
+            <input name="active" type="checkbox" ${user.active ? "checked" : ""}>
+            <span>Active</span>
+          </label>
+          <div class="form-actions">
+            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+            <button class="button" type="submit">${isEdit ? "Save Changes" : "Create User"}</button>
+          </div>
+        </form>
+      </section>
+    `;
+    document.getElementById("userForm").addEventListener("submit", saveUser);
+  }
+
+  async function saveUser(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const payload = {
+      userId: data.get("userId"),
+      name: data.get("name").trim(),
+      username: data.get("username").trim(),
+      password: data.get("password").trim(),
+      role: data.get("role"),
+      active: data.get("active") === "on"
+    };
+
+    if (!payload.name || !payload.username) {
+      showToast("Name and username are required");
+      return;
+    }
+
+    if (!payload.userId && !payload.password) {
+      showToast("Password is required");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await window.erpApi.request(payload.userId ? "users.update" : "users.create", payload);
+      closeModal();
+      content.innerHTML = await renderSettings();
+      showToast(payload.userId ? "User updated" : "User created");
+    } catch (error) {
+      showToast(error.message || "Could not save user");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function tableSection(sectionTitle, actionLabel, headings, rows) {
@@ -2293,7 +2433,7 @@
   }
 
   function isMainAdmin() {
-    return appConfig.currentUserRole === "mainAdmin";
+    return Boolean(state.currentUser) || appConfig.currentUserRole === "mainAdmin";
   }
 
   function getActivityName(activityId) {
@@ -3963,8 +4103,134 @@
     return escapeHtml(value).replace(/`/g, "&#096;");
   }
 
+  function getStoredSessionToken() {
+    try {
+      return window.localStorage.getItem("hkm-session-token") || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function setStoredSessionToken(token) {
+    try {
+      if (token) {
+        window.localStorage.setItem("hkm-session-token", token);
+      } else {
+        window.localStorage.removeItem("hkm-session-token");
+      }
+    } catch (error) {
+      // ignore storage issues
+    }
+  }
+
+  function updateCurrentUser(user, sessionToken) {
+    state.currentUser = user || null;
+    state.sessionToken = sessionToken || "";
+    appConfig.currentUserRole = user ? user.role : "";
+    if (userChip) {
+      userChip.textContent = user ? `${user.name} · ${user.role === "mainAdmin" ? "Admin" : "Store Incharge"}` : "Guest";
+      userChip.title = user ? "Log out" : "Not signed in";
+      userChip.disabled = !user;
+    }
+  }
+
+  function renderAuthScreen(message) {
+    document.body.classList.add("auth-mode");
+    authRoot.classList.remove("hidden");
+    authRoot.innerHTML = `
+      <section class="auth-card">
+        <h1>${window.ERP_CONFIG?.appName || "Book Distribution ERP"}</h1>
+        <p>${message ? escapeHtml(message) : "Sign in with your username and password."}</p>
+        <form id="loginForm" class="form-grid">
+          <label class="field wide-field">
+            <span>Username</span>
+            <input name="username" type="text" required placeholder="admin" autocomplete="username">
+          </label>
+          <label class="field wide-field">
+            <span>Password</span>
+            <input name="password" type="password" required placeholder="Password" autocomplete="current-password">
+          </label>
+          <div class="form-actions">
+            <button class="button" type="submit">Login</button>
+          </div>
+        </form>
+      </section>
+    `;
+    document.getElementById("loginForm").addEventListener("submit", login);
+  }
+
+  function hideAuthScreen() {
+    document.body.classList.remove("auth-mode");
+    authRoot.classList.add("hidden");
+    authRoot.innerHTML = "";
+  }
+
+  async function bootstrapApp() {
+    const token = getStoredSessionToken();
+    if (token) {
+      try {
+        const user = await window.erpApi.request("auth.me", { sessionToken: token });
+        if (user && user.userId) {
+          updateCurrentUser(user, token);
+          hideAuthScreen();
+          await navigate(state.view);
+          return;
+        }
+      } catch (error) {
+        setStoredSessionToken("");
+      }
+    }
+    updateCurrentUser(null, "");
+    renderAuthScreen();
+  }
+
+  async function login(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const payload = {
+      username: String(data.get("username") || "").trim(),
+      password: String(data.get("password") || "")
+    };
+
+    if (!payload.username || !payload.password) {
+      showToast("Enter username and password");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await window.erpApi.request("auth.login", payload);
+      setStoredSessionToken(result.sessionToken);
+      updateCurrentUser(result.user, result.sessionToken);
+      hideAuthScreen();
+      await navigate(state.view);
+      showToast(`Welcome, ${result.user.name}`);
+    } catch (error) {
+      renderAuthScreen(error.message || "Could not log in");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function logout() {
+    const token = getStoredSessionToken();
+    if (token) {
+      try {
+        await window.erpApi.request("auth.logout", { sessionToken: token });
+      } catch (error) {
+        // ignore logout failures
+      }
+    }
+    setStoredSessionToken("");
+    updateCurrentUser(null, "");
+    content.innerHTML = "";
+    renderAuthScreen("You have been signed out.");
+  }
+
   window.erpApp = {
     toast: showToast,
+    logout,
     navigate,
     setBookSearch,
     setBookStatus,
@@ -4031,7 +4297,8 @@
     onIssueWarehouseChange,
     onSaleWarehouseChange,
     onTransferWarehouseChange,
+    openUserForm,
     closeModal
   };
-  navigate(state.view);
+  bootstrapApp();
 })();
