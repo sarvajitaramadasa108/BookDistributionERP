@@ -1,15 +1,23 @@
 :root {
+  --blue-950: #0c1d33;
   --blue-900: #102a43;
   --blue-700: #1d4f91;
+  --blue-600: #2b6cb0;
+  --teal-600: #0f766e;
+  --amber-600: #c47f00;
   --saffron-600: #d97706;
-  --saffron-100: #fff3dc;
+  --saffron-100: #fff4dd;
   --ink: #172033;
   --muted: #64748b;
-  --line: #d8dee9;
-  --page: #f6f8fb;
+  --line: #d9e2ec;
+  --line-strong: #c4cfdb;
+  --page: #edf2f7;
   --panel: #ffffff;
+  --panel-soft: #f8fbfe;
   --success: #16834b;
-  --shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+  --danger: #b42318;
+  --shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+  --shadow-strong: 0 22px 48px rgba(15, 23, 42, 0.12);
 }
 
 * {
@@ -18,10 +26,13 @@
 
 body {
   margin: 0;
-  background: var(--page);
+  background:
+    linear-gradient(180deg, #f7fafc 0%, #edf3f8 100%);
   color: var(--ink);
   font-family: Inter, Segoe UI, Arial, sans-serif;
   letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 button,
@@ -35,36 +46,49 @@ textarea {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   min-height: 100vh;
+  background: transparent;
+}
+
+.main {
+  min-width: 0;
 }
 
 .sidebar {
-  background: #ffffff;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  overflow: auto;
+  background: rgba(255, 255, 255, 0.92);
   border-right: 1px solid var(--line);
-  padding: 20px 16px;
+  padding: 18px 14px;
+  backdrop-filter: blur(10px);
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 8px 22px;
+  padding: 8px 10px 20px;
 }
 
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
+  width: 50px;
+  height: 50px;
   border-radius: 8px;
-  background: var(--blue-700);
+  background: linear-gradient(180deg, var(--blue-700), var(--blue-950));
   color: #ffffff;
   font-weight: 800;
   font-size: 14px;
+  box-shadow: 0 10px 22px rgba(29, 79, 145, 0.22);
 }
 
 .brand-name {
   font-weight: 800;
   color: var(--blue-900);
+  letter-spacing: 0.01em;
 }
 
 .brand-subtitle {
@@ -75,28 +99,32 @@ textarea {
 
 .nav-list {
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .nav-item {
   width: 100%;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   color: #334155;
   cursor: pointer;
-  padding: 11px 12px;
+  padding: 12px 13px;
   text-align: left;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .nav-item:hover,
 .nav-item.active {
-  background: var(--saffron-100);
+  background: #f3f7fc;
   color: var(--blue-900);
+  border-color: #dce7f3;
+  box-shadow: 0 8px 18px rgba(16, 42, 67, 0.05);
+  transform: translateY(-1px);
 }
 
 .nav-item.active {
-  box-shadow: inset 3px 0 0 var(--saffron-600);
+  box-shadow: inset 3px 0 0 var(--blue-700), 0 8px 18px rgba(16, 42, 67, 0.06);
   font-weight: 700;
 }
 
@@ -107,17 +135,19 @@ textarea {
   gap: 16px;
   min-height: 82px;
   padding: 18px 28px;
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.9);
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
   z-index: 3;
+  backdrop-filter: blur(10px);
 }
 
 .topbar h1 {
   margin: 0;
   font-size: 24px;
   line-height: 1.2;
+  letter-spacing: -0.01em;
 }
 
 .topbar p {
@@ -133,10 +163,13 @@ textarea {
   color: var(--blue-900);
   padding: 8px 12px;
   font-weight: 700;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.04);
 }
 
 .content {
   padding: 26px 28px 44px;
+  width: min(100%, 1600px);
+  margin: 0 auto;
 }
 
 .grid {
@@ -162,6 +195,7 @@ textarea {
 
 .metric-card {
   padding: 18px;
+  border-left: 4px solid rgba(29, 79, 145, 0.22);
 }
 
 .reports-metrics .metric-card {
@@ -176,7 +210,7 @@ textarea {
 .metric-value {
   margin-top: 8px;
   color: var(--blue-900);
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 800;
 }
 
@@ -213,15 +247,17 @@ textarea {
   gap: 12px;
   padding: 16px 18px;
   border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(248, 251, 254, 0.92), rgba(255, 255, 255, 1));
 }
 
 .panel-header h2 {
   margin: 0;
   font-size: 17px;
+  letter-spacing: -0.01em;
 }
 
 .panel-body {
-  padding: 16px 18px;
+  padding: 16px 18px 18px;
 }
 
 .toolbar {
@@ -239,12 +275,14 @@ textarea {
   cursor: pointer;
   padding: 10px 14px;
   font-weight: 700;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .button {
   border: 0;
-  background: var(--blue-700);
+  background: linear-gradient(180deg, var(--blue-700), var(--blue-900));
   color: #ffffff;
+  box-shadow: 0 10px 20px rgba(29, 79, 145, 0.16);
 }
 
 .button.secondary {
@@ -257,6 +295,18 @@ textarea {
   border: 1px solid var(--line);
   background: #ffffff;
   color: var(--blue-900);
+}
+
+.button:hover,
+.icon-button:hover,
+.small-button:hover {
+  transform: translateY(-1px);
+}
+
+.button:active,
+.icon-button:active,
+.small-button:active {
+  transform: translateY(0);
 }
 
 .small-button {
@@ -302,12 +352,14 @@ textarea {
   background: #ffffff;
   color: var(--ink);
   padding: 9px 11px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .field input:focus,
 .field select:focus {
   border-color: var(--blue-700);
-  outline: 3px solid rgba(29, 79, 145, 0.14);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(29, 79, 145, 0.14);
 }
 
 .compact-field {
@@ -338,6 +390,7 @@ table {
   width: 100%;
   min-width: 900px;
   border-collapse: collapse;
+  background: #ffffff;
 }
 
 table.warehouse-report-table {
@@ -415,6 +468,12 @@ th {
   color: var(--muted);
   font-size: 12px;
   text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: #f8fbfe;
+}
+
+tbody tr:hover td {
+  background: #fbfdff;
 }
 
 .worth-row td {
@@ -458,6 +517,7 @@ th {
   color: var(--muted);
   padding: 24px;
   text-align: center;
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .loading-overlay {
@@ -523,7 +583,7 @@ th {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
-  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.24);
+  box-shadow: var(--shadow-strong);
 }
 
 .wide-modal {
@@ -537,6 +597,7 @@ th {
   gap: 16px;
   padding: 16px 18px;
   border-bottom: 1px solid var(--line);
+  background: #fbfdff;
 }
 
 .modal-header h2 {
@@ -592,6 +653,7 @@ th {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px;
+  background: #ffffff;
 }
 
 .book-picker {
@@ -684,6 +746,10 @@ th {
   .metrics,
   .two-col {
     grid-template-columns: 1fr;
+  }
+
+  .content {
+    max-width: none;
   }
 
   .form-grid {
