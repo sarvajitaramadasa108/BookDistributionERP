@@ -18,6 +18,9 @@
     issueDraft: {},
     issueLines: [],
     issueBookQueries: [],
+    saleDraft: {},
+    saleLines: [],
+    saleBookQueries: [],
     receiveDraft: {},
     receiveLines: [],
     receiveBookQueries: [],
@@ -359,6 +362,7 @@
           <div class="row-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">Opening Stock</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openUnsettledOpeningForm()">Unsettled Opening</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openSaleForm()">Sale Books</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Return Books</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Books</button>
             <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Books</button>
@@ -533,6 +537,13 @@
   }
 
   function currentStockTable(rows) {
+    const worthByColumn = rows.reduce((acc, row) => {
+      const price = getBookSalePrice(row.bookId);
+      const quantity = Number(row.quantity || 0);
+      acc.quantity += quantity * price;
+      acc.value += quantity * price;
+      return acc;
+    }, { quantity: 0, value: 0 });
     return `
       <div class="table-wrap">
         <table>
@@ -545,6 +556,13 @@
               <th>Value</th>
             </tr>
           </thead>
+          <tbody>
+            <tr class="worth-row">
+              <td colspan="3"><strong>Worth</strong></td>
+              <td>${money(worthByColumn.quantity)}</td>
+              <td>${money(worthByColumn.value)}</td>
+            </tr>
+          </tbody>
           <tbody>
             ${rows
               .slice()
@@ -1067,6 +1085,15 @@
 
   function activityLedgerTable(rows) {
     const showAction = rows.some((row) => Number(row.unsettledQty || 0) > 0);
+    const worthTotals = rows.reduce((acc, row) => {
+      const price = getBookSalePrice(row.bookId);
+      acc.issue += Number(row.issueQty || 0) * price;
+      acc.return += Number(row.returnQty || 0) * price;
+      acc.sale += Number(row.saleQty || 0) * price;
+      acc.complimentary += Number(row.complimentaryQty || 0) * price;
+      acc.balance += Number(row.unsettledQty || 0) * price;
+      return acc;
+    }, { issue: 0, return: 0, sale: 0, complimentary: 0, balance: 0 });
     return `
       <div class="table-wrap">
         <table>
@@ -1084,6 +1111,15 @@
             </tr>
           </thead>
           <tbody>
+            <tr class="worth-row">
+              <td colspan="3"><strong>Worth</strong></td>
+              <td>${money(worthTotals.issue)}</td>
+              <td>${money(worthTotals.return)}</td>
+              <td>${money(worthTotals.sale)}</td>
+              <td>${money(worthTotals.complimentary)}</td>
+              <td><strong>${money(worthTotals.balance)}</strong></td>
+              ${showAction ? "<td></td>" : ""}
+            </tr>
             ${rows.map((row) => `
               <tr>
                 <td>${escapeHtml(row.devoteeName || row.devoteeId || "-")}</td>
@@ -1115,6 +1151,7 @@
           String(warehouse.type || "").toLowerCase() !== "temporary" &&
           (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0)
       : [];
+    const worthTotals = buildWarehouseWorthTotals(report, transferTargets);
     return `
       <div class="table-wrap warehouse-report-wrap">
         <table class="warehouse-report-table">
@@ -1128,6 +1165,9 @@
                 : `<th>Transfer In</th><th>Sales</th><th>Closing</th>`}
             </tr>
           </thead>
+          <tbody>
+            ${buildWarehouseWorthRow(report, transferTargets, worthTotals)}
+          </tbody>
           <tbody>
             ${report.rows.map((row) => renderWarehouseReportRow(row, report, transferTargets)).join("")}
           </tbody>
@@ -1161,6 +1201,16 @@
     if (!report || !report.rows) {
       return "";
     }
+    const worthByDay = report.dayColumns.reduce((acc, day) => {
+      acc[day] = 0;
+      return acc;
+    }, {});
+    report.rows.forEach((row) => {
+      const price = getBookSalePrice(row.bookId);
+      report.dayColumns.forEach((day) => {
+        worthByDay[day] += Number((row.daySalesMap && row.daySalesMap[day]) || 0) * price;
+      });
+    });
 
     return `
       <div class="section-gap">
@@ -1177,6 +1227,10 @@
               </tr>
             </thead>
             <tbody>
+              <tr class="worth-row">
+                <td colspan="2"><strong>Worth</strong></td>
+                ${report.dayColumns.map((day) => `<td>${money(worthByDay[day] || 0)}</td>`).join("")}
+              </tr>
               ${report.rows.map((row) => `
                 <tr>
                   <td>${escapeHtml(row.bookId)}</td>
@@ -1228,6 +1282,8 @@
       headerCells.push("Transfer In", "Sales", "Closing");
       report.dayColumns.forEach((day) => headerCells.push(day));
     }
+    const worthTotals = buildWarehouseWorthTotals(report, transferTargets);
+    const worthRow = buildWarehouseWorthExcelRow(report, transferTargets, worthTotals);
 
     const rows = report.rows.map((row) => {
       const cells = [row.bookId || "", row.bookName || "", Number(row.openingQty || 0)];
@@ -1256,6 +1312,7 @@
             <thead>
               <tr>${headerCells.map((cell) => `<th>${escapeHtml(cell)}</th>`).join("")}</tr>
             </thead>
+            <tbody>${worthRow}</tbody>
             <tbody>${rows}</tbody>
           </table>
         </body>
@@ -1356,6 +1413,11 @@
     return state.books.find((item) => item.bookId === bookId || item.erpCode === bookId || item["ERP Code"] === bookId || item["Book ID"] === bookId) || {};
   }
 
+  function getBookSalePrice(bookId) {
+    const book = getBook(bookId);
+    return Number(book.salePrice || book.mrp || book["Sale Price"] || 0);
+  }
+
   function getBookName(bookId) {
     const book = getBook(bookId);
     return book.name || book["Book Name"] || bookId || "-";
@@ -1376,6 +1438,7 @@
 
   function getBookPickerState(kind) {
     if (kind === "issue") return state.issueBookQueries;
+    if (kind === "sale") return state.saleBookQueries;
     if (kind === "receive") return state.receiveBookQueries;
     if (kind === "transfer") return state.transferBookQueries;
     if (kind === "opening") return state.openingBookQueries;
@@ -1402,7 +1465,7 @@
     if (!line) return;
     line.bookId = bookId;
     line.quantity = Number(line.quantity || 1);
-    line.rate = Number(line.rate || 0);
+    line.rate = kind === "sale" ? getBookSalePrice(bookId) : Number(line.rate || 0);
     const book = getBook(bookId);
     const bucket = ensureBookPickerState(kind, index);
     bucket[index] = getBookPickerDisplayLabel(book);
@@ -1468,6 +1531,15 @@
   }
 
   function activityUnsettledTable(rows) {
+    const worthTotals = rows.reduce((acc, row) => {
+      const price = getBookSalePrice(row.bookId);
+      acc.issued += Number(row.issuedQty || 0) * price;
+      acc.returned += Number(row.returnedQty || 0) * price;
+      acc.sold += Number(row.soldQty || 0) * price;
+      acc.complimentary += Number(row.complimentaryQty || 0) * price;
+      acc.balance += Number(row.unsettledQty || 0) * price;
+      return acc;
+    }, { issued: 0, returned: 0, sold: 0, complimentary: 0, balance: 0 });
     return `
       <div class="table-wrap">
         <table>
@@ -1484,6 +1556,14 @@
             </tr>
           </thead>
           <tbody>
+            <tr class="worth-row">
+              <td colspan="3"><strong>Worth</strong></td>
+              <td>${money(worthTotals.issued)}</td>
+              <td>${money(worthTotals.returned)}</td>
+              <td>${money(worthTotals.sold)}</td>
+              <td>${money(worthTotals.complimentary)}</td>
+              <td><strong>${money(worthTotals.balance)}</strong></td>
+            </tr>
             ${rows
               .slice()
               .sort((a, b) => getActivityName(a.activityId).localeCompare(getActivityName(b.activityId)) || getBookName(a.bookId).localeCompare(getBookName(b.bookId)))
@@ -1507,6 +1587,7 @@
 
   function getDocumentLineByKind(kind, index) {
     if (kind === "issue") return state.issueLines[index];
+    if (kind === "sale") return state.saleLines[index];
     if (kind === "receive") return state.receiveLines[index];
     if (kind === "transfer") return state.transferLines[index];
     if (kind === "opening") return state.openingLines[index];
@@ -1517,6 +1598,8 @@
   function rerenderDocumentModal(kind, index, value) {
     if (kind === "issue") {
       renderIssueModal();
+    } else if (kind === "sale") {
+      renderSaleModal();
     } else if (kind === "receive") {
       renderReceiveModal();
     } else if (kind === "transfer") {
@@ -1651,6 +1734,63 @@
     return toneByType[documentType] || "warn";
   }
 
+  function buildWarehouseWorthTotals(report, transferTargets) {
+    const totals = {
+      opening: 0,
+      sales: 0,
+      complimentary: 0,
+      unsettled: 0,
+      closing: 0,
+      transferIn: 0,
+      transferMap: {},
+      dayMap: {}
+    };
+
+    if (!report || !report.rows) {
+      return totals;
+    }
+
+    report.rows.forEach((row) => {
+      const price = getBookSalePrice(row.bookId);
+      totals.opening += Number(row.openingQty || 0) * price;
+      totals.sales += Number(row.saleQty || 0) * price;
+      totals.complimentary += Number(row.complimentaryQty || 0) * price;
+      totals.unsettled += Number(row.unsettledQty || 0) * price;
+      totals.closing += Number(row.closingQty || 0) * price;
+      if (report.reportMode === "main") {
+        transferTargets.forEach((warehouse) => {
+          totals.transferMap[warehouse.name] = (totals.transferMap[warehouse.name] || 0) + Number(((row.transferMap || {})[warehouse.name]) || 0) * price;
+        });
+      } else {
+        totals.transferIn += Number(row.transferInQty || 0) * price;
+      }
+      report.dayColumns.forEach((day) => {
+        totals.dayMap[day] = (totals.dayMap[day] || 0) + Number((row.daySalesMap && row.daySalesMap[day]) || 0) * price;
+      });
+    });
+
+    return totals;
+  }
+
+  function buildWarehouseWorthRow(report, transferTargets, totals) {
+    const isMain = report.reportMode === "main";
+    const cells = isMain
+      ? `${transferTargets.map((warehouse) => `<td>${money(totals.transferMap[warehouse.name] || 0)}</td>`).join("")}<td>${money(totals.sales)}</td><td>${money(totals.complimentary)}</td><td>${money(totals.unsettled)}</td><td><strong>${money(totals.closing)}</strong></td>`
+      : `<td>${money(totals.transferIn)}</td><td>${money(totals.sales)}</td><td><strong>${money(totals.closing)}</strong></td>`;
+    return `<tr class="worth-row"><td colspan="2"><strong>Worth</strong></td><td>${money(totals.opening)}</td>${cells}</tr>`;
+  }
+
+  function buildWarehouseWorthExcelRow(report, transferTargets, totals) {
+    const isMain = report.reportMode === "main";
+    const dayCells = !isMain
+      ? report.dayColumns.map((day) => `<td>${escapeHtml(String((totals.dayMap || {})[day] || 0))}</td>`).join("")
+      : "";
+    const cells = isMain
+      ? `${transferTargets.map((warehouse) => `<td>${escapeHtml(String(totals.transferMap[warehouse.name] || 0))}</td>`).join("")}<td>${escapeHtml(String(totals.sales || 0))}</td><td>${escapeHtml(String(totals.complimentary || 0))}</td><td>${escapeHtml(String(totals.unsettled || 0))}</td><td>${escapeHtml(String(totals.closing || 0))}</td>`
+      : `<td>${escapeHtml(String(totals.transferIn || 0))}</td><td>${escapeHtml(String(totals.sales || 0))}</td><td>${escapeHtml(String(totals.closing || 0))}</td>${dayCells}`;
+    return `<tr><td colspan="2"><strong>Worth</strong></td><td>${escapeHtml(String(totals.opening || 0))}</td>${cells}</tr>`;
+  }
+
   function openIssueForm() {
     ensureCurrentStockLoaded().then(() => {
       state.issueDraft = {
@@ -1666,6 +1806,24 @@
   }
 
   function blankIssueLine() {
+    return { bookId: "", quantity: 1, rate: 0 };
+  }
+
+  function openSaleForm() {
+    ensureCurrentStockLoaded().then(() => {
+      const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0);
+      state.saleDraft = {
+        documentDate: new Date().toISOString().slice(0, 10),
+        warehouseId: activeWarehouses[0]?.warehouseId || "",
+        notes: ""
+      };
+      state.saleLines = [blankSaleLine()];
+      state.saleBookQueries = [""];
+      renderSaleModal();
+    });
+  }
+
+  function blankSaleLine() {
     return { bookId: "", quantity: 1, rate: 0 };
   }
 
@@ -1987,6 +2145,150 @@
       showToast(`Unsettled opening posted: ${result.documentId}`);
     } catch (error) {
       showToast(error.message || "Could not post unsettled opening stock");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function renderSaleModal() {
+    const activeBooks = state.books.filter((book) => book.active !== false);
+    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0);
+    const draft = state.saleDraft;
+    const warehouseId = draft.warehouseId || "";
+    const booksWithStock = warehouseId
+      ? activeBooks.filter((book) => getAvailableStock(warehouseId, book.erpCode || book.bookId) > 0)
+      : [];
+
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+      <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="saleFormTitle">
+        <div class="modal-header">
+          <h2 id="saleFormTitle">Sale Books</h2>
+          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+        </div>
+        <form class="form-grid" id="saleForm">
+          <label class="field">
+            <span>Sale Date</span>
+            <input name="documentDate" type="date" value="${escapeAttribute(draft.documentDate)}" required>
+          </label>
+          <label class="field">
+            <span>Warehouse</span>
+            <select name="warehouseId" required onchange="window.erpApp.onSaleWarehouseChange(this.value)">
+              <option value="">Select warehouse</option>
+              ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.warehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field wide-field">
+            <span>Notes</span>
+            <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Sale note or memo">
+          </label>
+          <div class="wide-field">
+            <div class="line-editor-header">
+              <h3>Books${warehouseId ? ` (Stock at ${getWarehouseName(warehouseId)})` : ""}</h3>
+              <button class="small-button" type="button" onclick="window.erpApp.addSaleLine()">Add Line</button>
+            </div>
+            ${warehouseId ? (booksWithStock.length ? saleLinesMarkup(booksWithStock, warehouseId) : '<div class="empty-state">No active books with stock at the selected warehouse.</div>') : '<div class="empty-state">Select a warehouse to see available books.</div>'}
+          </div>
+          <div class="form-actions">
+            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+            <button class="button" type="submit" ${warehouseId && booksWithStock.length ? "" : "disabled"}>Post Sale</button>
+          </div>
+        </form>
+      </section>
+    `;
+
+    document.getElementById("saleForm").addEventListener("submit", saveSaleDocument);
+  }
+
+  function saleLinesMarkup(activeBooks, warehouseId) {
+    return `
+      <div class="line-table">
+        ${state.saleLines.map((line, index) => `
+          <div class="line-row">
+            ${bookPickerMarkup("sale", index, activeBooks, line, state.saleBookQueries[index] || "", warehouseId)}
+            <label class="field">
+              <span>Qty</span>
+              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateSaleLine(${index}, 'quantity', this.value)" required>
+            </label>
+            <label class="field">
+              <span>Rate</span>
+              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.rate)}" onchange="window.erpApp.updateSaleLine(${index}, 'rate', this.value)">
+            </label>
+            <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeSaleLine(${index})">Remove</button>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function addSaleLine() {
+    syncSaleDraft();
+    state.saleLines.push(blankSaleLine());
+    state.saleBookQueries.push("");
+    renderSaleModal();
+  }
+
+  function removeSaleLine(index) {
+    syncSaleDraft();
+    state.saleLines.splice(index, 1);
+    state.saleBookQueries.splice(index, 1);
+    if (!state.saleLines.length) {
+      state.saleLines.push(blankSaleLine());
+      state.saleBookQueries.push("");
+    }
+    renderSaleModal();
+  }
+
+  function updateSaleLine(index, key, value) {
+    if (!state.saleLines[index]) return;
+    state.saleLines[index][key] = key === "bookId" ? value : Number(value || 0);
+  }
+
+  function syncSaleDraft() {
+    const form = document.getElementById("saleForm");
+    if (!form) return;
+    const data = new FormData(form);
+    state.saleDraft = {
+      documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
+      warehouseId: data.get("warehouseId") || "",
+      notes: data.get("notes") || ""
+    };
+  }
+
+  async function saveSaleDocument(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const lines = state.saleLines
+      .filter((line) => line.bookId && Number(line.quantity || 0) > 0)
+      .map((line) => ({
+        bookId: line.bookId,
+        quantity: Number(line.quantity),
+        rate: Number(line.rate || getBookSalePrice(line.bookId))
+      }));
+
+    if (!lines.length) {
+      showToast("Add at least one book line");
+      return;
+    }
+
+    const payload = {
+      documentType: "SALE",
+      documentDate: data.get("documentDate"),
+      warehouseId: data.get("warehouseId"),
+      status: "Posted",
+      notes: data.get("notes").trim(),
+      lines
+    };
+
+    setLoading(true);
+    try {
+      const result = await window.erpApi.request("documents.create", payload);
+      closeModal();
+      content.innerHTML = await renderDocuments();
+      showToast(`Sale posted: ${result.documentId}`);
+    } catch (error) {
+      showToast(error.message || "Could not post sale");
     } finally {
       setLoading(false);
     }
@@ -2453,6 +2755,13 @@
     ensureCurrentStockLoaded().then(renderIssueModal);
   }
 
+  function onSaleWarehouseChange(warehouseId) {
+    syncSaleDraft();
+    state.saleDraft.warehouseId = warehouseId;
+    state.saleLines = [blankSaleLine()];
+    ensureCurrentStockLoaded().then(renderSaleModal);
+  }
+
   function onTransferWarehouseChange(warehouseId) {
     syncTransferDraft();
     state.transferDraft.fromWarehouseId = warehouseId;
@@ -2618,9 +2927,13 @@
     setBookPickerQuery,
     pickBookFromPicker,
     openIssueForm,
+    openSaleForm,
     addIssueLine,
     removeIssueLine,
     updateIssueLine,
+    addSaleLine,
+    removeSaleLine,
+    updateSaleLine,
     openReceiveForm,
     addReceiveLine,
     removeReceiveLine,
@@ -2630,6 +2943,7 @@
     removeTransferLine,
     updateTransferLine,
     onIssueWarehouseChange,
+    onSaleWarehouseChange,
     onTransferWarehouseChange,
     closeModal
   };

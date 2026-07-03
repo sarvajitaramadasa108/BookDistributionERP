@@ -371,6 +371,16 @@ th {
   text-transform: uppercase;
 }
 
+.worth-row td {
+  background: #f8fafc;
+  color: var(--blue-900);
+  font-weight: 700;
+}
+
+.worth-row td strong {
+  color: var(--blue-900);
+}
+
 .status {
   display: inline-flex;
   align-items: center;
