@@ -376,16 +376,18 @@ async function authLogin(supabase, payload) {
   const username = String(payload.username || "").trim().toLowerCase();
   const password = String(payload.password || "");
   if (!username || !password) throw new Error("Username and password are required");
-  const { data: user } = await supabase.from("users").select("*").ilike("username", username).maybeSingle();
+  const { data: users, error } = await supabase.from("users").select("*");
+  if (error) throw error;
+  const user = (users || []).find((row) => String(row.username || "").trim().toLowerCase() === username);
   if (!user || !user.active) throw new Error("Invalid username or password");
   if (user.password_hash !== sha256(password)) throw new Error("Invalid username or password");
   const sessionToken = createSessionToken();
-  const { error } = await supabase.from("user_sessions").insert({
+  const { error: sessionError } = await supabase.from("user_sessions").insert({
     user_id: user.id,
     session_token_hash: tokenHash(sessionToken),
     expires_at: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString()
   });
-  if (error) throw error;
+  if (sessionError) throw sessionError;
   return { sessionToken, user: mapUser(user) };
 }
 
