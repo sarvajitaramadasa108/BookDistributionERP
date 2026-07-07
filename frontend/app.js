@@ -653,7 +653,10 @@
             ${reportView === "unsettled" ? `
               <div class="panel-header compact-header">
                 <h2>Unsettled Issues</h2>
-                ${state.unsettledReportActivityId ? `<button class="button secondary" type="button" onclick="window.erpApp.backToUnsettledSummary()">Back to Summary</button>` : ""}
+                <div class="row-actions">
+                  <button class="button secondary" type="button" onclick="window.erpApp.downloadUnsettledIssuesReport()">Download Excel</button>
+                  ${state.unsettledReportActivityId ? `<button class="button secondary" type="button" onclick="window.erpApp.backToUnsettledSummary()">Back to Summary</button>` : ""}
+                </div>
               </div>
               ${state.activityUnsettled.length ? (
                 state.unsettledReportActivityId
@@ -664,7 +667,10 @@
             ${reportView === "complimentary" ? `
               <div class="panel-header compact-header">
                 <h2>Complimentary Issues</h2>
-                ${state.complimentaryReportActivityId ? `<button class="button secondary" type="button" onclick="window.erpApp.backToComplimentarySummary()">Back to Summary</button>` : ""}
+                <div class="row-actions">
+                  <button class="button secondary" type="button" onclick="window.erpApp.downloadComplimentaryIssuesReport()">Download Excel</button>
+                  ${state.complimentaryReportActivityId ? `<button class="button secondary" type="button" onclick="window.erpApp.backToComplimentarySummary()">Back to Summary</button>` : ""}
+                </div>
               </div>
               ${state.activityComplimentary.length ? (
                 state.complimentaryReportActivityId
@@ -2383,6 +2389,176 @@
         </table>
       </div>
     `;
+  }
+
+  function downloadUnsettledIssuesReport() {
+    const rows = state.activityUnsettled || [];
+    if (!rows.length) {
+      showToast("Load an unsettled report first");
+      return;
+    }
+    const html = buildActivityPivotExcel({
+      title: "Unsettled Issues",
+      rows,
+      summaryRows: unsettledActivitySummaryRows(rows),
+      quantityField: "unsettledQty",
+      filePrefix: "unsettled-issues"
+    });
+    downloadHtmlExcel(html, `unsettled-issues-${state.reportMonth || "report"}.xls`);
+  }
+
+  function downloadComplimentaryIssuesReport() {
+    const rows = state.activityComplimentary || [];
+    if (!rows.length) {
+      showToast("Load a complimentary report first");
+      return;
+    }
+    const html = buildActivityPivotExcel({
+      title: "Complimentary Issues",
+      rows,
+      summaryRows: complimentaryActivitySummaryRows(rows),
+      quantityField: "complimentaryQty",
+      filePrefix: "complimentary-issues"
+    });
+    downloadHtmlExcel(html, `complimentary-issues-${state.reportMonth || "report"}.xls`);
+  }
+
+  function buildActivityPivotExcel(config) {
+    const rows = Array.isArray(config.rows) ? config.rows : [];
+    const summaryRows = Array.isArray(config.summaryRows) ? config.summaryRows : [];
+    const quantityField = config.quantityField || "unsettledQty";
+    const activityList = summaryRows
+      .slice()
+      .sort((a, b) => String(a.devoteeName || "").localeCompare(String(b.devoteeName || "")) || String(a.activityName || "").localeCompare(String(b.activityName || "")));
+    const activityIds = activityList.map((row) => row.activityId);
+    const activeBooks = state.books
+      .slice()
+      .sort((a, b) => String(getBookName(a.erpCode || a.bookId)).localeCompare(String(getBookName(b.erpCode || b.bookId))) || String(a.erpCode || a.bookId).localeCompare(String(b.erpCode || b.bookId)));
+    const bookIndex = {};
+    const activityIndex = {};
+
+    rows.forEach((row) => {
+      const bookId = String(row.bookId || "").trim();
+      const activityId = String(row.activityId || "").trim();
+      if (!bookId || !activityId) {
+        return;
+      }
+      if (!bookIndex[bookId]) {
+        bookIndex[bookId] = {
+          bookId,
+          bookName: row.bookName || getBookName(bookId),
+          salePrice: getBookSalePrice(bookId),
+          quantities: {}
+        };
+      }
+      if (!activityIndex[activityId]) {
+        activityIndex[activityId] = {
+          devoteeName: row.devoteeName || getDevoteeName(row.devoteeId),
+          activityName: row.activityName || getActivityName(activityId)
+        };
+      }
+      bookIndex[bookId].quantities[activityId] = Number(row[quantityField] || 0);
+    });
+
+    activeBooks.forEach((book) => {
+      const bookId = book.erpCode || book.bookId;
+      if (!bookIndex[bookId]) {
+        bookIndex[bookId] = {
+          bookId,
+          bookName: getBookName(bookId),
+          salePrice: getBookSalePrice(bookId),
+          quantities: {}
+        };
+      }
+    });
+
+    const books = Object.values(bookIndex).sort((a, b) => {
+      return String(a.bookName).localeCompare(String(b.bookName)) || String(a.bookId).localeCompare(String(b.bookId));
+    });
+
+    const worthTotals = activityIds.reduce((acc, activityId) => {
+      acc[activityId] = 0;
+      return acc;
+    }, {});
+    let overallWorth = 0;
+    const rowsHtml = books.map((book) => {
+      const qtyCells = activityIds.map((activityId) => {
+        const qty = Number(book.quantities[activityId] || 0);
+        worthTotals[activityId] = (worthTotals[activityId] || 0) + qty * Number(book.salePrice || 0);
+        overallWorth += qty * Number(book.salePrice || 0);
+        return `<td>${escapeHtml(String(qty))}</td>`;
+      }).join("");
+      return `
+        <tr>
+          <td>${escapeHtml(book.bookId)}</td>
+          <td>${escapeHtml(book.bookName)}</td>
+          <td>${escapeHtml(String(book.salePrice || 0))}</td>
+          ${qtyCells}
+        </tr>
+      `;
+    }).join("");
+
+    const headerCells = [
+      "<th rowspan=\"2\">ERP Code</th>",
+      "<th rowspan=\"2\">Book Name</th>",
+      "<th rowspan=\"2\">Sale Price</th>",
+      `<th colspan="${Math.max(activityIds.length, 1)}">Activities</th>`
+    ];
+    const secondRow = activityIds.length
+      ? `<tr>${activityIds.map((activityId) => {
+          const meta = activityIndex[activityId] || {};
+          const label = meta.activityName || activityId;
+          const devotee = meta.devoteeName ? ` (${meta.devoteeName})` : "";
+          return `<th>${escapeHtml(label + devotee)}</th>`;
+        }).join("")}</tr>`
+      : `<tr><th>No activities found</th></tr>`;
+    const worthRow = `
+      <tr class="worth-row">
+        <td colspan="3"><strong>Worth</strong></td>
+        ${activityIds.map((activityId) => `<td><strong>${money(worthTotals[activityId] || 0)}</strong></td>`).join("")}
+      </tr>
+    `;
+
+    return `
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 11px; }
+            th, td { border: 1px solid #999; padding: 4px 6px; vertical-align: top; }
+            th { background: #e9edf5; }
+          </style>
+        </head>
+        <body>
+          <table>
+            <thead>
+              <tr>${headerCells.join("")}</tr>
+              ${secondRow}
+            </thead>
+            <tbody>
+              ${worthRow}
+              ${rowsHtml}
+              <tr class="worth-row">
+                <td colspan="3"><strong>Total Worth</strong></td>
+                <td colspan="${Math.max(activityIds.length, 1)}"><strong>${money(overallWorth)}</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `;
+  }
+
+  function downloadHtmlExcel(html, filename) {
+    const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function activityComplimentaryTable(rows) {
@@ -4256,6 +4432,8 @@
     loadWarehouseReport,
     loadWarehouseDayWiseSales,
     downloadWarehouseReport,
+    downloadUnsettledIssuesReport,
+    downloadComplimentaryIssuesReport,
     showUnsettledActivityDetails,
     backToUnsettledSummary,
     showComplimentaryActivityDetails,
