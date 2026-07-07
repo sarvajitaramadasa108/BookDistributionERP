@@ -1,0 +1,8 @@
+{
+  "name": "hkm-book-distribution-erp",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4"
+  }
+}
