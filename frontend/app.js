@@ -271,9 +271,16 @@
       <section class="card">
         <div class="panel-header">
           <h2>Warehouse Master</h2>
-          <button class="button" type="button" onclick="window.erpApp.openWarehouseForm()">Add Warehouse</button>
+          <div class="row-actions">
+            ${isMainAdmin() ? `
+              <button class="small-button" type="button" onclick="document.getElementById('warehouseImportInput').click()">Import Excel</button>
+              <button class="small-button" type="button" onclick="window.erpApp.downloadWarehouseSample()">Download Sample</button>
+            ` : ""}
+            <button class="button" type="button" onclick="window.erpApp.openWarehouseForm()">Add Warehouse</button>
+          </div>
         </div>
         <div class="panel-body">
+          ${isMainAdmin() ? '<input id="warehouseImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importWarehouseFile(this.files[0])">' : ""}
           <div class="toolbar">
             <label class="field compact-field">
               <span>Search</span>
@@ -1119,6 +1126,85 @@
   function setWarehouseStatus(value) {
     state.warehouseStatus = value;
     rerenderContentKeepingFocus("warehouseSearchInput", renderWarehousesMarkup);
+  }
+
+  function downloadWarehouseSample() {
+    const rows = [
+      ["Warehouse ID", "Warehouse Name", "Type", "SPOC", "Mobile"],
+      ["WH-0001", "GMB Main", "Main", "Admin", ""],
+      ["WH-0002", "Annavaram", "Event", "", ""]
+    ];
+    if (window.XLSX && window.XLSX.utils) {
+      const sheet = window.XLSX.utils.aoa_to_sheet(rows);
+      const workbook = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(workbook, sheet, "Warehouses");
+      window.XLSX.writeFile(workbook, "warehouse-master-sample.xlsx");
+      return;
+    }
+    const csv = rows.map((row) => row.map((cell) => {
+      const text = String(cell || "");
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "warehouse-master-sample.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importWarehouseFile(file) {
+    if (!file) return;
+    try {
+      const name = file.name || "import";
+      const lower = name.toLowerCase();
+      let rows = [];
+      if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+        if (!window.XLSX) {
+          showToast("Excel import library is not loaded");
+          return;
+        }
+        const buffer = await file.arrayBuffer();
+        const workbook = window.XLSX.read(buffer, { type: "array" });
+        const sheet = workbook.SheetNames[0];
+        rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { defval: "" });
+      } else {
+        const text = await file.text();
+        rows = parseCsvRows(text);
+      }
+
+      const warehouses = rows.map((row) => ({
+        warehouseId: String(row["Warehouse ID"] || row.warehouseId || row["Warehouse Code"] || row.warehouseCode || "").trim(),
+        name: String(row["Warehouse Name"] || row.name || "").trim(),
+        type: String(row["Type"] || row.type || "Event").trim() || "Event",
+        spoc: String(row["SPOC"] || row.spoc || "").trim(),
+        mobile: String(row["Mobile"] || row.mobile || "").trim(),
+        active: true
+      })).filter((row) => row.name || row.warehouseId);
+
+      if (!warehouses.length) {
+        showToast("No warehouse rows found in the file");
+        return;
+      }
+
+      setLoading(true);
+      try {
+        await window.erpApi.request("warehouses.bulkUpsert", { warehouses });
+        state.warehouses = (await window.erpApi.request("warehouses.list")).map(normalizeWarehouse);
+        content.innerHTML = renderWarehousesMarkup();
+        showToast(`Imported ${warehouses.length} warehouses`);
+      } finally {
+        setLoading(false);
+      }
+    } catch (error) {
+      showToast(error.message || "Could not read the import file");
+    } finally {
+      const input = document.getElementById("warehouseImportInput");
+      if (input) {
+        input.value = "";
+      }
+    }
   }
 
   function openWarehouseForm(warehouseId) {
@@ -4517,6 +4603,8 @@
     deactivateBook,
     setWarehouseSearch,
     setWarehouseStatus,
+    downloadWarehouseSample,
+    importWarehouseFile,
     openWarehouseForm,
     deactivateWarehouse,
     setActivitySearch,

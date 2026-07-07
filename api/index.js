@@ -344,6 +344,39 @@ async function deleteWarehouse(supabase, payload) {
   return mapWarehouse(data);
 }
 
+async function warehousesBulkUpsert(supabase, payload) {
+  const warehouses = Array.isArray(payload.warehouses) ? payload.warehouses : [];
+  const existingRows = await listTable(supabase, "warehouses", mapWarehouse);
+  const existingByCode = new Map(existingRows.map((row) => [row.warehouseId, row]));
+  let nextSuffix = existingRows.reduce((max, row) => {
+    const match = String(row.warehouseId || "").match(/^WH-(\d+)$/i);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+
+  const normalized = warehouses.map((warehouse) => {
+    const rawCode = String(warehouse.warehouseId || warehouse.warehouseCode || "").trim();
+    const warehouseCode = rawCode || `WH-${String(++nextSuffix).padStart(4, "0")}`;
+    return {
+      warehouse_code: warehouseCode,
+      warehouse_name: String(warehouse.name || warehouse.warehouseName || "").trim(),
+      warehouse_type: String(warehouse.type || warehouse.warehouseType || "Event").trim() || "Event",
+      spoc: String(warehouse.spoc || "").trim(),
+      mobile: String(warehouse.mobile || "").trim(),
+      active: warehouse.active !== false
+    };
+  }).filter((row) => row.warehouse_code && row.warehouse_name);
+
+  if (!normalized.length) {
+    return { created: 0, updated: 0, total: 0 };
+  }
+
+  const created = normalized.filter((row) => !existingByCode.has(row.warehouse_code)).length;
+  const updated = normalized.length - created;
+  const { error } = await supabase.from("warehouses").upsert(normalized, { onConflict: "warehouse_code" });
+  if (error) throw error;
+  return { created, updated, total: normalized.length };
+}
+
 async function createDevotee(supabase, payload) {
   const devoteeCode = payload.devoteeId || payload.devoteeCode || await nextCode(supabase, "devotees", "devotee_code", "DEV");
   const { data, error } = await supabase.from("devotees").insert({
@@ -1112,6 +1145,8 @@ async function main(request) {
         return json(200, { ok: true, data: await updateWarehouse(supabase, payload) });
       case "warehouses.delete":
         return json(200, { ok: true, data: await deleteWarehouse(supabase, payload) });
+      case "warehouses.bulkUpsert":
+        return json(200, { ok: true, data: await warehousesBulkUpsert(supabase, payload) });
       case "devotees.list":
         return json(200, { ok: true, data: await devoteesList(supabase) });
       case "devotees.create":
