@@ -514,35 +514,37 @@ async function booksDelete(supabase, payload) {
 
 async function booksBulkUpsert(supabase, payload) {
   const books = Array.isArray(payload.books) ? payload.books : [];
-  let created = 0;
-  let updated = 0;
-  for (const book of books) {
-    const erpCode = String(book.erpCode || book["ERP Code"] || "").trim();
-    const name = String(book.name || book["Book Name"] || "").trim();
-    const existing = erpCode ? await findByCode(supabase, "items", "erp_code", erpCode) : null;
-    if (existing) {
-      await updateItem(supabase, {
-        erpCode,
-        name,
-        bookType: book.bookType || book["Book Type"] || "",
-        purchasePrice: book.purchasePrice || book["Purchase Price"] || 0,
-        salePrice: book.salePrice || book["Sale Price"] || 0,
-        active: book.active !== false
-      });
-      updated += 1;
-    } else {
-      await createItem(supabase, {
-        erpCode: erpCode || await nextCode(supabase, "items", "erp_code", "BK"),
-        name,
-        bookType: book.bookType || book["Book Type"] || "",
-        purchasePrice: book.purchasePrice || book["Purchase Price"] || 0,
-        salePrice: book.salePrice || book["Sale Price"] || 0,
-        active: book.active !== false
-      });
-      created += 1;
-    }
+  const existingRows = await listTable(supabase, "items", mapItem);
+  const existingByCode = new Map(existingRows.map((row) => [row.erpCode, row]));
+  let nextSuffix = existingRows.reduce((max, row) => {
+    const match = String(row.erpCode || "").match(/^BK-(\d+)$/i);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+
+  const normalized = books.map((book) => {
+    const rawCode = String(book.erpCode || book["ERP Code"] || "").trim();
+    const erpCode = rawCode || `BK-${String(++nextSuffix).padStart(4, "0")}`;
+    return {
+      erp_code: erpCode,
+      item_name: String(book.name || book["Book Name"] || "").trim(),
+      item_group: "BOOK",
+      item_type: String(book.bookType || book["Book Type"] || "").trim(),
+      unit: "pcs",
+      purchase_price: Number(book.purchasePrice || book["Purchase Price"] || 0),
+      sale_price: Number(book.salePrice || book["Sale Price"] || 0),
+      active: book.active !== false
+    };
+  }).filter((row) => row.erp_code && row.item_name);
+
+  if (!normalized.length) {
+    return { created: 0, updated: 0, total: 0 };
   }
-  return { created, updated, total: books.length };
+
+  const created = normalized.filter((row) => !existingByCode.has(row.erp_code)).length;
+  const updated = normalized.length - created;
+  const { error } = await supabase.from("items").upsert(normalized, { onConflict: "erp_code" });
+  if (error) throw error;
+  return { created, updated, total: normalized.length };
 }
 
 async function warehousesList(supabase) {

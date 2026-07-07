@@ -170,6 +170,22 @@
     return renderBooksMarkup();
   }
 
+  function rerenderContentKeepingFocus(inputId, renderFn) {
+    const previous = document.getElementById(inputId);
+    const selectionStart = previous && typeof previous.selectionStart === "number" ? previous.selectionStart : null;
+    const selectionEnd = previous && typeof previous.selectionEnd === "number" ? previous.selectionEnd : null;
+    const currentValue = previous ? previous.value : "";
+    content.innerHTML = renderFn();
+    const next = document.getElementById(inputId);
+    if (next) {
+      next.value = currentValue;
+      next.focus();
+      if (selectionStart !== null && selectionEnd !== null && next.setSelectionRange) {
+        next.setSelectionRange(selectionStart, selectionEnd);
+      }
+    }
+  }
+
   function renderBooksMarkup() {
     const rows = getFilteredBooks();
     return `
@@ -189,7 +205,7 @@
           <div class="toolbar">
             <label class="field compact-field">
               <span>Search</span>
-              <input type="search" value="${escapeAttribute(state.bookSearch)}" placeholder="Search code, name, or type" oninput="window.erpApp.setBookSearch(this.value)">
+              <input id="bookSearchInput" type="search" value="${escapeAttribute(state.bookSearch)}" placeholder="Search code, name, or type" oninput="window.erpApp.setBookSearch(this.value)">
             </label>
             <label class="field compact-field">
               <span>Status</span>
@@ -261,7 +277,7 @@
           <div class="toolbar">
             <label class="field compact-field">
               <span>Search</span>
-              <input type="search" value="${escapeAttribute(state.warehouseSearch)}" placeholder="Search name, type, SPOC" oninput="window.erpApp.setWarehouseSearch(this.value)">
+              <input id="warehouseSearchInput" type="search" value="${escapeAttribute(state.warehouseSearch)}" placeholder="Search name, type, SPOC" oninput="window.erpApp.setWarehouseSearch(this.value)">
             </label>
             <label class="field compact-field">
               <span>Status</span>
@@ -348,7 +364,7 @@
           <div class="toolbar">
             <label class="field compact-field">
               <span>Search</span>
-              <input type="search" value="${escapeAttribute(state.activitySearch)}" placeholder="Search name, type, warehouse" oninput="window.erpApp.setActivitySearch(this.value)">
+              <input id="activitySearchInput" type="search" value="${escapeAttribute(state.activitySearch)}" placeholder="Search name, type, warehouse" oninput="window.erpApp.setActivitySearch(this.value)">
             </label>
             <label class="field compact-field">
               <span>Status</span>
@@ -961,12 +977,12 @@
 
   function setBookSearch(value) {
     state.bookSearch = value;
-    content.innerHTML = renderBooksMarkup();
+    rerenderContentKeepingFocus("bookSearchInput", renderBooksMarkup);
   }
 
   function setBookStatus(value) {
     state.bookStatus = value;
-    content.innerHTML = renderBooksMarkup();
+    rerenderContentKeepingFocus("bookSearchInput", renderBooksMarkup);
   }
 
   function openBookForm(bookId) {
@@ -1097,12 +1113,12 @@
 
   function setWarehouseSearch(value) {
     state.warehouseSearch = value;
-    content.innerHTML = renderWarehousesMarkup();
+    rerenderContentKeepingFocus("warehouseSearchInput", renderWarehousesMarkup);
   }
 
   function setWarehouseStatus(value) {
     state.warehouseStatus = value;
-    content.innerHTML = renderWarehousesMarkup();
+    rerenderContentKeepingFocus("warehouseSearchInput", renderWarehousesMarkup);
   }
 
   function openWarehouseForm(warehouseId) {
@@ -1236,12 +1252,12 @@
 
   function setActivitySearch(value) {
     state.activitySearch = value;
-    content.innerHTML = renderActivitiesMarkup();
+    rerenderContentKeepingFocus("activitySearchInput", renderActivitiesMarkup);
   }
 
   function setActivityStatus(value) {
     state.activityStatus = value;
-    content.innerHTML = renderActivitiesMarkup();
+    rerenderContentKeepingFocus("activitySearchInput", renderActivitiesMarkup);
   }
 
   function openActivityForm(activityId) {
