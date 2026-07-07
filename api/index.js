@@ -36,6 +36,32 @@ function createSessionToken() {
   return crypto.randomUUID().replace(/-/g, "");
 }
 
+const BOOTSTRAP_ACCOUNTS = {
+  admin: { name: "Admin", username: "admin", password: "admin123", role: "admin" },
+  incharge: { name: "Store Incharge", username: "incharge", password: "incharge123", role: "store_incharge" }
+};
+
+function isUuidLike(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || ""));
+}
+
+function bootstrapSignature(account) {
+  return sha256(`bootstrap:${account.username}:${account.password}`);
+}
+
+function createBootstrapSessionToken(account) {
+  return `bootstrap.${account.username}.${bootstrapSignature(account)}`;
+}
+
+function parseBootstrapSessionToken(sessionToken) {
+  const match = String(sessionToken || "").match(/^bootstrap\.([^.]+)\.([a-f0-9]{64})$/i);
+  if (!match) return null;
+  const account = BOOTSTRAP_ACCOUNTS[match[1]];
+  if (!account) return null;
+  if (match[2] !== bootstrapSignature(account)) return null;
+  return account;
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -172,6 +198,18 @@ function mapDocument(row) {
 
 async function getSessionUser(supabase, sessionToken) {
   if (!sessionToken) return null;
+  const bootstrapAccount = parseBootstrapSessionToken(sessionToken);
+  if (bootstrapAccount) {
+    return mapUser({
+      id: `bootstrap-${bootstrapAccount.username}`,
+      name: bootstrapAccount.name,
+      username: bootstrapAccount.username,
+      role: bootstrapAccount.role,
+      active: true,
+      created_at: null,
+      updated_at: null
+    });
+  }
   const { data: session } = await supabase
     .from("user_sessions")
     .select("user_id,expires_at,revoked_at")
@@ -379,53 +417,38 @@ async function authLogin(supabase, payload) {
   const { data: users, error } = await supabase.from("users").select("*");
   if (error) throw error;
   const user = (users || []).find((row) => String(row.username || "").trim().toLowerCase() === username);
-  const bootstrapAccounts = {
-    admin: { name: "Admin", username: "admin", password: "admin123", role: "admin" },
-    incharge: { name: "Store Incharge", username: "incharge", password: "incharge123", role: "store_incharge" }
-  };
-  const bootstrapAccount = bootstrapAccounts[username];
-  const passwordMatches = user && user.password_hash === sha256(password);
-
-  let resolvedUser = user || null;
-  if (!resolvedUser || !resolvedUser.active || !passwordMatches) {
-    if (bootstrapAccount && bootstrapAccount.password === password) {
-      const desiredHash = sha256(bootstrapAccount.password);
-      if (!resolvedUser) {
-        const { data: inserted, error: insertError } = await supabase.from("users").insert({
-          name: bootstrapAccount.name,
-          username: bootstrapAccount.username,
-          password_hash: desiredHash,
-          role: bootstrapAccount.role,
-          active: true
-        }).select("*").single();
-        if (insertError) throw insertError;
-        resolvedUser = inserted;
-      } else if (resolvedUser.password_hash !== desiredHash || !resolvedUser.active) {
-        const { data: repaired, error: repairError } = await supabase.from("users").update({
-          name: bootstrapAccount.name,
-          password_hash: desiredHash,
-          role: bootstrapAccount.role,
-          active: true
-        }).eq("id", resolvedUser.id).select("*").single();
-        if (repairError) throw repairError;
-        resolvedUser = repaired;
-      }
-    }
+  if (user && user.active && user.password_hash === sha256(password)) {
+    const sessionToken = createSessionToken();
+    const { error: sessionError } = await supabase.from("user_sessions").insert({
+      user_id: user.id,
+      session_token_hash: tokenHash(sessionToken),
+      expires_at: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString()
+    });
+    if (sessionError) throw sessionError;
+    return { sessionToken, user: mapUser(user) };
   }
-  if (!resolvedUser || !resolvedUser.active || resolvedUser.password_hash !== sha256(password)) {
-    throw new Error("Invalid username or password");
+  const bootstrapAccount = BOOTSTRAP_ACCOUNTS[username];
+  if (bootstrapAccount && bootstrapAccount.password === password) {
+    return {
+      sessionToken: createBootstrapSessionToken(bootstrapAccount),
+      user: mapUser({
+        id: `bootstrap-${bootstrapAccount.username}`,
+        name: bootstrapAccount.name,
+        username: bootstrapAccount.username,
+        role: bootstrapAccount.role,
+        active: true,
+        created_at: null,
+        updated_at: null
+      })
+    };
   }
-  const sessionToken = createSessionToken();
-  const { error: sessionError } = await supabase.from("user_sessions").insert({
-    user_id: resolvedUser.id,
-    session_token_hash: tokenHash(sessionToken),
-    expires_at: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString()
-  });
-  if (sessionError) throw sessionError;
-  return { sessionToken, user: mapUser(resolvedUser) };
+  throw new Error("Invalid username or password");
 }
 
 async function authLogout(supabase, payload) {
+  if (parseBootstrapSessionToken(payload.sessionToken)) {
+    return { ok: true };
+  }
   if (payload.sessionToken) {
     await supabase.from("user_sessions").update({ revoked_at: nowIso() }).eq("session_token_hash", tokenHash(payload.sessionToken));
   }
@@ -577,7 +600,7 @@ async function createDocument(supabase, payload, currentUser) {
     from_warehouse_id: payload.fromWarehouseId || null,
     to_warehouse_id: payload.toWarehouseId || null,
     activity_id: payload.activityId || null,
-    created_by_user_id: currentUser ? currentUser.userId : null,
+    created_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null,
     status: payload.status || "Posted",
     notes: payload.notes || ""
   }).select("*").single();
