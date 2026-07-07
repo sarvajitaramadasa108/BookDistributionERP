@@ -42,20 +42,26 @@ async function readBody(request) {
 
 async function getSessionUser(supabase, sessionToken) {
   if (!sessionToken) return null;
-  const { data, error } = await supabase
+  const { data: session, error } = await supabase
     .from("user_sessions")
-    .select("id,user_id,expires_at,revoked_at,users(id,name,username,role,active)")
+    .select("user_id,expires_at,revoked_at")
     .eq("session_token_hash", tokenHash(sessionToken))
     .is("revoked_at", null)
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
-  if (error || !data || !data.users) return null;
+  if (error || !session) return null;
+  const { data: user, error: userError } = await supabase
+    .from("users")
+    .select("id,name,username,role,active")
+    .eq("id", session.user_id)
+    .maybeSingle();
+  if (userError || !user) return null;
   return {
-    userId: data.users.id,
-    name: data.users.name,
-    username: data.users.username,
-    role: data.users.role,
-    active: data.users.active
+    userId: user.id,
+    name: user.name,
+    username: user.username,
+    role: user.role,
+    active: user.active
   };
 }
 
@@ -128,6 +134,51 @@ async function usersList(supabase) {
   return (data || []).map(mapUser);
 }
 
+async function createUser(supabase, payload) {
+  const username = String(payload.username || "").trim().toLowerCase();
+  const name = String(payload.name || "").trim();
+  const password = String(payload.password || "");
+  const role = payload.role === "admin" ? "admin" : "store_incharge";
+  if (!name || !username || !password) {
+    throw new Error("Name, username, and password are required");
+  }
+  const { data: existing } = await supabase.from("users").select("id").ilike("username", username).maybeSingle();
+  if (existing) {
+    throw new Error("Username already exists");
+  }
+  const { data, error } = await supabase.from("users").insert({
+    name,
+    username,
+    password_hash: sha256(password),
+    role,
+    active: payload.active !== false
+  }).select("*").single();
+  if (error) throw error;
+  return mapUser(data);
+}
+
+async function updateUser(supabase, payload) {
+  const id = payload.userId;
+  if (!id) {
+    throw new Error("User ID is required");
+  }
+  const updates = {};
+  if (payload.name !== undefined) updates.name = String(payload.name || "").trim();
+  if (payload.username !== undefined) updates.username = String(payload.username || "").trim().toLowerCase();
+  if (payload.password !== undefined && String(payload.password || "").trim()) {
+    updates.password_hash = sha256(String(payload.password || ""));
+  }
+  if (payload.role !== undefined) {
+    updates.role = payload.role === "admin" ? "admin" : "store_incharge";
+  }
+  if (payload.active !== undefined) {
+    updates.active = Boolean(payload.active);
+  }
+  const { data, error } = await supabase.from("users").update(updates).eq("id", id).select("*").single();
+  if (error) throw error;
+  return mapUser(data);
+}
+
 async function main(request) {
   if (request.method === "GET") {
     return json(200, { ok: true, data: { status: "Supabase API is running" } });
@@ -152,6 +203,10 @@ async function main(request) {
         return json(200, { ok: true, data: currentUser });
       case "users.list":
         return json(200, { ok: true, data: await usersList(supabase) });
+      case "users.create":
+        return json(200, { ok: true, data: await createUser(supabase, payload) });
+      case "users.update":
+        return json(200, { ok: true, data: await updateUser(supabase, payload) });
       case "books.list":
       case "books.adminList": {
         const { data, error } = await supabase.from("books").select("*").order("book_name", { ascending: true });
