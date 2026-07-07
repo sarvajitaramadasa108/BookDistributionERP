@@ -972,14 +972,14 @@ async function main(request) {
   if (request.method === "GET") {
     return json(200, { ok: true, data: { status: "Supabase API is running" } });
   }
-  const body = await readBody(request);
-  const action = body.action;
-  const payload = body.payload || {};
-  const supabase = getSupabase();
-  const publicActions = new Set(["auth.login", "auth.logout", "auth.me"]);
-  const currentUser = await requireCurrentUser(supabase, payload, publicActions.has(action));
-
   try {
+    const body = await readBody(request);
+    const action = body.action;
+    const payload = body.payload || {};
+    const supabase = getSupabase();
+    const publicActions = new Set(["auth.login", "auth.logout", "auth.me"]);
+    const currentUser = await requireCurrentUser(supabase, payload, publicActions.has(action));
+
     switch (action) {
       case "auth.login":
         return json(200, { ok: true, data: await authLogin(supabase, payload) });
