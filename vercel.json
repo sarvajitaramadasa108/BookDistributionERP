@@ -2,6 +2,9 @@
   "version": 2,
   "routes": [
     {
+      "handle": "filesystem"
+    },
+    {
       "src": "/assets/(.*)",
       "dest": "/frontend/assets/$1"
     },
@@ -10,7 +13,7 @@
       "dest": "/frontend/$1"
     },
     {
-      "src": "/(?!api/)(.*)",
+      "src": "/(.*)",
       "dest": "/frontend/index.html"
     }
   ]
