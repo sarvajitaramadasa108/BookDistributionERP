@@ -176,9 +176,16 @@
       <section class="card">
         <div class="panel-header">
           <h2>Book Master</h2>
-          ${isMainAdmin() ? '<button class="button" type="button" onclick="window.erpApp.openBookForm()">Add Book</button>' : ""}
+          ${isMainAdmin() ? `
+            <div class="row-actions">
+              <button class="small-button" type="button" onclick="document.getElementById('bookImportInput').click()">Import Excel</button>
+              <button class="small-button" type="button" onclick="window.erpApp.downloadBookSample()">Download Sample</button>
+              <button class="button" type="button" onclick="window.erpApp.openBookForm()">Add Book</button>
+            </div>
+          ` : ""}
         </div>
         <div class="panel-body">
+          ${isMainAdmin() ? '<input id="bookImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importBookFile(this.files[0])">' : ""}
           <div class="toolbar">
             <label class="field compact-field">
               <span>Search</span>
@@ -3100,6 +3107,84 @@
     URL.revokeObjectURL(url);
   }
 
+  function downloadBookSample() {
+    const rows = [
+      ["ERP Code", "Book Name", "Book Type", "Purchase Price", "Sale Price"],
+      ["PRB-00074", "Tel - Bhagavad Gita", "Maha Big Books", "197.56", "350"]
+    ];
+    if (window.XLSX && window.XLSX.utils) {
+      const sheet = window.XLSX.utils.aoa_to_sheet(rows);
+      const workbook = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(workbook, sheet, "Book Master");
+      window.XLSX.writeFile(workbook, "book-master-sample.xlsx");
+      return;
+    }
+    const csv = rows.map((row) => row.map((cell) => {
+      const text = String(cell || "");
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "book-master-sample.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importBookFile(file) {
+    if (!file) return;
+    try {
+      const name = file.name || "import";
+      const lower = name.toLowerCase();
+      let rows = [];
+      if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+        if (!window.XLSX) {
+          showToast("Excel import library is not loaded");
+          return;
+        }
+        const buffer = await file.arrayBuffer();
+        const workbook = window.XLSX.read(buffer, { type: "array" });
+        const sheet = workbook.SheetNames[0];
+        rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { defval: "" });
+      } else {
+        const text = await file.text();
+        rows = parseCsvRows(text);
+      }
+
+      const books = rows.map((row) => ({
+        erpCode: String(row["ERP Code"] || row.erpCode || row["ERP"] || "").trim(),
+        name: String(row["Book Name"] || row.bookName || row["Name"] || "").trim(),
+        bookType: String(row["Book Type"] || row.bookType || row["Type"] || "General").trim() || "General",
+        purchasePrice: Number(row["Purchase Price"] || row.purchasePrice || row["Distributor Price"] || 0),
+        salePrice: Number(row["Sale Price"] || row.salePrice || row.mrp || 0),
+        active: true
+      })).filter((row) => row.name || row.erpCode);
+
+      if (!books.length) {
+        showToast("No books found in the file");
+        return;
+      }
+
+      setLoading(true);
+      try {
+        await window.erpApi.request("books.bulkUpsert", { books });
+        state.books = await window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list");
+        content.innerHTML = renderBooksMarkup();
+        showToast(`Imported ${books.length} books`);
+      } finally {
+        setLoading(false);
+      }
+    } catch (error) {
+      showToast(error.message || "Could not read the import file");
+    } finally {
+      const input = document.getElementById("bookImportInput");
+      if (input) {
+        input.value = "";
+      }
+    }
+  }
+
   async function importPurchaseFile(file) {
     if (!file) return;
     try {
@@ -4408,6 +4493,8 @@
     toast: showToast,
     logout,
     navigate,
+    downloadBookSample,
+    importBookFile,
     setBookSearch,
     setBookStatus,
     openBookForm,
