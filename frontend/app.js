@@ -3443,8 +3443,13 @@
           <div class="wide-field">
             <div class="line-editor-header">
               <h3>Books</h3>
-              <button class="small-button" type="button" onclick="window.erpApp.addOpeningLine()">Add Line</button>
+              <div class="row-actions">
+                <button class="small-button" type="button" onclick="window.erpApp.downloadOpeningSample()">Download Sample</button>
+                <button class="small-button" type="button" onclick="document.getElementById('openingImportInput').click()">Import Excel</button>
+                <button class="small-button" type="button" onclick="window.erpApp.addOpeningLine()">Add Line</button>
+              </div>
             </div>
+            <input id="openingImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importOpeningFile(this.files[0])">
             ${activeBooks.length ? openingLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before posting opening stock.</div>'}
           </div>
           <div class="form-actions">
@@ -3549,6 +3554,87 @@
       showToast(error.message || "Could not post opening stock");
     } finally {
       setLoading(false);
+    }
+  }
+
+  function downloadOpeningSample() {
+    const rows = [
+      ["ERP Code", "Book Name", "Qty", "Cost"],
+      ["PRB-00074", "Tel - Bhagavad Gita", "100", "197.56"],
+      ["PRB-00072", "Tel - Beyond Birth and Death", "50", "12.50"]
+    ];
+    if (window.XLSX && window.XLSX.utils) {
+      const sheet = window.XLSX.utils.aoa_to_sheet(rows);
+      const workbook = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(workbook, sheet, "Opening Stock");
+      window.XLSX.writeFile(workbook, "opening-stock-sample.xlsx");
+      return;
+    }
+    const csv = rows.map((row) => row.map((cell) => {
+      const text = String(cell || "");
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "opening-stock-sample.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importOpeningFile(file) {
+    if (!file) return;
+    try {
+      const name = file.name || "import";
+      const lower = name.toLowerCase();
+      let rows = [];
+      if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+        if (!window.XLSX) {
+          showToast("Excel import library is not loaded");
+          return;
+        }
+        const buffer = await file.arrayBuffer();
+        const workbook = window.XLSX.read(buffer, { type: "array" });
+        const sheet = workbook.SheetNames[0];
+        rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { defval: "" });
+      } else {
+        const text = await file.text();
+        rows = parseCsvRows(text);
+      }
+
+      const bookRows = rows.map((row) => {
+        const erpCode = String(row["ERP Code"] || row.erpCode || row["ERP"] || "").trim();
+        const bookName = String(row["Book Name"] || row.bookName || row["Name"] || "").trim();
+        const book = erpCode ? getBook(erpCode) : (bookName ? state.books.find((item) => String(item.name || "").trim().toLowerCase() === bookName.toLowerCase()) || {} : {});
+        return {
+          bookId: book.erpCode || book.bookId || erpCode || "",
+          quantity: Number(row["Qty"] || row.qty || row.quantity || 0),
+          rate: Number(row["Cost"] || row.cost || row.rate || book.purchasePrice || book.distributorPrice || 0)
+        };
+      }).filter((row) => row.bookId && Number(row.quantity || 0) > 0);
+
+      if (!bookRows.length) {
+        showToast("No opening stock rows found in the file");
+        return;
+      }
+
+      state.openingLines = bookRows;
+      state.openingBookQueries = bookRows.map(() => "");
+      state.openingDraft = {
+        documentDate: state.openingDraft.documentDate || new Date().toISOString().slice(0, 10),
+        toWarehouseId: state.openingDraft.toWarehouseId || state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
+        notes: state.openingDraft.notes || "Opening stock as on date"
+      };
+      renderOpeningStockModal();
+      showToast(`Loaded ${bookRows.length} opening stock rows`);
+    } catch (error) {
+      showToast(error.message || "Could not read the import file");
+    } finally {
+      const input = document.getElementById("openingImportInput");
+      if (input) {
+        input.value = "";
+      }
     }
   }
 
@@ -4635,6 +4721,8 @@
     addOpeningLine,
     removeOpeningLine,
     updateOpeningLine,
+    downloadOpeningSample,
+    importOpeningFile,
     addPurchaseLine,
     removePurchaseLine,
     updatePurchaseLine,
