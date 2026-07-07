@@ -4,6 +4,10 @@ import { createClient } from "@supabase/supabase-js";
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
+export const config = {
+  runtime: "nodejs20.x"
+};
+
 function json(statusCode, data) {
   return new Response(JSON.stringify(data), {
     status: statusCode,
@@ -48,6 +52,39 @@ async function readBody(request) {
     return await request.json();
   } catch {
     return {};
+  }
+}
+
+async function readNodeBody(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+function nodeHeadersToWebHeaders(reqHeaders) {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(reqHeaders || {})) {
+    if (Array.isArray(value)) {
+      headers.set(key, value.join(", "));
+    } else if (value !== undefined) {
+      headers.set(key, String(value));
+    }
+  }
+  return headers;
+}
+
+async function sendWebResponse(res, webResponse) {
+  res.statusCode = webResponse.status;
+  for (const [key, value] of webResponse.headers.entries()) {
+    res.setHeader(key, value);
+  }
+  const body = Buffer.from(await webResponse.arrayBuffer());
+  if (body.length) {
+    res.end(body);
+  } else {
+    res.end();
   }
 }
 
@@ -1052,4 +1089,24 @@ async function main(request) {
   }
 }
 
-export default main;
+export default async function handler(req, res) {
+  try {
+    const method = String(req.method || "GET").toUpperCase();
+    const bodyBuffer = method === "GET" || method === "HEAD" ? Buffer.alloc(0) : await readNodeBody(req);
+    const protocol = String(req.headers["x-forwarded-proto"] || "https");
+    const host = String(req.headers.host || "localhost");
+    const url = new URL(req.url || "/", `${protocol}://${host}`);
+    const requestInit = {
+      method,
+      headers: nodeHeadersToWebHeaders(req.headers)
+    };
+    if (bodyBuffer.length && method !== "GET" && method !== "HEAD") {
+      requestInit.body = bodyBuffer;
+    }
+    const webRequest = new Request(url, requestInit);
+    const webResponse = await main(webRequest);
+    await sendWebResponse(res, webResponse);
+  } catch (error) {
+    await sendWebResponse(res, json(500, { ok: false, error: error.message || "Server error" }));
+  }
+}
