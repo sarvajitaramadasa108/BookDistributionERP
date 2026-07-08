@@ -1030,6 +1030,11 @@ async function getActivityMonthlyReport(supabase, payload) {
     docMap[doc.document_code] = docRow;
   }
   const rows = Array.from(index.values()).sort((a, b) => String(a.bookName).localeCompare(String(b.bookName)) || String(a.bookId).localeCompare(String(b.bookId)));
+  rows.sort((a, b) => {
+    const groupA = String(a.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
+    const groupB = String(b.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
+    return groupA - groupB || String(a.bookName).localeCompare(String(b.bookName)) || String(a.bookId).localeCompare(String(b.bookId));
+  });
   const documentsArray = docs.map((doc) => ({
     documentId: doc.document_code,
     documentType: doc.document_type,
@@ -1176,7 +1181,11 @@ async function getWarehouseMonthlyReport(supabase, payload) {
       index.set(key, row);
     }
   }
-  const rows = Array.from(index.values()).sort((a, b) => String(a.bookName).localeCompare(String(b.bookName)) || String(a.bookId).localeCompare(String(b.bookId)));
+  const rows = Array.from(index.values()).sort((a, b) => {
+    const groupA = String(a.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
+    const groupB = String(b.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
+    return groupA - groupB || String(a.bookName).localeCompare(String(b.bookName)) || String(a.bookId).localeCompare(String(b.bookId));
+  });
   const rowsWithArrays = rows.map((row) => {
     const transferArray = Object.entries(row.transferMap || {}).map(([name, quantity]) => ({ name, quantity }));
     const daySalesArray = (days || []).map((day) => ({ day, quantity: Number((row.daySalesMap || {})[day] || 0) }));

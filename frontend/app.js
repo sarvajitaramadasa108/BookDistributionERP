@@ -1886,6 +1886,7 @@
             <tr>
               <th rowspan="2">ERP Code</th>
               <th rowspan="2">Book</th>
+              <th rowspan="2">Category</th>
               ${docs.map((doc) => `<th colspan="5">${escapeHtml(doc.documentId)}</th>`).join("")}
               <th rowspan="2">Issue</th>
               <th rowspan="2">Return</th>
@@ -1900,7 +1901,7 @@
           </thead>
           <tbody>
             <tr class="worth-row">
-              <td colspan="2"><strong>Worth</strong></td>
+              <td colspan="3"><strong>Worth</strong></td>
               ${worthTotals.totals.map((value) => `<td colspan="5">${money(value)}</td>`).join("")}
               <td>${Number(report.totals && report.totals.issueQty || 0)}</td>
               <td>${Number(report.totals && report.totals.returnQty || 0)}</td>
@@ -1913,6 +1914,7 @@
               <tr>
                 <td>${escapeHtml(row.bookId)}</td>
                 <td><strong>${escapeHtml(row.bookName)}</strong></td>
+                <td>${escapeHtml(getItemGroupLabel(row.itemGroup))}</td>
                 ${(row.docMapArray || []).map((doc) => `
                   <td>${Number(doc.issueQty || 0)}</td>
                   <td>${Number(doc.returnQty || 0)}</td>
@@ -1961,6 +1963,7 @@
       <tr>
         <th rowspan="2">ERP Code</th>
         <th rowspan="2">Book</th>
+        <th rowspan="2">Category</th>
         ${docs.map((doc) => `<th colspan="5">${escapeHtml(doc.documentId)}</th>`).join("")}
         <th rowspan="2">Issue</th>
         <th rowspan="2">Return</th>
@@ -1973,7 +1976,7 @@
     `;
     const totalsRow = `
       <tr>
-        <td colspan="2"><strong>Worth</strong></td>
+        <td colspan="3"><strong>Worth</strong></td>
         ${worthTotals.totals.map((value) => `<td colspan="5">${escapeHtml(String(value))}</td>`).join("")}
         <td>${Number(report.totals && report.totals.issueQty || 0)}</td>
         <td>${Number(report.totals && report.totals.returnQty || 0)}</td>
@@ -1987,6 +1990,7 @@
       <tr>
         <td>${escapeHtml(row.bookId)}</td>
         <td>${escapeHtml(row.bookName)}</td>
+        <td>${escapeHtml(getItemGroupLabel(row.itemGroup))}</td>
         ${(row.docMapArray || []).map((doc) => `
           <td>${Number(doc.issueQty || 0)}</td>
           <td>${Number(doc.returnQty || 0)}</td>
@@ -2042,6 +2046,7 @@
             <tr>
               <th>ERP Code</th>
               <th>Book</th>
+              <th>Category</th>
               <th>Opening</th>
               ${isMain
                 ? `${transferTargets.map((warehouse) => `<th>To ${escapeHtml(warehouse.name)}</th>`).join("")}<th>Sales</th><th>Complimentary</th><th>Unsettled</th><th>Closing</th>`
@@ -2072,6 +2077,7 @@
       <tr>
         <td>${escapeHtml(row.bookId)}</td>
         <td><strong>${escapeHtml(row.bookName)}</strong></td>
+        <td>${escapeHtml(getItemGroupLabel(row.itemGroup))}</td>
         <td>${Number(row.openingQty || 0)}</td>
         ${isMain
           ? `${transferTargets.map((warehouse) => `<td>${Number(((row.transferMap || {})[warehouse.name]) || 0)}</td>`).join("")}<td>${Number(row.saleQty || 0)}</td><td>${Number(row.complimentaryQty || 0)}</td><td>${Number(row.unsettledQty || 0)}</td><td><strong>${Number(row.closingQty || 0)}</strong></td>`
@@ -2106,18 +2112,20 @@
               <tr>
                 <th>ERP Code</th>
                 <th>Book</th>
+                <th>Category</th>
                 ${report.dayColumns.map((day) => `<th>${escapeHtml(day)}</th>`).join("")}
               </tr>
             </thead>
             <tbody>
               <tr class="worth-row">
-                <td colspan="2"><strong>Worth</strong></td>
+                <td colspan="3"><strong>Worth</strong></td>
                 ${report.dayColumns.map((day) => `<td>${money(worthByDay[day] || 0)}</td>`).join("")}
               </tr>
               ${report.rows.map((row) => `
                 <tr>
                   <td>${escapeHtml(row.bookId)}</td>
                   <td><strong>${escapeHtml(row.bookName)}</strong></td>
+                  <td>${escapeHtml(getItemGroupLabel(row.itemGroup))}</td>
                   ${report.dayColumns.map((day) => `<td>${Number((row.daySalesMap && row.daySalesMap[day]) || 0)}</td>`).join("")}
                 </tr>
               `).join("")}
@@ -2158,6 +2166,12 @@
           (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0)
       : [];
     const headerCells = ["ERP Code", "Book", "Opening"];
+    const sortedRows = report.rows.slice().sort((a, b) => {
+      const groupA = String(a.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
+      const groupB = String(b.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
+      return groupA - groupB || String(a.bookName || "").localeCompare(String(b.bookName || "")) || String(a.bookId || "").localeCompare(String(b.bookId || ""));
+    });
+    headerCells.splice(2, 0, "Category");
     if (isMain) {
       transferTargets.forEach((warehouse) => headerCells.push(`To ${warehouse.name}`));
       headerCells.push("Sales", "Complimentary", "Unsettled", "Closing");
@@ -2168,8 +2182,8 @@
     const worthTotals = buildWarehouseWorthTotals(report, transferTargets);
     const worthRow = buildWarehouseWorthExcelRow(report, transferTargets, worthTotals);
 
-    const rows = report.rows.map((row) => {
-      const cells = [row.bookId || "", row.bookName || "", Number(row.openingQty || 0)];
+    const rows = sortedRows.map((row) => {
+      const cells = [row.bookId || "", row.bookName || "", getItemGroupLabel(row.itemGroup), Number(row.openingQty || 0)];
       if (isMain) {
         transferTargets.forEach((warehouse) => cells.push(Number(((row.transferMap || {})[warehouse.name]) || 0)));
         cells.push(Number(row.saleQty || 0), Number(row.complimentaryQty || 0), Number(row.unsettledQty || 0), Number(row.closingQty || 0));
@@ -2852,7 +2866,13 @@
     const activityIds = activityList.map((row) => row.activityId);
     const activeBooks = [...state.books, ...state.devotionalItems]
       .slice()
-      .sort((a, b) => String(getBookName(a.erpCode || a.bookId)).localeCompare(String(getBookName(b.erpCode || b.bookId))) || String(a.erpCode || a.bookId).localeCompare(String(b.erpCode || b.bookId)));
+      .sort((a, b) => {
+        const groupA = String(a.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
+        const groupB = String(b.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
+        return groupA - groupB
+          || String(getBookName(a.erpCode || a.bookId)).localeCompare(String(getBookName(b.erpCode || b.bookId)))
+          || String(a.erpCode || a.bookId).localeCompare(String(b.erpCode || b.bookId));
+      });
     const bookIndex = {};
     const activityIndex = {};
 
@@ -2911,6 +2931,7 @@
         <tr>
           <td>${escapeHtml(book.bookId)}</td>
           <td>${escapeHtml(book.bookName)}</td>
+          <td>${escapeHtml(getItemGroupLabel(book.itemGroup || "BOOK"))}</td>
           <td>${escapeHtml(String(book.salePrice || 0))}</td>
           ${qtyCells}
         </tr>
@@ -2920,6 +2941,7 @@
     const headerCells = [
       "<th rowspan=\"2\">ERP Code</th>",
       "<th rowspan=\"2\">Book Name</th>",
+      "<th rowspan=\"2\">Category</th>",
       "<th rowspan=\"2\">Sale Price</th>",
       `<th colspan="${Math.max(activityIds.length, 1)}">Activities</th>`
     ];
@@ -2933,7 +2955,7 @@
       : `<tr><th>No activities found</th></tr>`;
     const worthRow = `
       <tr class="worth-row">
-        <td colspan="3"><strong>Worth</strong></td>
+        <td colspan="4"><strong>Worth</strong></td>
         ${activityIds.map((activityId) => `<td><strong>${money(worthTotals[activityId] || 0)}</strong></td>`).join("")}
       </tr>
     `;
@@ -2958,7 +2980,7 @@
               ${worthRow}
               ${rowsHtml}
               <tr class="worth-row">
-                <td colspan="3"><strong>Total Worth</strong></td>
+                <td colspan="4"><strong>Total Worth</strong></td>
                 <td colspan="${Math.max(activityIds.length, 1)}"><strong>${money(overallWorth)}</strong></td>
               </tr>
             </tbody>
@@ -3266,7 +3288,7 @@
     const cells = isMain
       ? `${transferTargets.map((warehouse) => `<td>${money(totals.transferMap[warehouse.name] || 0)}</td>`).join("")}<td>${money(totals.sales)}</td><td>${money(totals.complimentary)}</td><td>${money(totals.unsettled)}</td><td><strong>${money(totals.closing)}</strong></td>`
       : `<td>${money(totals.transferIn)}</td><td>${money(totals.sales)}</td><td><strong>${money(totals.closing)}</strong></td>`;
-    return `<tr class="worth-row"><td colspan="2"><strong>Worth</strong></td><td>${money(totals.opening)}</td>${cells}</tr>`;
+    return `<tr class="worth-row"><td colspan="3"><strong>Worth</strong></td><td>${money(totals.opening)}</td>${cells}</tr>`;
   }
 
   function buildWarehouseWorthExcelRow(report, transferTargets, totals) {
@@ -3277,7 +3299,7 @@
     const cells = isMain
       ? `${transferTargets.map((warehouse) => `<td>${escapeHtml(String(totals.transferMap[warehouse.name] || 0))}</td>`).join("")}<td>${escapeHtml(String(totals.sales || 0))}</td><td>${escapeHtml(String(totals.complimentary || 0))}</td><td>${escapeHtml(String(totals.unsettled || 0))}</td><td>${escapeHtml(String(totals.closing || 0))}</td>`
       : `<td>${escapeHtml(String(totals.transferIn || 0))}</td><td>${escapeHtml(String(totals.sales || 0))}</td><td>${escapeHtml(String(totals.closing || 0))}</td>${dayCells}`;
-    return `<tr><td colspan="2"><strong>Worth</strong></td><td>${escapeHtml(String(totals.opening || 0))}</td>${cells}</tr>`;
+    return `<tr><td colspan="3"><strong>Worth</strong></td><td>${escapeHtml(String(totals.opening || 0))}</td>${cells}</tr>`;
   }
 
   function openIssueForm() {
