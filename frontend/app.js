@@ -501,14 +501,14 @@
             </div>
           </div>
           <div class="row-actions">
-            <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">${getItemGroupLabel(state.documentEntryGroup)} Opening</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openUnsettledOpeningForm()">${getItemGroupLabel(state.documentEntryGroup)} Unsettled</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openPurchaseForm()">${getItemGroupLabel(state.documentEntryGroup)} Input</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openSaleForm()">${getItemGroupLabel(state.documentEntryGroup)} Sale</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">${getItemGroupLabel(state.documentEntryGroup)} Return</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">${getItemGroupLabel(state.documentEntryGroup)} Transfer</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openComplimentaryForm()">${getItemGroupLabel(state.documentEntryGroup)} Complimentary</button>
-            <button class="button" type="button" onclick="window.erpApp.openIssueForm()">${getItemGroupLabel(state.documentEntryGroup)} Issue</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">Opening Stock Entry</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openUnsettledOpeningForm()">Unsettled Issue Entry</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openPurchaseForm()">Purchase Stock Entry</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openSaleForm()">Sale Entry</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Returns Entry</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Entry</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openComplimentaryForm()">Complimentary Issue Entry</button>
+            <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Entry</button>
           </div>
         </div>
         <div class="panel-body">
