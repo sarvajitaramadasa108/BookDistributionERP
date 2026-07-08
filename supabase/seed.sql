@@ -12,3 +12,31 @@ set
   role = excluded.role,
   active = excluded.active,
   updated_at = now();
+
+insert into public.devotees (devotee_code, devotee_name, active)
+values
+  ('HG NCBP', 'HG NCBP', true),
+  ('YDRP', 'YDRP', true),
+  ('VKTP', 'VKTP', true),
+  ('ABRP', 'ABRP', true),
+  ('SRSP', 'SRSP', true),
+  ('SYMP', 'SYMP', true),
+  ('KKRP', 'KKRP', true),
+  ('GPVP', 'GPVP', true),
+  ('RVRP', 'RVRP', true),
+  ('ADKP', 'ADKP', true),
+  ('GDHP', 'GDHP', true),
+  ('ISKP', 'ISKP', true),
+  ('NVKP', 'NVKP', true),
+  ('SDGP', 'SDGP', true),
+  ('NTHP', 'NTHP', true),
+  ('RMPP', 'RMPP', true),
+  ('SJRD', 'SJRD', true),
+  ('BDCP', 'BDCP', true),
+  ('GVBP', 'GVBP', true),
+  ('MKGP', 'MKGP', true)
+on conflict (devotee_code) do update
+set
+  devotee_name = excluded.devotee_name,
+  active = excluded.active,
+  updated_at = now();
