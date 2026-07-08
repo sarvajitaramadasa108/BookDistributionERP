@@ -44,6 +44,8 @@
     unsettledLines: [],
     unsettledBookQueries: [],
     currentStock: [],
+    currentStockLoaded: false,
+    currentStockLoading: false,
     activityUnsettled: [],
     activityLedger: [],
     activityMonthlyReport: null,
@@ -538,6 +540,7 @@
 
     if (stockResult.status === "fulfilled") {
       state.currentStock = Array.isArray(stockResult.value) ? stockResult.value.map(normalizeStockRow) : [];
+      state.currentStockLoaded = true;
     }
     if (booksResult.status === "fulfilled") {
       state.books = Array.isArray(booksResult.value) ? booksResult.value : [];
@@ -2228,7 +2231,7 @@
     return activeBooks
       .filter((book) => {
         const bookId = book.erpCode || book.bookId;
-        if (warehouseId && getAvailableStock(warehouseId, bookId) <= 0) {
+        if (warehouseId && state.currentStockLoaded && getAvailableStock(warehouseId, bookId) <= 0) {
           return false;
         }
         if (!needle) return true;
@@ -2243,7 +2246,9 @@
     const selectedBook = bookId ? getBook(bookId) : null;
     const activeQuery = String(query || "");
     const filteredBooks = filterBooksForPicker(activeBooks, activeQuery, warehouseId);
-    const availabilityHint = warehouseId ? `Stock at ${getWarehouseName(warehouseId)}` : "Type to search";
+    const availabilityHint = warehouseId
+      ? (state.currentStockLoaded ? `Stock at ${getWarehouseName(warehouseId)}` : `Loading stock for ${getWarehouseName(warehouseId)}...`)
+      : "Type to search";
     return `
       <div class="book-picker">
         <label class="field">
@@ -2260,7 +2265,7 @@
           ${filteredBooks.length ? filteredBooks.map((book) => {
             const itemId = book.erpCode || book.bookId;
             const selected = itemId === bookId;
-            const avail = warehouseId ? getAvailableStock(warehouseId, itemId) : null;
+            const avail = warehouseId && state.currentStockLoaded ? getAvailableStock(warehouseId, itemId) : null;
             return `
               <button
                 class="book-picker-item ${selected ? "selected" : ""}"
@@ -2992,33 +2997,31 @@
   }
 
   function openIssueForm() {
-    ensureCurrentStockLoaded().then(() => {
-      state.issueDocumentType = "ISSUE";
-      state.issueDraft = {
-        documentDate: new Date().toISOString().slice(0, 10),
-        fromWarehouseId: "",
-        activityId: "",
-        notes: ""
-      };
-      state.issueLines = [blankIssueLine()];
-      state.issueBookQueries = [""];
-      renderIssueModal();
-    });
+    state.issueDocumentType = "ISSUE";
+    state.issueDraft = {
+      documentDate: new Date().toISOString().slice(0, 10),
+      fromWarehouseId: "",
+      activityId: "",
+      notes: ""
+    };
+    state.issueLines = [blankIssueLine()];
+    state.issueBookQueries = [""];
+    renderIssueModal();
+    refreshCurrentStockForOpenDocumentModal();
   }
 
   function openComplimentaryForm() {
-    ensureCurrentStockLoaded().then(() => {
-      state.issueDocumentType = "COMPLIMENTARY";
-      state.issueDraft = {
-        documentDate: new Date().toISOString().slice(0, 10),
-        fromWarehouseId: "",
-        activityId: "",
-        notes: ""
-      };
-      state.issueLines = [blankIssueLine()];
-      state.issueBookQueries = [""];
-      renderIssueModal();
-    });
+    state.issueDocumentType = "COMPLIMENTARY";
+    state.issueDraft = {
+      documentDate: new Date().toISOString().slice(0, 10),
+      fromWarehouseId: "",
+      activityId: "",
+      notes: ""
+    };
+    state.issueLines = [blankIssueLine()];
+    state.issueBookQueries = [""];
+    renderIssueModal();
+    refreshCurrentStockForOpenDocumentModal();
   }
 
   function blankIssueLine() {
@@ -3026,17 +3029,16 @@
   }
 
   function openSaleForm() {
-    ensureCurrentStockLoaded().then(() => {
-      const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0);
-      state.saleDraft = {
-        documentDate: new Date().toISOString().slice(0, 10),
-        warehouseId: activeWarehouses[0]?.warehouseId || "",
-        notes: ""
-      };
-      state.saleLines = [blankSaleLine()];
-      state.saleBookQueries = [""];
-      renderSaleModal();
-    });
+    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0);
+    state.saleDraft = {
+      documentDate: new Date().toISOString().slice(0, 10),
+      warehouseId: activeWarehouses[0]?.warehouseId || "",
+      notes: ""
+    };
+    state.saleLines = [blankSaleLine()];
+    state.saleBookQueries = [""];
+    renderSaleModal();
+    refreshCurrentStockForOpenDocumentModal();
   }
 
   function blankSaleLine() {
@@ -3059,16 +3061,14 @@
   }
 
   function openPurchaseForm() {
-    ensureCurrentStockLoaded().then(() => {
-      state.purchaseDraft = {
-        documentDate: new Date().toISOString().slice(0, 10),
-        toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || state.warehouses[0]?.warehouseId || "",
-        notes: ""
-      };
-      state.purchaseLines = [blankPurchaseLine()];
-      state.purchaseImportName = "";
-      renderPurchaseModal();
-    });
+    state.purchaseDraft = {
+      documentDate: new Date().toISOString().slice(0, 10),
+      toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || state.warehouses[0]?.warehouseId || "",
+      notes: ""
+    };
+    state.purchaseLines = [blankPurchaseLine()];
+    state.purchaseImportName = "";
+    renderPurchaseModal();
   }
 
   function blankPurchaseLine() {
@@ -3423,6 +3423,7 @@
     setLoading(true);
     try {
       const result = await window.erpApi.request("documents.create", payload);
+      invalidateCurrentStockCache();
       closeModal();
       content.innerHTML = await renderDocuments();
       showToast(`Purchase input posted: ${result.documentId}`);
@@ -3568,6 +3569,7 @@
     setLoading(true);
     try {
       const result = await window.erpApi.request("documents.create", payload);
+      invalidateCurrentStockCache();
       closeModal();
       content.innerHTML = await renderDocuments();
       showToast(`Opening stock posted: ${result.documentId}`);
@@ -3600,6 +3602,38 @@
     const link = document.createElement("a");
     link.href = url;
     link.download = "opening-stock-sample.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function downloadUnsettledOpeningSample() {
+    const activityHeaders = state.activities
+      .filter((activity) => activity.status !== "Cancelled")
+      .map((activity) => activity.name || activity.activityName || activity.activityId)
+      .filter(Boolean)
+      .slice(0, 8);
+    const headers = ["ERP Code", "Book Name", ...(activityHeaders.length ? activityHeaders : ["Activity 1", "Activity 2"])];
+    const rows = [
+      headers,
+      ["PRB-00074", "Tel - Bhagavad Gita", ...(headers.slice(2).map((_, index) => (index === 0 ? "10" : "0")))],
+      ["PRB-00072", "Tel - Beyond Birth and Death", ...(headers.slice(2).map((_, index) => (index === 1 ? "5" : "0")))]
+    ];
+    if (window.XLSX && window.XLSX.utils) {
+      const sheet = window.XLSX.utils.aoa_to_sheet(rows);
+      const workbook = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(workbook, sheet, "Unsettled Opening");
+      window.XLSX.writeFile(workbook, "unsettled-opening-sample.xlsx");
+      return;
+    }
+    const csv = rows.map((row) => row.map((cell) => {
+      const text = String(cell || "");
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "unsettled-opening-sample.csv";
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -3653,6 +3687,119 @@
       showToast(error.message || "Could not read the import file");
     } finally {
       const input = document.getElementById("openingImportInput");
+      if (input) {
+        input.value = "";
+      }
+    }
+  }
+
+  async function importUnsettledOpeningFile(file) {
+    if (!file) return;
+    try {
+      const name = file.name || "import";
+      const lower = name.toLowerCase();
+      let rows = [];
+      if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+        if (!window.XLSX) {
+          showToast("Excel import library is not loaded");
+          return;
+        }
+        const buffer = await file.arrayBuffer();
+        const workbook = window.XLSX.read(buffer, { type: "array" });
+        const sheet = workbook.SheetNames[0];
+        rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { defval: "" });
+      } else {
+        const text = await file.text();
+        rows = parseCsvRows(text);
+      }
+
+      if (!rows.length) {
+        showToast("No rows found in the file");
+        return;
+      }
+
+      const fields = Object.keys(rows[0] || {});
+      const fixedFields = new Set(["ERP Code", "Book Name", "ERP", "Book"]);
+      const activityHeaders = fields.filter((field) => !fixedFields.has(String(field).trim()));
+      if (!activityHeaders.length) {
+        showToast("Add activity columns to the file");
+        return;
+      }
+
+      const activityLookup = new Map();
+      state.activities.forEach((activity) => {
+        const key = String(activity.name || activity.activityName || "").trim().toLowerCase();
+        if (key) {
+          activityLookup.set(key, activity);
+        }
+      });
+
+      const resolvedActivities = activityHeaders.map((header) => {
+        const key = String(header || "").trim().toLowerCase();
+        return activityLookup.get(key) || null;
+      });
+
+      const missingActivities = activityHeaders.filter((header, index) => !resolvedActivities[index]).map((header) => String(header || "").trim());
+      if (missingActivities.length) {
+        throw new Error("Please create activities first");
+      }
+
+      const entriesByActivityId = new Map();
+      for (const row of rows) {
+        const erpCode = String(row["ERP Code"] || row.erpCode || row["ERP"] || "").trim();
+        const bookName = String(row["Book Name"] || row.bookName || row["Book"] || "").trim();
+        const book = erpCode
+          ? getBook(erpCode)
+          : (bookName ? state.books.find((item) => String(item.name || "").trim().toLowerCase() === bookName.toLowerCase()) || null : null);
+        if (!book) {
+          throw new Error(`Book not found: ${erpCode || bookName || "-"}`);
+        }
+        const bookId = book.erpCode || book.bookId || erpCode || "";
+        activityHeaders.forEach((header, index) => {
+          const activity = resolvedActivities[index];
+          if (!activity) return;
+          const quantity = Number(row[header] || row[String(header).trim()] || 0);
+          if (quantity <= 0) return;
+          const entry = entriesByActivityId.get(activity.activityId) || {
+            activityId: activity.activityId,
+            lines: []
+          };
+          entry.lines.push({
+            bookId,
+            quantity,
+            rate: Number(book.purchasePrice || book.distributorPrice || 0)
+          });
+          entriesByActivityId.set(activity.activityId, entry);
+        });
+      }
+
+      const entries = Array.from(entriesByActivityId.values()).filter((entry) => entry.lines.length);
+      if (!entries.length) {
+        showToast("No unsettled quantities found in the file");
+        return;
+      }
+
+      const payload = {
+        documentDate: state.unsettledDraft.documentDate || new Date().toISOString().slice(0, 10),
+        fromWarehouseId: state.unsettledDraft.fromWarehouseId || state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
+        notes: state.unsettledDraft.notes || "Legacy unsettled issue opening",
+        entries
+      };
+
+      setLoading(true);
+      try {
+        const result = await window.erpApi.request("documents.importUnsettledOpening", payload);
+        invalidateCurrentStockCache();
+        closeModal();
+        content.innerHTML = await renderDocuments();
+        showToast(`Loaded unsettled opening for ${result.created || entries.length} activities`);
+      } finally {
+        setLoading(false);
+      }
+    } catch (error) {
+      showToast(error.message || "Could not read the unsettled opening file");
+    } finally {
+      const input = document.getElementById("unsettledOpeningImportInput");
       if (input) {
         input.value = "";
       }
@@ -3716,8 +3863,13 @@
           <div class="wide-field">
             <div class="line-editor-header">
               <h3>Books</h3>
-              <button class="small-button" type="button" onclick="window.erpApp.addUnsettledLine()">Add Line</button>
+              <div class="button-row">
+                <button class="small-button" type="button" onclick="window.erpApp.downloadUnsettledOpeningSample()">Download Sample</button>
+                <button class="small-button" type="button" onclick="window.erpApp.pickUnsettledOpeningImport()">Import Excel</button>
+                <button class="small-button" type="button" onclick="window.erpApp.addUnsettledLine()">Add Line</button>
+              </div>
             </div>
+            <input id="unsettledOpeningImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importUnsettledOpeningFile(this.files[0])">
             ${activeBooks.length ? unsettledLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before posting unsettled opening stock.</div>'}
           </div>
           <div class="form-actions">
@@ -3729,6 +3881,13 @@
     `;
 
     document.getElementById("unsettledForm").addEventListener("submit", saveUnsettledOpeningDocument);
+  }
+
+  function pickUnsettledOpeningImport() {
+    const input = document.getElementById("unsettledOpeningImportInput");
+    if (input) {
+      input.click();
+    }
   }
 
   function unsettledLinesMarkup(activeBooks) {
@@ -3817,6 +3976,7 @@
     setLoading(true);
     try {
       const result = await window.erpApi.request("documents.create", payload);
+      invalidateCurrentStockCache();
       closeModal();
       content.innerHTML = await renderDocuments();
       showToast(`Unsettled opening posted: ${result.documentId}`);
@@ -3833,7 +3993,7 @@
     const draft = state.saleDraft;
     const warehouseId = draft.warehouseId || "";
     const booksWithStock = warehouseId
-      ? activeBooks.filter((book) => getAvailableStock(warehouseId, book.erpCode || book.bookId) > 0)
+      ? (state.currentStockLoaded ? activeBooks.filter((book) => getAvailableStock(warehouseId, book.erpCode || book.bookId) > 0) : activeBooks)
       : [];
 
     modalRoot.innerHTML = `
@@ -3961,6 +4121,7 @@
     setLoading(true);
     try {
       const result = await window.erpApi.request("documents.create", payload);
+      invalidateCurrentStockCache();
       closeModal();
       content.innerHTML = await renderDocuments();
       showToast(`Sale posted: ${result.documentId}`);
@@ -3979,7 +4140,7 @@
     const isComplimentary = state.issueDocumentType === "COMPLIMENTARY";
     const fromWarehouseId = draft.fromWarehouseId || "";
     const booksWithStock = fromWarehouseId
-      ? activeBooks.filter((book) => getAvailableStock(fromWarehouseId, book.erpCode || book.bookId) > 0)
+      ? (state.currentStockLoaded ? activeBooks.filter((book) => getAvailableStock(fromWarehouseId, book.erpCode || book.bookId) > 0) : activeBooks)
       : [];
 
     modalRoot.innerHTML = `
@@ -4117,6 +4278,7 @@
     setLoading(true);
     try {
       const result = await window.erpApi.request("documents.create", payload);
+      invalidateCurrentStockCache();
       closeModal();
       content.innerHTML = await renderDocuments();
       showToast(`${isComplimentary ? "Complimentary issue" : "Issue"} posted: ${result.documentId}`);
@@ -4133,7 +4295,8 @@
       documentDate: new Date().toISOString().slice(0, 10),
       toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
       activityId,
-      notes: ""
+      notes: "",
+      returnSettlement: "Settled"
     };
     state.receiveLines = [blankReceiveLine()];
     state.receiveBookQueries = [""];
@@ -4181,6 +4344,13 @@
           <label class="field wide-field">
             <span>Notes</span>
             <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Return note">
+          </label>
+          <label class="field">
+            <span>Activity outcome</span>
+            <select name="returnSettlement" required>
+              <option value="Settled" ${draft.returnSettlement === "Settled" ? "selected" : ""}>Settle activity now</option>
+              <option value="Unsettled" ${draft.returnSettlement === "Unsettled" ? "selected" : ""}>Keep activity unsettled</option>
+            </select>
           </label>
           <div class="wide-field">
             <div class="line-editor-header">
@@ -4252,7 +4422,8 @@
       documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
       toWarehouseId: data.get("toWarehouseId") || "",
       activityId: data.get("activityId") || "",
-      notes: data.get("notes") || ""
+      notes: data.get("notes") || "",
+      returnSettlement: data.get("returnSettlement") || "Settled"
     };
   }
 
@@ -4278,7 +4449,7 @@
       documentDate: data.get("documentDate"),
       toWarehouseId: data.get("toWarehouseId"),
       activityId: data.get("activityId"),
-      status: "Posted",
+      status: data.get("returnSettlement") || "Settled",
       notes: data.get("notes").trim(),
       lines
     };
@@ -4286,28 +4457,28 @@
     setLoading(true);
     try {
       const result = await window.erpApi.request("documents.create", payload);
+      invalidateCurrentStockCache();
       closeModal();
       content.innerHTML = await renderDocuments();
       showToast(`Return posted: ${result.documentId}`);
     } catch (error) {
-      showToast(error.message || "Could not post receipt");
+      showToast(error.message || "Could not post return");
     } finally {
       setLoading(false);
     }
   }
 
   function openTransferForm() {
-    ensureCurrentStockLoaded().then(() => {
-      state.transferDraft = {
-        documentDate: new Date().toISOString().slice(0, 10),
-        fromWarehouseId: "",
-        toWarehouseId: "",
-        notes: ""
-      };
-      state.transferLines = [blankTransferLine()];
-      state.transferBookQueries = [""];
-      renderTransferModal();
-    });
+    state.transferDraft = {
+      documentDate: new Date().toISOString().slice(0, 10),
+      fromWarehouseId: "",
+      toWarehouseId: "",
+      notes: ""
+    };
+    state.transferLines = [blankTransferLine()];
+    state.transferBookQueries = [""];
+    renderTransferModal();
+    refreshCurrentStockForOpenDocumentModal();
   }
 
   function blankTransferLine() {
@@ -4320,7 +4491,7 @@
     const draft = state.transferDraft;
     const fromWarehouseId = draft.fromWarehouseId || "";
     const booksWithStock = fromWarehouseId
-      ? activeBooks.filter((book) => getAvailableStock(fromWarehouseId, book.erpCode || book.bookId) > 0)
+      ? (state.currentStockLoaded ? activeBooks.filter((book) => getAvailableStock(fromWarehouseId, book.erpCode || book.bookId) > 0) : activeBooks)
       : [];
 
     modalRoot.innerHTML = `
@@ -4431,29 +4602,64 @@
     syncIssueDraft();
     state.issueDraft.fromWarehouseId = warehouseId;
     state.issueLines = [blankIssueLine()];
-    ensureCurrentStockLoaded().then(renderIssueModal);
+    renderIssueModal();
+    refreshCurrentStockForOpenDocumentModal();
   }
 
   function onSaleWarehouseChange(warehouseId) {
     syncSaleDraft();
     state.saleDraft.warehouseId = warehouseId;
     state.saleLines = [blankSaleLine()];
-    ensureCurrentStockLoaded().then(renderSaleModal);
+    renderSaleModal();
+    refreshCurrentStockForOpenDocumentModal();
   }
 
   function onTransferWarehouseChange(warehouseId) {
     syncTransferDraft();
     state.transferDraft.fromWarehouseId = warehouseId;
     state.transferLines = [blankTransferLine()];
-    ensureCurrentStockLoaded().then(renderTransferModal);
+    renderTransferModal();
+    refreshCurrentStockForOpenDocumentModal();
   }
 
   async function ensureCurrentStockLoaded() {
-    if (state.currentStock.length) {
+    if (state.currentStockLoaded) {
       return state.currentStock;
     }
-    state.currentStock = (await window.erpApi.request("stock.current")).map(normalizeStockRow);
-    return state.currentStock;
+    state.currentStockLoading = true;
+    try {
+      state.currentStock = (await window.erpApi.request("stock.current")).map(normalizeStockRow);
+      state.currentStockLoaded = true;
+      return state.currentStock;
+    } finally {
+      state.currentStockLoading = false;
+    }
+  }
+
+  function invalidateCurrentStockCache() {
+    state.currentStock = [];
+    state.currentStockLoaded = false;
+  }
+
+  function refreshCurrentStockForOpenDocumentModal() {
+    if (state.currentStockLoading || state.currentStockLoaded) {
+      return;
+    }
+    ensureCurrentStockLoaded()
+      .then(() => {
+        if (document.getElementById("issueForm")) {
+          renderIssueModal();
+        } else if (document.getElementById("saleForm")) {
+          renderSaleModal();
+        } else if (document.getElementById("transferForm")) {
+          renderTransferModal();
+        } else if (document.getElementById("unsettledForm")) {
+          renderUnsettledOpeningModal();
+        }
+      })
+      .catch(() => {
+        /* keep the modal usable even if stock refresh fails */
+      });
   }
 
   async function saveTransferDocument(event) {
@@ -4494,6 +4700,7 @@
     setLoading(true);
     try {
       const result = await window.erpApi.request("documents.create", payload);
+      invalidateCurrentStockCache();
       closeModal();
       content.innerHTML = await renderDocuments();
       showToast(`Transfer posted: ${result.documentId}`);
@@ -4744,6 +4951,9 @@
     updateOpeningLine,
     downloadOpeningSample,
     importOpeningFile,
+    downloadUnsettledOpeningSample,
+    importUnsettledOpeningFile,
+    pickUnsettledOpeningImport,
     addPurchaseLine,
     removePurchaseLine,
     updatePurchaseLine,

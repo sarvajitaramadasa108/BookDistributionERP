@@ -730,7 +730,39 @@ async function createDocument(supabase, payload, currentUser) {
     const { error: ledgerError } = await supabase.from("stock_ledger").insert(ledgerRows);
     if (ledgerError) throw ledgerError;
   }
+
+  if (documentType === "RETURN" && String(payload.status || "").trim().toLowerCase() === "settled") {
+    const { error: activityError } = await supabase.from("activities").update({
+      status: "Completed",
+      settled_at: nowIso()
+    }).eq("id", payload.activityId);
+    if (activityError) throw activityError;
+  }
+
   return { documentId: doc.document_code };
+}
+
+async function importUnsettledOpeningDocuments(supabase, payload, currentUser) {
+  const entries = Array.isArray(payload.entries) ? payload.entries : [];
+  if (!entries.length) throw new Error("At least one activity entry is required");
+  const created = [];
+  for (const entry of entries) {
+    const lines = Array.isArray(entry.lines) ? entry.lines : [];
+    const cleanLines = lines.filter((line) => String(line.bookId || line.erpCode || "").trim() && Number(line.quantity || 0) > 0);
+    if (!cleanLines.length) continue;
+    const result = await createDocument(supabase, {
+      documentType: "UNSETTLED_OPENING",
+      documentDate: payload.documentDate,
+      fromWarehouseId: payload.fromWarehouseId,
+      activityId: entry.activityId,
+      status: "Posted",
+      notes: payload.notes || "",
+      lines: cleanLines
+    }, currentUser);
+    created.push(result);
+  }
+  if (!created.length) throw new Error("No unsettled opening lines found");
+  return { created: created.length, documents: created };
 }
 
 async function stockCurrent(supabase) {
@@ -1165,6 +1197,8 @@ async function main(request) {
         return json(200, { ok: true, data: await documentsList(supabase) });
       case "documents.create":
         return json(200, { ok: true, data: await createDocument(supabase, payload, currentUser) });
+      case "documents.importUnsettledOpening":
+        return json(200, { ok: true, data: await importUnsettledOpeningDocuments(supabase, payload, currentUser) });
       case "stock.current":
         return json(200, { ok: true, data: await stockCurrent(supabase) });
       case "activity.unsettled":
