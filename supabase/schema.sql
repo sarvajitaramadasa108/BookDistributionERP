@@ -149,6 +149,17 @@ create table if not exists public.stock_ledger (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.activity_settlement_payments (
+  id uuid primary key default gen_random_uuid(),
+  activity_id uuid not null references public.activities(id) on update cascade on delete cascade,
+  payment_date date not null default current_date,
+  cash_amount numeric(14,2) not null default 0,
+  online_amount numeric(14,2) not null default 0,
+  notes text not null default '',
+  created_by_user_id uuid references public.users(id) on update cascade on delete set null,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.audit_log (
   id uuid primary key default gen_random_uuid(),
   timestamp timestamptz not null default now(),
@@ -176,7 +187,9 @@ create index if not exists idx_document_lines_document_id on public.document_lin
 create index if not exists idx_document_lines_item_id on public.document_lines (item_id);
 create index if not exists idx_stock_ledger_warehouse_date on public.stock_ledger (warehouse_id, ledger_date);
 create index if not exists idx_stock_ledger_activity_item on public.stock_ledger (activity_id, item_id);
+create index if not exists idx_activity_settlement_payments_activity_date on public.activity_settlement_payments (activity_id, payment_date);
 create index if not exists idx_user_sessions_user_id on public.user_sessions (user_id);
+create index if not exists idx_activity_settlement_payments_created_at on public.activity_settlement_payments (created_at desc);
 
 drop trigger if exists trg_users_updated_at on public.users;
 create trigger trg_users_updated_at
@@ -224,4 +237,3 @@ where item_group = 'BOOK';
 
 create or replace view public.book_master as
 select * from public.books;
-

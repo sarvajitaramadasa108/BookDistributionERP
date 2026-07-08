@@ -953,6 +953,205 @@ async function getActivityComplimentary(supabase) {
   return Array.from(index.values()).sort((a, b) => String(a.devoteeName).localeCompare(String(b.devoteeName)) || String(a.activityName).localeCompare(String(b.activityName)) || String(a.bookId).localeCompare(String(b.bookId)));
 }
 
+async function getSettlementContext(supabase) {
+  const [activitiesResult, documentsResult, linesResult, itemsResult, devoteesResult, warehousesResult, paymentsResult] = await Promise.all([
+    supabase.from("activities").select("*"),
+    supabase.from("documents").select("*"),
+    supabase.from("document_lines").select("*"),
+    supabase.from("items").select("*"),
+    supabase.from("devotees").select("*"),
+    supabase.from("warehouses").select("*"),
+    supabase.from("activity_settlement_payments").select("*")
+  ]);
+  if (activitiesResult.error) throw activitiesResult.error;
+  if (documentsResult.error) throw documentsResult.error;
+  if (linesResult.error) throw linesResult.error;
+  if (itemsResult.error) throw itemsResult.error;
+  if (devoteesResult.error) throw devoteesResult.error;
+  if (warehousesResult.error) throw warehousesResult.error;
+  if (paymentsResult.error) throw paymentsResult.error;
+  return {
+    activities: activitiesResult.data || [],
+    documents: documentsResult.data || [],
+    lines: linesResult.data || [],
+    items: itemsResult.data || [],
+    devotees: devoteesResult.data || [],
+    warehouses: warehousesResult.data || [],
+    payments: paymentsResult.data || []
+  };
+}
+
+function buildSettlementSummaryForActivity(activity, context) {
+  const { documents, lines, items, devotees, warehouses, payments } = context;
+  const activityDocs = documents.filter((doc) => doc.activity_id === activity.id);
+  const docsById = Object.fromEntries(activityDocs.map((doc) => [doc.id, doc]));
+  const itemById = Object.fromEntries(items.map((row) => [row.id, row]));
+  const devoteeById = Object.fromEntries(devotees.map((row) => [row.id, row]));
+  const warehouseById = Object.fromEntries(warehouses.map((row) => [row.id, row]));
+  const activityPayments = payments.filter((payment) => payment.activity_id === activity.id).sort((a, b) => String(a.payment_date || "").localeCompare(String(b.payment_date || "")) || String(a.created_at || "").localeCompare(String(b.created_at || "")));
+  const summary = {
+    issueQty: 0,
+    returnQty: 0,
+    saleQty: 0,
+    saleDueAmount: 0,
+    paidCashAmount: 0,
+    paidOnlineAmount: 0,
+    paidTotalAmount: 0,
+    pendingAmount: 0,
+    overpaidAmount: 0
+  };
+  const docRows = [];
+  const bookIndex = new Map();
+  const activityId = activity.id;
+  for (const doc of activityDocs) {
+    const docLines = lines.filter((line) => line.document_id === doc.id);
+    let issueQty = 0;
+    let returnQty = 0;
+    let saleQty = 0;
+    let complementaryQty = 0;
+    let amount = 0;
+    for (const line of docLines) {
+      const item = itemById[line.item_id] || {};
+      const qty = Number(line.quantity || 0);
+      const price = Number(item.sale_price || line.rate || 0);
+      if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") {
+        issueQty += qty;
+        amount += qty * price;
+      } else if (doc.document_type === "RETURN") {
+        returnQty += qty;
+        amount -= qty * price;
+      } else if (doc.document_type === "SALE") {
+        saleQty += qty;
+      } else if (doc.document_type === "COMPLIMENTARY") {
+        complementaryQty += qty;
+      }
+      const bookKey = item.erp_code || line.item_id;
+      const existingBookRow = bookIndex.get(bookKey) || {
+        bookId: item.erp_code || line.item_id,
+        bookName: item.item_name || line.item_id,
+        issueQty: 0,
+        returnQty: 0,
+        saleQty: 0,
+        amount: 0
+      };
+      if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") {
+        existingBookRow.issueQty += qty;
+      } else if (doc.document_type === "RETURN") {
+        existingBookRow.returnQty += qty;
+      } else if (doc.document_type === "SALE") {
+        existingBookRow.saleQty += qty;
+      }
+      if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") {
+        existingBookRow.amount += qty * price;
+      } else if (doc.document_type === "RETURN") {
+        existingBookRow.amount -= qty * price;
+      }
+      bookIndex.set(bookKey, existingBookRow);
+    }
+    if (!docLines.length) continue;
+    docRows.push({
+      documentId: doc.document_code,
+      documentType: doc.document_type,
+      documentDate: doc.document_date,
+      warehouseName: warehouseById[doc.from_warehouse_id || doc.to_warehouse_id || ""]?.warehouse_name || "",
+      issueQty,
+      returnQty,
+      saleQty,
+      complimentaryQty,
+      amount
+    });
+    summary.issueQty += issueQty;
+    summary.returnQty += returnQty;
+    summary.saleQty += saleQty;
+    summary.saleDueAmount += amount;
+  }
+  const paidCashAmount = activityPayments.reduce((sum, row) => sum + Number(row.cash_amount || 0), 0);
+  const paidOnlineAmount = activityPayments.reduce((sum, row) => sum + Number(row.online_amount || 0), 0);
+  const paidTotalAmount = paidCashAmount + paidOnlineAmount;
+  const pendingAmountRaw = summary.saleDueAmount - paidTotalAmount;
+  summary.paidCashAmount = paidCashAmount;
+  summary.paidOnlineAmount = paidOnlineAmount;
+  summary.paidTotalAmount = paidTotalAmount;
+  summary.pendingAmount = Math.max(pendingAmountRaw, 0);
+  summary.overpaidAmount = Math.max(paidTotalAmount - summary.saleDueAmount, 0);
+  return {
+    activityId,
+    activityName: activity.activity_name || activity.activity_code,
+    activityCode: activity.activity_code,
+    activityType: activity.activity_type,
+    activityStatus: activity.status,
+    settledAt: activity.settled_at,
+    devoteeId: activity.devotee_id || "",
+    devoteeName: devoteeById[activity.devotee_id]?.devotee_name || "",
+    warehouseId: activity.warehouse_id || "",
+    warehouseName: warehouseById[activity.warehouse_id]?.warehouse_name || "",
+    summary,
+    documents: docRows.sort((a, b) => String(a.documentDate).localeCompare(String(b.documentDate)) || String(a.documentId).localeCompare(String(b.documentId))),
+    books: Array.from(bookIndex.values()).sort((a, b) => String(a.bookName).localeCompare(String(b.bookName)) || String(a.bookId).localeCompare(String(b.bookId))),
+    payments: activityPayments.map((row) => ({
+      paymentId: row.id,
+      paymentDate: row.payment_date,
+      cashAmount: Number(row.cash_amount || 0),
+      onlineAmount: Number(row.online_amount || 0),
+      totalAmount: Number(row.cash_amount || 0) + Number(row.online_amount || 0),
+      notes: row.notes || "",
+      createdAt: row.created_at
+    }))
+  };
+}
+
+async function getPendingSettlements(supabase) {
+  const context = await getSettlementContext(supabase);
+  return context.activities
+    .filter((activity) => activity.status === "Completed" || activity.settled_at)
+    .map((activity) => buildSettlementSummaryForActivity(activity, context))
+    .filter((row) => Number(row.summary.pendingAmount || 0) > 0)
+    .sort((a, b) => Number(b.summary.pendingAmount || 0) - Number(a.summary.pendingAmount || 0) || String(a.activityName).localeCompare(String(b.activityName)));
+}
+
+async function getPendingSettlementDetails(supabase, payload) {
+  const activityId = String(payload.activityId || "").trim();
+  if (!activityId) throw new Error("Activity is required");
+  const context = await getSettlementContext(supabase);
+  const activity = context.activities.find((row) => row.activity_code === activityId || row.id === activityId);
+  if (!activity) throw new Error("Activity not found");
+  return buildSettlementSummaryForActivity(activity, context);
+}
+
+async function createSettlementPayment(supabase, payload, currentUser) {
+  const activityId = String(payload.activityId || "").trim();
+  if (!activityId) throw new Error("Activity is required");
+  const cashAmount = Number(payload.cashAmount || 0);
+  const onlineAmount = Number(payload.onlineAmount || 0);
+  if (cashAmount <= 0 && onlineAmount <= 0) throw new Error("Enter cash or online amount");
+  const paymentDate = toDateOnly(payload.paymentDate || nowIso());
+  let resolvedActivityId = activityId;
+  if (!isUuidLike(activityId)) {
+    const { data: activityRow, error: activityLookupError } = await supabase.from("activities").select("id").eq("activity_code", activityId).maybeSingle();
+    if (activityLookupError) throw activityLookupError;
+    if (!activityRow) throw new Error("Activity not found");
+    resolvedActivityId = activityRow.id;
+  }
+  const { data, error } = await supabase.from("activity_settlement_payments").insert({
+    activity_id: resolvedActivityId,
+    payment_date: paymentDate,
+    cash_amount: cashAmount,
+    online_amount: onlineAmount,
+    notes: String(payload.notes || "").trim(),
+    created_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null
+  }).select("*").single();
+  if (error) throw error;
+  return {
+    paymentId: data.id,
+    activityId: data.activity_id,
+    paymentDate: data.payment_date,
+    cashAmount: Number(data.cash_amount || 0),
+    onlineAmount: Number(data.online_amount || 0),
+    totalAmount: Number(data.cash_amount || 0) + Number(data.online_amount || 0),
+    notes: data.notes || ""
+  };
+}
+
 async function getActivityLedger(supabase, payload) {
   const rows = await getActivityUnsettled(supabase);
   const devoteeId = String(payload.devoteeId || "").trim();
@@ -1306,6 +1505,12 @@ async function main(request) {
         return json(200, { ok: true, data: await getActivityUnsettled(supabase) });
       case "activity.complimentary":
         return json(200, { ok: true, data: await getActivityComplimentary(supabase) });
+      case "activity.pendingSettlements":
+        return json(200, { ok: true, data: await getPendingSettlements(supabase) });
+      case "activity.pendingSettlementDetails":
+        return json(200, { ok: true, data: await getPendingSettlementDetails(supabase, payload) });
+      case "activity.settlementPaymentCreate":
+        return json(200, { ok: true, data: await createSettlementPayment(supabase, payload, currentUser) });
       case "reports.activityLedger":
         return json(200, { ok: true, data: await getActivityLedger(supabase, payload) });
       case "reports.activityMonthly":

@@ -60,6 +60,10 @@
     unsettledReportActivityId: "",
     complimentaryReportActivityId: "",
     activityComplimentary: [],
+    documentsMode: "entries",
+    pendingSettlements: [],
+    pendingSettlementActivityId: "",
+    pendingSettlementDetails: null,
     sidebarCollapsed: false,
     reportWarehouseId: "",
     reportMonth: new Date().toISOString().slice(0, 7),
@@ -479,16 +483,18 @@
   }
 
   async function renderDocuments() {
-    const [documents, books, warehouses, activities] = await Promise.all([
+    const [documents, books, warehouses, activities, pendingSettlements] = await Promise.all([
       window.erpApi.request("documents.list"),
       window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
       window.erpApi.request("warehouses.list"),
-      window.erpApi.request("activities.list")
+      window.erpApi.request("activities.list"),
+      window.erpApi.request("activity.pendingSettlements")
     ]);
     state.documents = documents.map(normalizeDocument);
     state.books = books;
     state.warehouses = warehouses.map(normalizeWarehouse);
     state.activities = activities.map(normalizeActivity);
+    state.pendingSettlements = Array.isArray(pendingSettlements) ? pendingSettlements.map(normalizePendingSettlementSummary) : [];
     void ensureDocumentItemMastersLoaded().catch(() => {});
 
     return `
@@ -496,26 +502,42 @@
         <div class="panel-header">
           <h2>Stock Documents</h2>
           <div class="row-actions">
-            <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">Opening Stock Entry</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openUnsettledOpeningForm()">Unsettled Issue Entry</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openPurchaseForm()">Purchase Stock Entry</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openSaleForm()">Sale Entry</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Returns Entry</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Entry</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openComplimentaryForm()">Complimentary Issue Entry</button>
-            <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Entry</button>
+            <button class="button ${state.documentsMode === "entries" ? "" : "secondary"}" type="button" onclick="window.erpApp.setDocumentsMode('entries')">Stock Entries</button>
+            <button class="button ${state.documentsMode === "pending" ? "" : "secondary"}" type="button" onclick="window.erpApp.setDocumentsMode('pending')">Pending Settlements</button>
           </div>
         </div>
         <div class="panel-body">
-          <div class="grid metrics">
-            ${metric("Issue", "Out", "Books sent from warehouse to activity or location")}
-            ${metric("Return", "In", "Books received back from an issued activity")}
-            ${metric("Sale", "Out", "Books distributed and amount recorded")}
-            ${metric("Return", "In", "Returned books restored or marked damaged")}
-          </div>
-          <div class="section-gap">
-            ${state.documents.length ? documentsTable(state.documents) : '<div class="empty-state">No stock documents found.</div>'}
-          </div>
+          ${state.documentsMode === "pending" ? `
+            <div class="grid metrics">
+              ${metric("Pending Activities", state.pendingSettlements.length, "Completed activities with settlement dues")}
+              ${metric("Pending Amount", money(state.pendingSettlements.reduce((sum, row) => sum + Number(row.summary?.pendingAmount || 0), 0)), "Total amount still to be collected")}
+              ${metric("Paid So Far", money(state.pendingSettlements.reduce((sum, row) => sum + Number(row.summary?.paidTotalAmount || 0), 0)), "Cash plus online received")}
+              ${metric("Returned Qty", state.pendingSettlements.reduce((sum, row) => sum + Number(row.summary?.returnQty || 0), 0), "Returned quantity across pending activities")}
+            </div>
+            <div class="section-gap">
+              ${state.pendingSettlementActivityId ? pendingSettlementDetailMarkup(state.pendingSettlementDetails) : pendingSettlementSummaryMarkup(state.pendingSettlements)}
+            </div>
+          ` : `
+            <div class="grid metrics">
+              ${metric("Issue", "Out", "Books sent from warehouse to activity or location")}
+              ${metric("Return", "In", "Books received back from an issued activity")}
+              ${metric("Sale", "Out", "Books distributed and amount recorded")}
+              ${metric("Return", "In", "Returned books restored or marked damaged")}
+            </div>
+            <div class="section-gap">
+              <div class="row-actions" style="margin-bottom:12px;">
+                <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">Opening Stock Entry</button>
+                <button class="button secondary" type="button" onclick="window.erpApp.openUnsettledOpeningForm()">Unsettled Issue Entry</button>
+                <button class="button secondary" type="button" onclick="window.erpApp.openPurchaseForm()">Purchase Stock Entry</button>
+                <button class="button secondary" type="button" onclick="window.erpApp.openSaleForm()">Sale Entry</button>
+                <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Returns Entry</button>
+                <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Entry</button>
+                <button class="button secondary" type="button" onclick="window.erpApp.openComplimentaryForm()">Complimentary Issue Entry</button>
+                <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Entry</button>
+              </div>
+              ${state.documents.length ? documentsTable(state.documents) : '<div class="empty-state">No stock documents found.</div>'}
+            </div>
+          `}
         </div>
       </section>
     `;
@@ -914,6 +936,276 @@
         </table>
       </div>
     `;
+  }
+
+  function normalizePendingSettlementSummary(row) {
+    return {
+      activityId: row.activityId || row.activity_code || "",
+      activityName: row.activityName || row.name || "",
+      activityType: row.activityType || row.type || "",
+      devoteeId: row.devoteeId || "",
+      devoteeName: row.devoteeName || "",
+      warehouseId: row.warehouseId || "",
+      warehouseName: row.warehouseName || "",
+      settledAt: row.settledAt || "",
+      summary: {
+        issueQty: Number(row.summary && row.summary.issueQty || 0),
+        returnQty: Number(row.summary && row.summary.returnQty || 0),
+        saleQty: Number(row.summary && row.summary.saleQty || 0),
+        saleDueAmount: Number(row.summary && row.summary.saleDueAmount || 0),
+        paidCashAmount: Number(row.summary && row.summary.paidCashAmount || 0),
+        paidOnlineAmount: Number(row.summary && row.summary.paidOnlineAmount || 0),
+        paidTotalAmount: Number(row.summary && row.summary.paidTotalAmount || 0),
+        pendingAmount: Number(row.summary && row.summary.pendingAmount || 0),
+        overpaidAmount: Number(row.summary && row.summary.overpaidAmount || 0)
+      }
+    };
+  }
+
+  function setDocumentsMode(mode) {
+    state.documentsMode = mode === "pending" ? "pending" : "entries";
+    if (state.documentsMode !== "pending") {
+      state.pendingSettlementActivityId = "";
+      state.pendingSettlementDetails = null;
+    }
+    content.innerHTML = "";
+    void navigate("documents");
+  }
+
+  async function showPendingSettlementDetails(activityId) {
+    if (!activityId) return;
+    state.documentsMode = "pending";
+    state.pendingSettlementActivityId = activityId;
+    setLoading(true);
+    try {
+      state.pendingSettlementDetails = await window.erpApi.request("activity.pendingSettlementDetails", { activityId });
+      content.innerHTML = await renderDocuments();
+    } catch (error) {
+      showToast(error.message || "Could not load settlement details");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function backToPendingSettlementSummary() {
+    state.pendingSettlementActivityId = "";
+    state.pendingSettlementDetails = null;
+    content.innerHTML = renderDocuments();
+  }
+
+  function pendingSettlementsSummaryMarkup(rows) {
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>SNo</th>
+              <th>Devotee</th>
+              <th>Activity</th>
+              <th>Sale Due</th>
+              <th>Paid</th>
+              <th>Pending</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.length ? rows.map((row, index) => `
+              <tr>
+                <td>${index + 1}</td>
+                <td>${escapeHtml(row.devoteeName || row.devoteeId || "-")}</td>
+                <td>
+                  <strong>${escapeHtml(row.activityName || row.activityId || "-")}</strong>
+                  <div class="metric-note">${escapeHtml(row.warehouseName || "")}</div>
+                </td>
+                <td>${money(Number(row.summary?.saleDueAmount || 0))}</td>
+                <td>${money(Number(row.summary?.paidTotalAmount || 0))}</td>
+                <td><strong>${money(Number(row.summary?.pendingAmount || 0))}</strong></td>
+                <td><button class="small-button" type="button" onclick="window.erpApp.showPendingSettlementDetails('${escapeAttribute(row.activityId)}')">Show Details</button></td>
+              </tr>
+            `).join("") : `<tr><td colspan="7"><div class="empty-state">No pending settlements found.</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function pendingSettlementDocumentRows(detail) {
+    return (detail && Array.isArray(detail.documents) ? detail.documents : []).map((row) => `
+      <tr>
+        <td>${escapeHtml(row.documentId || "-")}</td>
+        <td>${escapeHtml(row.documentType || "-")}</td>
+        <td>${escapeHtml(row.documentDate || "-")}</td>
+        <td>${Number(row.issueQty || 0)}</td>
+        <td>${Number(row.returnQty || 0)}</td>
+        <td>${money(Number(row.amount || 0))}</td>
+      </tr>
+    `).join("");
+  }
+
+  function pendingSettlementBooksMarkup(detail) {
+    const rows = detail && Array.isArray(detail.books) ? detail.books : [];
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ERP Code</th>
+              <th>Book</th>
+              <th>Issue</th>
+              <th>Return</th>
+              <th>Sale</th>
+              <th>Net Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.length ? rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.bookId || "-")}</td>
+                <td>${escapeHtml(row.bookName || "-")}</td>
+                <td>${Number(row.issueQty || 0)}</td>
+                <td>${Number(row.returnQty || 0)}</td>
+                <td>${Number(row.saleQty || 0)}</td>
+                <td>${money(Number(row.amount || 0))}</td>
+              </tr>
+            `).join("") : `<tr><td colspan="6"><div class="empty-state">No book rows available.</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function pendingSettlementPaymentsMarkup(detail) {
+    const rows = detail && Array.isArray(detail.payments) ? detail.payments : [];
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Cash</th>
+              <th>Online</th>
+              <th>Total</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.length ? rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.paymentDate || "-")}</td>
+                <td>${money(Number(row.cashAmount || 0))}</td>
+                <td>${money(Number(row.onlineAmount || 0))}</td>
+                <td><strong>${money(Number(row.totalAmount || 0))}</strong></td>
+                <td>${escapeHtml(row.notes || "-")}</td>
+              </tr>
+            `).join("") : `<tr><td colspan="5"><div class="empty-state">No settlement payments recorded yet.</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function pendingSettlementDetailMarkup(detail) {
+    if (!detail) {
+      return '<div class="empty-state">Choose a pending activity to view the settlement details.</div>';
+    }
+    const summary = detail.summary || {};
+    return `
+      <div class="panel-header compact-header">
+        <h2>${escapeHtml(detail.activityName || detail.activityId || "Pending Settlement")}</h2>
+        <div class="row-actions">
+          <button class="button secondary" type="button" onclick="window.erpApp.backToPendingSettlementSummary()">Back to Summary</button>
+        </div>
+      </div>
+      <div class="grid metrics">
+        ${metric("Sale Due", money(Number(summary.saleDueAmount || 0)), "Total issue less return value")}
+        ${metric("Paid", money(Number(summary.paidTotalAmount || 0)), "Cash plus online already received")}
+        ${metric("Pending", money(Number(summary.pendingAmount || 0)), "Still to be collected")}
+        ${metric("Activity", escapeHtml(detail.activityId || "-"), "Settlement record")}
+      </div>
+      <div class="section-gap">
+        <form class="form-grid" id="pendingSettlementPaymentForm" onsubmit="window.erpApp.savePendingSettlementPayment(event)">
+          <label class="field">
+            <span>Payment Date</span>
+            <input name="paymentDate" type="date" value="${escapeAttribute(new Date().toISOString().slice(0, 10))}" required>
+          </label>
+          <label class="field">
+            <span>Cash Received</span>
+            <input name="cashAmount" type="number" min="0" step="0.01" value="0" placeholder="0.00">
+          </label>
+          <label class="field">
+            <span>Online Received</span>
+            <input name="onlineAmount" type="number" min="0" step="0.01" value="0" placeholder="0.00">
+          </label>
+          <label class="field wide-field">
+            <span>Notes</span>
+            <input name="notes" placeholder="Optional settlement note">
+          </label>
+          <div class="form-actions wide-field">
+            <button class="button" type="submit">Save Payment</button>
+          </div>
+        </form>
+      </div>
+      <div class="section-gap">
+        <h3>Issue by Issue</h3>
+        ${detail.documents && detail.documents.length ? `<div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Document ID</th>
+                <th>Type</th>
+                <th>Date</th>
+                <th>Issue Qty</th>
+                <th>Return Qty</th>
+                <th>Net Amount</th>
+              </tr>
+            </thead>
+            <tbody>${pendingSettlementDocumentRows(detail)}</tbody>
+          </table>
+        </div>` : '<div class="empty-state">No issue or return documents found for this activity.</div>'}
+      </div>
+      <div class="section-gap">
+        <h3>Book Wise</h3>
+        ${pendingSettlementBooksMarkup(detail)}
+      </div>
+      <div class="section-gap">
+        <h3>Payment History</h3>
+        ${pendingSettlementPaymentsMarkup(detail)}
+      </div>
+    `;
+  }
+
+  async function savePendingSettlementPayment(event) {
+    event.preventDefault();
+    const detail = state.pendingSettlementDetails;
+    if (!detail) {
+      showToast("Select a pending settlement first");
+      return;
+    }
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const payload = {
+      activityId: detail.activityId,
+      paymentDate: data.get("paymentDate"),
+      cashAmount: Number(data.get("cashAmount") || 0),
+      onlineAmount: Number(data.get("onlineAmount") || 0),
+      notes: String(data.get("notes") || "").trim()
+    };
+    setLoading(true);
+    try {
+      await window.erpApi.request("activity.settlementPaymentCreate", payload);
+      state.pendingSettlementDetails = await window.erpApi.request("activity.pendingSettlementDetails", { activityId: detail.activityId });
+      state.pendingSettlements = await window.erpApi.request("activity.pendingSettlements");
+      if (Number(state.pendingSettlementDetails.summary?.pendingAmount || 0) <= 0) {
+        state.pendingSettlementActivityId = "";
+        state.pendingSettlementDetails = null;
+      }
+      content.innerHTML = await renderDocuments();
+      showToast("Settlement payment saved");
+    } catch (error) {
+      showToast(error.message || "Could not save settlement payment");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function renderDevotionalItemsMarkup() {
@@ -5443,6 +5735,10 @@
     backToUnsettledSummary,
     showComplimentaryActivityDetails,
     backToComplimentarySummary,
+    setDocumentsMode,
+    showPendingSettlementDetails,
+    backToPendingSettlementSummary,
+    savePendingSettlementPayment,
     settleActivity,
     openOpeningStockForm,
     openPurchaseForm,
