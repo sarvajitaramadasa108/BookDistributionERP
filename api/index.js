@@ -317,6 +317,42 @@ async function itemsDelete(supabase, payload) {
   return deleteItem(supabase, payload);
 }
 
+async function itemsBulkUpsert(supabase, payload) {
+  const itemGroup = String(payload.itemGroup || payload.group || "BOOK").trim().toUpperCase();
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const existingRows = await listTable(supabase, "items", mapItem);
+  const existingByCode = new Map(existingRows.map((row) => [row.erpCode, row]));
+  let nextSuffix = existingRows.reduce((max, row) => {
+    const match = String(row.erpCode || "").match(/^IT-(\d+)$/i);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+
+  const normalized = items.map((item) => {
+    const rawCode = String(item.erpCode || item["ERP Code"] || "").trim();
+    const erpCode = rawCode || `IT-${String(++nextSuffix).padStart(4, "0")}`;
+    return {
+      erp_code: erpCode,
+      item_name: String(item.name || item["Book Name"] || item["Item Name"] || "").trim(),
+      item_group: ["BOOK", "PARAPHERNALIA", "OTHER"].includes(itemGroup) ? itemGroup : "OTHER",
+      item_type: String(item.bookType || item.category || item["Item Type"] || item["Book Type"] || "").trim(),
+      unit: "pcs",
+      purchase_price: Number(item.purchasePrice || item["Purchase Price"] || item.distributorPrice || 0),
+      sale_price: Number(item.salePrice || item["Sale Price"] || item.mrp || 0),
+      active: item.active !== false
+    };
+  }).filter((row) => row.erp_code && row.item_name);
+
+  if (!normalized.length) {
+    return { created: 0, updated: 0, total: 0 };
+  }
+
+  const created = normalized.filter((row) => !existingByCode.has(row.erp_code)).length;
+  const updated = normalized.length - created;
+  const { error } = await supabase.from("items").upsert(normalized, { onConflict: "erp_code" });
+  if (error) throw error;
+  return { created, updated, total: normalized.length };
+}
+
 async function upsertItemIfMissing(supabase, line) {
   const erpCode = String(line.erpCode || line.bookId || "").trim();
   const name = String(line.bookName || line.name || "").trim();
@@ -1221,6 +1257,8 @@ async function main(request) {
         return json(200, { ok: true, data: await itemsUpdate(supabase, payload) });
       case "items.delete":
         return json(200, { ok: true, data: await itemsDelete(supabase, payload) });
+      case "items.bulkUpsert":
+        return json(200, { ok: true, data: await itemsBulkUpsert(supabase, payload) });
       case "devotionalItems.list":
         return json(200, { ok: true, data: await devotionalItemsList(supabase) });
       case "warehouses.list":

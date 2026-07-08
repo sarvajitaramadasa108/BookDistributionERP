@@ -905,11 +905,14 @@
           <h2>Devotional Items</h2>
           ${isMainAdmin() ? `
             <div class="row-actions">
+              <button class="small-button" type="button" onclick="document.getElementById('devotionalImportInput').click()">Import Excel</button>
+              <button class="small-button" type="button" onclick="window.erpApp.downloadDevotionalItemSample()">Download Sample</button>
               <button class="button" type="button" onclick="window.erpApp.openDevotionalItemForm()">Add Item</button>
             </div>
           ` : ""}
         </div>
         <div class="panel-body">
+          ${isMainAdmin() ? '<input id="devotionalImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importDevotionalItemFile(this.files[0])">' : ""}
           <div class="toolbar">
             <label class="field compact-field">
               <span>Search</span>
@@ -3467,6 +3470,31 @@
     URL.revokeObjectURL(url);
   }
 
+  function downloadDevotionalItemSample() {
+    const rows = [
+      ["ERP Code", "Book Name", "Book Type", "Purchase Price", "Sale Price"],
+      ["DVA-0001", "Incense Sticks", "Puja Items", "25", "40"]
+    ];
+    if (window.XLSX && window.XLSX.utils) {
+      const sheet = window.XLSX.utils.aoa_to_sheet(rows);
+      const workbook = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(workbook, sheet, "Devotional Items");
+      window.XLSX.writeFile(workbook, "devotional-items-sample.xlsx");
+      return;
+    }
+    const csv = rows.map((row) => row.map((cell) => {
+      const text = String(cell || "");
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "devotional-items-sample.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function importBookFile(file) {
     if (!file) return;
     try {
@@ -3514,6 +3542,59 @@
       showToast(error.message || "Could not read the import file");
     } finally {
       const input = document.getElementById("bookImportInput");
+      if (input) {
+        input.value = "";
+      }
+    }
+  }
+
+  async function importDevotionalItemFile(file) {
+    if (!file) return;
+    try {
+      const name = file.name || "import";
+      const lower = name.toLowerCase();
+      let rows = [];
+      if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+        if (!window.XLSX) {
+          showToast("Excel import library is not loaded");
+          return;
+        }
+        const buffer = await file.arrayBuffer();
+        const workbook = window.XLSX.read(buffer, { type: "array" });
+        const sheet = workbook.SheetNames[0];
+        rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { defval: "" });
+      } else {
+        const text = await file.text();
+        rows = parseCsvRows(text);
+      }
+
+      const items = rows.map((row) => ({
+        erpCode: String(row["ERP Code"] || row.erpCode || row["ERP"] || "").trim(),
+        name: String(row["Book Name"] || row["Item Name"] || row.name || row["Name"] || "").trim(),
+        bookType: String(row["Book Type"] || row["Item Type"] || row.bookType || row.category || "General").trim() || "General",
+        purchasePrice: Number(row["Purchase Price"] || row.purchasePrice || row["Distributor Price"] || 0),
+        salePrice: Number(row["Sale Price"] || row.salePrice || row.mrp || 0),
+        active: true
+      })).filter((row) => row.name || row.erpCode);
+
+      if (!items.length) {
+        showToast("No devotional items found in the file");
+        return;
+      }
+
+      setLoading(true);
+      try {
+        await window.erpApi.request("items.bulkUpsert", { itemGroup: "PARAPHERNALIA", items });
+        state.devotionalItems = await window.erpApi.request("items.list", { itemGroup: "PARAPHERNALIA" });
+        content.innerHTML = renderDevotionalItemsMarkup();
+        showToast(`Imported ${items.length} devotional items`);
+      } finally {
+        setLoading(false);
+      }
+    } catch (error) {
+      showToast(error.message || "Could not read the import file");
+    } finally {
+      const input = document.getElementById("devotionalImportInput");
       if (input) {
         input.value = "";
       }
@@ -5125,6 +5206,8 @@
     navigate,
     downloadBookSample,
     importBookFile,
+    downloadDevotionalItemSample,
+    importDevotionalItemFile,
     setBookSearch,
     setBookStatus,
     openBookForm,
