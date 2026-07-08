@@ -62,7 +62,8 @@
     activityComplimentary: [],
     sidebarCollapsed: false,
     reportWarehouseId: "",
-    reportMonth: new Date().toISOString().slice(0, 7)
+    reportMonth: new Date().toISOString().slice(0, 7),
+    documentEntryGroup: "BOOK"
   };
 
   const views = {
@@ -494,14 +495,20 @@
         <div class="panel-header">
           <h2>Stock Documents</h2>
           <div class="row-actions">
-            <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">Opening Stock</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openUnsettledOpeningForm()">Unsettled Opening</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openPurchaseForm()">Purchase Input</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openSaleForm()">Sale Books</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Return Books</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Books</button>
-            <button class="button secondary" type="button" onclick="window.erpApp.openComplimentaryForm()">Complimentary Issue</button>
-            <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Books</button>
+            <div class="segmented-control" role="tablist" aria-label="Document entry category">
+              <button class="button secondary ${state.documentEntryGroup === "BOOK" ? "active" : ""}" type="button" onclick="window.erpApp.setDocumentEntryGroup('BOOK')">Books</button>
+              <button class="button secondary ${state.documentEntryGroup === "PARAPHERNALIA" ? "active" : ""}" type="button" onclick="window.erpApp.setDocumentEntryGroup('PARAPHERNALIA')">Devotional Items</button>
+            </div>
+          </div>
+          <div class="row-actions">
+            <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">${getItemGroupLabel(state.documentEntryGroup)} Opening</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openUnsettledOpeningForm()">${getItemGroupLabel(state.documentEntryGroup)} Unsettled</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openPurchaseForm()">${getItemGroupLabel(state.documentEntryGroup)} Input</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openSaleForm()">${getItemGroupLabel(state.documentEntryGroup)} Sale</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">${getItemGroupLabel(state.documentEntryGroup)} Return</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">${getItemGroupLabel(state.documentEntryGroup)} Transfer</button>
+            <button class="button secondary" type="button" onclick="window.erpApp.openComplimentaryForm()">${getItemGroupLabel(state.documentEntryGroup)} Complimentary</button>
+            <button class="button" type="button" onclick="window.erpApp.openIssueForm()">${getItemGroupLabel(state.documentEntryGroup)} Issue</button>
           </div>
         </div>
         <div class="panel-body">
@@ -763,6 +770,13 @@
         </div>
       </section>
     `;
+  }
+
+  function setDocumentEntryGroup(itemGroup) {
+    state.documentEntryGroup = normalizeItemGroup(itemGroup);
+    if (state.view === "documents") {
+      content.innerHTML = renderDocuments();
+    }
   }
 
   async function renderReports() {
@@ -3286,7 +3300,7 @@
       fromWarehouseId: "",
       activityId: "",
       notes: "",
-      itemGroup: "BOOK"
+      itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
     state.issueLines = [blankIssueLine()];
     state.issueBookQueries = [""];
@@ -3302,7 +3316,7 @@
       fromWarehouseId: "",
       activityId: "",
       notes: "",
-      itemGroup: "BOOK"
+      itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
     state.issueLines = [blankIssueLine()];
     state.issueBookQueries = [""];
@@ -3321,7 +3335,7 @@
       documentDate: new Date().toISOString().slice(0, 10),
       warehouseId: activeWarehouses[0]?.warehouseId || "",
       notes: "",
-      itemGroup: "BOOK"
+      itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
     state.saleLines = [blankSaleLine()];
     state.saleBookQueries = [""];
@@ -3339,7 +3353,7 @@
       documentDate: new Date().toISOString().slice(0, 10),
       toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
       notes: "Opening stock as on date",
-      itemGroup: "BOOK"
+      itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
     state.openingLines = [blankOpeningLine()];
     state.openingBookQueries = [""];
@@ -3356,7 +3370,7 @@
       documentDate: new Date().toISOString().slice(0, 10),
       toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || state.warehouses[0]?.warehouseId || "",
       notes: "",
-      itemGroup: "BOOK"
+      itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
     state.purchaseLines = [blankPurchaseLine()];
     state.purchaseImportName = "";
@@ -4194,7 +4208,7 @@
       fromWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
       activityId: "",
       notes: "Legacy unsettled issue opening",
-      itemGroup: "BOOK"
+      itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
     state.unsettledLines = [blankUnsettledLine()];
     state.unsettledBookQueries = [""];
@@ -4693,7 +4707,7 @@
       activityId,
       notes: "",
       returnSettlement: "Settled",
-      itemGroup: "BOOK"
+      itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
     state.receiveLines = [blankReceiveLine()];
     state.receiveBookQueries = [""];
@@ -4876,7 +4890,7 @@
       fromWarehouseId: "",
       toWarehouseId: "",
       notes: "",
-      itemGroup: "BOOK"
+      itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
     state.transferLines = [blankTransferLine()];
     state.transferBookQueries = [""];
@@ -5273,7 +5287,7 @@
     state.sessionToken = sessionToken || "";
     appConfig.currentUserRole = user ? user.role : "";
     if (userChip) {
-      userChip.textContent = user ? `${user.name} · ${user.role === "mainAdmin" ? "Admin" : "Store Incharge"}` : "Guest";
+      userChip.textContent = user ? (user.name || (user.role === "mainAdmin" ? "Admin" : "Store Incharge")) : "Guest";
       userChip.title = user ? "Log out" : "Not signed in";
       userChip.disabled = !user;
     }
@@ -5410,6 +5424,7 @@
     setReportView,
     setReportWarehouse,
     setReportMonth,
+    setDocumentEntryGroup,
     loadWarehouseReport,
     loadWarehouseDayWiseSales,
     downloadWarehouseReport,
