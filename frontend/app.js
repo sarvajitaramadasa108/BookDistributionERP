@@ -378,6 +378,23 @@
     }
   }
 
+  async function ensureDocumentItemMastersLoaded() {
+    const jobs = [];
+    if (!state.books.length) {
+      jobs.push(window.erpApi.request("books.list").then((rows) => {
+        state.books = Array.isArray(rows) ? rows : [];
+      }));
+    }
+    if (!state.devotionalItems.length) {
+      jobs.push(window.erpApi.request("items.list", { itemGroup: "PARAPHERNALIA" }).then((rows) => {
+        state.devotionalItems = Array.isArray(rows) ? rows : [];
+      }));
+    }
+    if (jobs.length) {
+      await Promise.all(jobs);
+    }
+  }
+
   window.addEventListener("resize", () => {
     if (!isMobileViewport()) {
       sidebar.classList.remove("open");
@@ -2354,6 +2371,55 @@
     return item.name || item["Book Name"] || bookId || "-";
   }
 
+  function normalizeItemGroup(itemGroup) {
+    const value = String(itemGroup || "BOOK").trim().toUpperCase();
+    if (value === "PARAPHERNALIA" || value === "BOOK" || value === "OTHER") {
+      return value;
+    }
+    return "BOOK";
+  }
+
+  function getItemGroupLabel(itemGroup) {
+    const value = normalizeItemGroup(itemGroup);
+    if (value === "PARAPHERNALIA") return "Devotional Items";
+    if (value === "OTHER") return "Other Items";
+    return "Books";
+  }
+
+  function getItemGroupSingularLabel(itemGroup) {
+    const value = normalizeItemGroup(itemGroup);
+    if (value === "PARAPHERNALIA") return "Item";
+    if (value === "OTHER") return "Item";
+    return "Book";
+  }
+
+  function getDocumentItemGroupOptions() {
+    return [
+      { value: "BOOK", label: "Books" },
+      { value: "PARAPHERNALIA", label: "Devotional Items" }
+    ];
+  }
+
+  function getDocumentItemsForGroup(itemGroup) {
+    const value = normalizeItemGroup(itemGroup);
+    if (value === "PARAPHERNALIA") {
+      return state.devotionalItems.filter((item) => item.active !== false);
+    }
+    return state.books.filter((item) => item.active !== false);
+  }
+
+  function renderDocumentItemGroupField(kind, draft) {
+    const current = normalizeItemGroup(draft && draft.itemGroup ? draft.itemGroup : "BOOK");
+    return `
+      <label class="field">
+        <span>Category</span>
+        <select name="itemGroup" onchange="window.erpApp.onDocumentItemGroupChange('${kind}', this.value)">
+          ${getDocumentItemGroupOptions().map((option) => `<option value="${escapeAttribute(option.value)}" ${current === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
+        </select>
+      </label>
+    `;
+  }
+
   function getItem(bookId) {
     return state.books.find((item) => item.bookId === bookId || item.erpCode === bookId || item["ERP Code"] === bookId || item["Book ID"] === bookId)
       || state.devotionalItems.find((item) => item.bookId === bookId || item.erpCode === bookId || item["ERP Code"] === bookId || item["Book ID"] === bookId)
@@ -2428,23 +2494,24 @@
       .slice(0, 12);
   }
 
-  function bookPickerMarkup(kind, index, activeBooks, line, query, warehouseId) {
+  function bookPickerMarkup(kind, index, activeBooks, line, query, warehouseId, itemGroup) {
     const bookId = line.bookId || "";
     const selectedBook = bookId ? getBook(bookId) : null;
     const activeQuery = String(query || "");
     const filteredBooks = filterBooksForPicker(activeBooks, activeQuery, warehouseId);
+    const singular = getItemGroupSingularLabel(itemGroup);
     const availabilityHint = warehouseId
       ? (state.currentStockLoaded ? `Stock at ${getWarehouseName(warehouseId)}` : `Loading stock for ${getWarehouseName(warehouseId)}...`)
       : "Type to search";
     return `
       <div class="book-picker">
         <label class="field">
-          <span>Search Book</span>
+          <span>Search ${singular}</span>
           <input
             type="search"
             data-book-picker="${kind}-${index}"
             value="${escapeAttribute(activeQuery || (selectedBook ? getBookPickerDisplayLabel(selectedBook) : ""))}"
-            placeholder="Type ERP code or name"
+            placeholder="Type ERP code or ${singular.toLowerCase()} name"
             autocomplete="off"
             oninput="window.erpApp.setBookPickerQuery('${kind}', ${index}, this.value)">
         </label>
@@ -3211,13 +3278,15 @@
     return `<tr><td colspan="2"><strong>Worth</strong></td><td>${escapeHtml(String(totals.opening || 0))}</td>${cells}</tr>`;
   }
 
-  function openIssueForm() {
+  async function openIssueForm() {
+    await ensureDocumentItemMastersLoaded().catch(() => {});
     state.issueDocumentType = "ISSUE";
     state.issueDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
       fromWarehouseId: "",
       activityId: "",
-      notes: ""
+      notes: "",
+      itemGroup: "BOOK"
     };
     state.issueLines = [blankIssueLine()];
     state.issueBookQueries = [""];
@@ -3225,13 +3294,15 @@
     refreshCurrentStockForOpenDocumentModal();
   }
 
-  function openComplimentaryForm() {
+  async function openComplimentaryForm() {
+    await ensureDocumentItemMastersLoaded().catch(() => {});
     state.issueDocumentType = "COMPLIMENTARY";
     state.issueDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
       fromWarehouseId: "",
       activityId: "",
-      notes: ""
+      notes: "",
+      itemGroup: "BOOK"
     };
     state.issueLines = [blankIssueLine()];
     state.issueBookQueries = [""];
@@ -3243,12 +3314,14 @@
     return { bookId: "", quantity: 1, rate: 0 };
   }
 
-  function openSaleForm() {
+  async function openSaleForm() {
+    await ensureDocumentItemMastersLoaded().catch(() => {});
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0);
     state.saleDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
       warehouseId: activeWarehouses[0]?.warehouseId || "",
-      notes: ""
+      notes: "",
+      itemGroup: "BOOK"
     };
     state.saleLines = [blankSaleLine()];
     state.saleBookQueries = [""];
@@ -3260,11 +3333,13 @@
     return { bookId: "", quantity: 1, rate: 0 };
   }
 
-  function openOpeningStockForm() {
+  async function openOpeningStockForm() {
+    await ensureDocumentItemMastersLoaded().catch(() => {});
     state.openingDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
       toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
-      notes: "Opening stock as on date"
+      notes: "Opening stock as on date",
+      itemGroup: "BOOK"
     };
     state.openingLines = [blankOpeningLine()];
     state.openingBookQueries = [""];
@@ -3275,11 +3350,13 @@
     return { bookId: "", quantity: 1, rate: 0 };
   }
 
-  function openPurchaseForm() {
+  async function openPurchaseForm() {
+    await ensureDocumentItemMastersLoaded().catch(() => {});
     state.purchaseDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
       toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || state.warehouses[0]?.warehouseId || "",
-      notes: ""
+      notes: "",
+      itemGroup: "BOOK"
     };
     state.purchaseLines = [blankPurchaseLine()];
     state.purchaseImportName = "";
@@ -3320,13 +3397,14 @@
               ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.toWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
             </select>
           </label>
+          ${renderDocumentItemGroupField("purchase", draft)}
           <label class="field wide-field">
             <span>Notes</span>
             <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Purchase or input stock note">
           </label>
           <div class="wide-field">
             <div class="line-editor-header">
-              <h3>Purchase lines</h3>
+              <h3>${getItemGroupLabel(draft.itemGroup)} lines</h3>
               <div class="row-actions">
                 <button class="small-button" type="button" onclick="window.erpApp.downloadPurchaseSample()">Download Sample</button>
                 <button class="small-button" type="button" onclick="document.getElementById('purchaseImportInput').click()">Import Excel</button>
@@ -3334,8 +3412,8 @@
               </div>
             </div>
             <input id="purchaseImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importPurchaseFile(this.files[0])">
-            <div class="metric-note" style="margin-bottom:10px;">Leave ERP Code blank for new books. If the book name does not already exist, it will be created automatically on save.</div>
-            ${purchaseLinesMarkup()}
+            <div class="metric-note" style="margin-bottom:10px;">Leave ERP Code blank for new ${getItemGroupSingularLabel(draft.itemGroup).toLowerCase()}s. If the name does not already exist, it will be created automatically on save.</div>
+            ${purchaseLinesMarkup(draft.itemGroup)}
             ${state.purchaseImportName ? `<div class="metric-note" style="margin-top:8px;">Loaded from ${escapeHtml(state.purchaseImportName)}</div>` : ""}
           </div>
           <div class="form-actions">
@@ -3349,7 +3427,8 @@
     document.getElementById("purchaseForm").addEventListener("submit", savePurchaseDocument);
   }
 
-  function purchaseLinesMarkup() {
+  function purchaseLinesMarkup(itemGroup) {
+    const singular = getItemGroupSingularLabel(itemGroup);
     return `
       <div class="line-table purchase-lines">
         ${state.purchaseLines.map((line, index) => `
@@ -3359,11 +3438,11 @@
               <input type="text" value="${escapeAttribute(line.erpCode || "")}" placeholder="Optional" oninput="window.erpApp.updatePurchaseLine(${index}, 'erpCode', this.value)">
             </label>
             <label class="field">
-              <span>Book Name</span>
-              <input type="text" value="${escapeAttribute(line.bookName || "")}" placeholder="Enter book name" oninput="window.erpApp.updatePurchaseLine(${index}, 'bookName', this.value)">
+              <span>${singular} Name</span>
+              <input type="text" value="${escapeAttribute(line.bookName || "")}" placeholder="Enter ${singular.toLowerCase()} name" oninput="window.erpApp.updatePurchaseLine(${index}, 'bookName', this.value)">
             </label>
             <label class="field">
-              <span>Book Type</span>
+              <span>${singular} Type</span>
               <input type="text" value="${escapeAttribute(line.bookType || "")}" placeholder="General" oninput="window.erpApp.updatePurchaseLine(${index}, 'bookType', this.value)">
             </label>
             <label class="field">
@@ -3416,14 +3495,16 @@
     state.purchaseDraft = {
       documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
       toWarehouseId: data.get("toWarehouseId") || "",
-      notes: data.get("notes") || ""
+      notes: data.get("notes") || "",
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.purchaseDraft.itemGroup || "BOOK")
     };
   }
 
   function downloadPurchaseSample() {
+    const singular = getItemGroupSingularLabel(state.purchaseDraft.itemGroup || "BOOK");
     const rows = [
-      ["ERP Code", "Book Name", "Book Type", "Purchase Price", "Sale Price", "Quantity"],
-      ["", "Bhagavad Gita", "General", "50", "60", "100"]
+      ["ERP Code", `${singular} Name`, `${singular} Type`, "Purchase Price", "Sale Price", "Quantity"],
+      ["", singular === "Item" ? "Incense Sticks" : "Bhagavad Gita", "General", "50", "60", "100"]
     ];
     if (window.XLSX && window.XLSX.utils) {
       const sheet = window.XLSX.utils.aoa_to_sheet(rows);
@@ -3708,6 +3789,7 @@
       documentType: "PURCHASE",
       documentDate: data.get("documentDate"),
       toWarehouseId: data.get("toWarehouseId"),
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.purchaseDraft.itemGroup || "BOOK"),
       status: "Posted",
       notes: data.get("notes").trim(),
       lines
@@ -3728,7 +3810,8 @@
   }
 
   function renderOpeningStockModal() {
-    const activeBooks = state.books.filter((book) => book.active !== false);
+    const itemGroup = normalizeItemGroup(state.openingDraft.itemGroup || "BOOK");
+    const activeBooks = getDocumentItemsForGroup(itemGroup);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const draft = state.openingDraft;
 
@@ -3751,13 +3834,14 @@
               ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.toWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
             </select>
           </label>
+          ${renderDocumentItemGroupField("opening", draft)}
           <label class="field wide-field">
             <span>Notes</span>
             <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Opening stock note">
           </label>
           <div class="wide-field">
             <div class="line-editor-header">
-              <h3>Books</h3>
+              <h3>${getItemGroupLabel(itemGroup)}</h3>
               <div class="row-actions">
                 <button class="small-button" type="button" onclick="window.erpApp.downloadOpeningSample()">Download Sample</button>
                 <button class="small-button" type="button" onclick="document.getElementById('openingImportInput').click()">Import Excel</button>
@@ -3765,7 +3849,7 @@
               </div>
             </div>
             <input id="openingImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importOpeningFile(this.files[0])">
-            ${activeBooks.length ? openingLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before posting opening stock.</div>'}
+            ${activeBooks.length ? openingLinesMarkup(activeBooks, itemGroup) : `<div class="empty-state">Add active ${getItemGroupLabel(itemGroup).toLowerCase()} before posting opening stock.</div>`}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
@@ -3778,12 +3862,12 @@
     document.getElementById("openingForm").addEventListener("submit", saveOpeningStock);
   }
 
-  function openingLinesMarkup(activeBooks) {
+  function openingLinesMarkup(activeBooks, itemGroup) {
     return `
       <div class="line-table">
         ${state.openingLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("opening", index, activeBooks, line, state.openingBookQueries[index] || "")}
+            ${bookPickerMarkup("opening", index, activeBooks, line, state.openingBookQueries[index] || "", "", itemGroup)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateOpeningLine(${index}, 'quantity', this.value)" required>
@@ -3829,7 +3913,8 @@
     state.openingDraft = {
       documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
       toWarehouseId: data.get("toWarehouseId") || "",
-      notes: data.get("notes") || ""
+      notes: data.get("notes") || "",
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.openingDraft.itemGroup || "BOOK")
     };
   }
 
@@ -3854,6 +3939,7 @@
       documentType: "OPENING",
       documentDate: data.get("documentDate"),
       toWarehouseId: data.get("toWarehouseId"),
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.openingDraft.itemGroup || "BOOK"),
       status: "Posted",
       notes: data.get("notes").trim(),
       lines
@@ -3874,10 +3960,11 @@
   }
 
   function downloadOpeningSample() {
+    const singular = getItemGroupSingularLabel(state.openingDraft.itemGroup || "BOOK");
     const rows = [
-      ["ERP Code", "Book Name", "Qty", "Cost"],
-      ["PRB-00074", "Tel - Bhagavad Gita", "100", "197.56"],
-      ["PRB-00072", "Tel - Beyond Birth and Death", "50", "12.50"]
+      ["ERP Code", `${singular} Name`, "Qty", "Cost"],
+      ["PRB-00074", singular === "Item" ? "Incense Sticks" : "Tel - Bhagavad Gita", "100", "197.56"],
+      ["PRB-00072", singular === "Item" ? "Tulsi Mala" : "Tel - Beyond Birth and Death", "50", "12.50"]
     ];
     if (window.XLSX && window.XLSX.utils) {
       const sheet = window.XLSX.utils.aoa_to_sheet(rows);
@@ -3900,12 +3987,13 @@
   }
 
   function downloadUnsettledOpeningSample() {
+    const singular = getItemGroupSingularLabel(state.unsettledDraft.itemGroup || "BOOK");
     const activityHeaders = state.activities
       .filter((activity) => activity.status !== "Cancelled")
       .map((activity) => activity.name || activity.activityName || activity.activityId)
       .filter(Boolean)
       .slice(0, 8);
-    const headers = ["ERP Code", "Book Name", ...(activityHeaders.length ? activityHeaders : ["Activity 1", "Activity 2"])];
+    const headers = ["ERP Code", `${singular} Name`, ...(activityHeaders.length ? activityHeaders : ["Activity 1", "Activity 2"])];
     const rows = [
       headers,
       ["PRB-00074", "Tel - Bhagavad Gita", ...(headers.slice(2).map((_, index) => (index === 0 ? "10" : "0")))],
@@ -4099,12 +4187,14 @@
     }
   }
 
-  function openUnsettledOpeningForm() {
+  async function openUnsettledOpeningForm() {
+    await ensureDocumentItemMastersLoaded().catch(() => {});
     state.unsettledDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
       fromWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
       activityId: "",
-      notes: "Legacy unsettled issue opening"
+      notes: "Legacy unsettled issue opening",
+      itemGroup: "BOOK"
     };
     state.unsettledLines = [blankUnsettledLine()];
     state.unsettledBookQueries = [""];
@@ -4116,7 +4206,8 @@
   }
 
   function renderUnsettledOpeningModal() {
-    const activeBooks = state.books.filter((book) => book.active !== false);
+    const itemGroup = normalizeItemGroup(state.unsettledDraft.itemGroup || "BOOK");
+    const activeBooks = getDocumentItemsForGroup(itemGroup);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const openActivities = state.activities.filter((activity) => activity.status !== "Completed" && activity.status !== "Cancelled");
     const draft = state.unsettledDraft;
@@ -4140,6 +4231,7 @@
               ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.fromWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
             </select>
           </label>
+          ${renderDocumentItemGroupField("unsettled", draft)}
           ${openActivities.length ? `
             <label class="field wide-field">
               <span>Activity</span>
@@ -4155,7 +4247,7 @@
           </label>
           <div class="wide-field">
             <div class="line-editor-header">
-              <h3>Books</h3>
+              <h3>${getItemGroupLabel(itemGroup)}</h3>
               <div class="button-row">
                 <button class="small-button" type="button" onclick="window.erpApp.downloadUnsettledOpeningSample()">Download Sample</button>
                 <button class="small-button" type="button" onclick="window.erpApp.pickUnsettledOpeningImport()">Import Excel</button>
@@ -4163,7 +4255,7 @@
               </div>
             </div>
             <input id="unsettledOpeningImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importUnsettledOpeningFile(this.files[0])">
-            ${activeBooks.length ? unsettledLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before posting unsettled opening stock.</div>'}
+            ${activeBooks.length ? unsettledLinesMarkup(activeBooks, itemGroup) : `<div class="empty-state">Add active ${getItemGroupLabel(itemGroup).toLowerCase()} before posting unsettled opening stock.</div>`}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
@@ -4183,12 +4275,12 @@
     }
   }
 
-  function unsettledLinesMarkup(activeBooks) {
+  function unsettledLinesMarkup(activeBooks, itemGroup) {
     return `
       <div class="line-table">
         ${state.unsettledLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("unsettled", index, activeBooks, line, state.unsettledBookQueries[index] || "")}
+            ${bookPickerMarkup("unsettled", index, activeBooks, line, state.unsettledBookQueries[index] || "", "", itemGroup)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateUnsettledLine(${index}, 'quantity', this.value)" required>
@@ -4235,7 +4327,8 @@
       documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
       fromWarehouseId: data.get("fromWarehouseId") || "",
       activityId: data.get("activityId") || "",
-      notes: data.get("notes") || ""
+      notes: data.get("notes") || "",
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.unsettledDraft.itemGroup || "BOOK")
     };
   }
 
@@ -4261,6 +4354,7 @@
       documentDate: data.get("documentDate"),
       fromWarehouseId: data.get("fromWarehouseId"),
       activityId: data.get("activityId"),
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.unsettledDraft.itemGroup || "BOOK"),
       status: "Posted",
       notes: data.get("notes").trim(),
       lines
@@ -4281,7 +4375,8 @@
   }
 
   function renderSaleModal() {
-    const activeBooks = state.books.filter((book) => book.active !== false);
+    const itemGroup = normalizeItemGroup(state.saleDraft.itemGroup || "BOOK");
+    const activeBooks = getDocumentItemsForGroup(itemGroup);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0);
     const draft = state.saleDraft;
     const warehouseId = draft.warehouseId || "";
@@ -4308,16 +4403,17 @@
               ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.warehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
             </select>
           </label>
+          ${renderDocumentItemGroupField("sale", draft)}
           <label class="field wide-field">
             <span>Notes</span>
             <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Sale note or memo">
           </label>
           <div class="wide-field">
             <div class="line-editor-header">
-              <h3>Books${warehouseId ? ` (Stock at ${getWarehouseName(warehouseId)})` : ""}</h3>
+              <h3>${getItemGroupLabel(itemGroup)}${warehouseId ? ` (Stock at ${getWarehouseName(warehouseId)})` : ""}</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addSaleLine()">Add Line</button>
             </div>
-            ${warehouseId ? (booksWithStock.length ? saleLinesMarkup(booksWithStock, warehouseId) : '<div class="empty-state">No active books with stock at the selected warehouse.</div>') : '<div class="empty-state">Select a warehouse to see available books.</div>'}
+            ${warehouseId ? (booksWithStock.length ? saleLinesMarkup(booksWithStock, warehouseId, itemGroup) : `<div class="empty-state">No active ${getItemGroupLabel(itemGroup).toLowerCase()} with stock at the selected warehouse.</div>`) : `<div class="empty-state">Select a warehouse to see available ${getItemGroupLabel(itemGroup).toLowerCase()}.</div>`}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
@@ -4330,12 +4426,12 @@
     document.getElementById("saleForm").addEventListener("submit", saveSaleDocument);
   }
 
-  function saleLinesMarkup(activeBooks, warehouseId) {
+  function saleLinesMarkup(activeBooks, warehouseId, itemGroup) {
     return `
       <div class="line-table">
         ${state.saleLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("sale", index, activeBooks, line, state.saleBookQueries[index] || "", warehouseId)}
+            ${bookPickerMarkup("sale", index, activeBooks, line, state.saleBookQueries[index] || "", warehouseId, itemGroup)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateSaleLine(${index}, 'quantity', this.value)" required>
@@ -4381,7 +4477,8 @@
     state.saleDraft = {
       documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
       warehouseId: data.get("warehouseId") || "",
-      notes: data.get("notes") || ""
+      notes: data.get("notes") || "",
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.saleDraft.itemGroup || "BOOK")
     };
   }
 
@@ -4406,6 +4503,7 @@
       documentType: "SALE",
       documentDate: data.get("documentDate"),
       warehouseId: data.get("warehouseId"),
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.saleDraft.itemGroup || "BOOK"),
       status: "Posted",
       notes: data.get("notes").trim(),
       lines
@@ -4426,7 +4524,8 @@
   }
 
   function renderIssueModal() {
-    const activeBooks = state.books.filter((book) => book.active !== false);
+    const itemGroup = normalizeItemGroup(state.issueDraft.itemGroup || "BOOK");
+    const activeBooks = getDocumentItemsForGroup(itemGroup);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const openActivities = state.activities.filter((activity) => activity.status !== "Completed" && activity.status !== "Cancelled");
     const draft = state.issueDraft;
@@ -4455,6 +4554,7 @@
               ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.fromWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
             </select>
           </label>
+          ${renderDocumentItemGroupField("issue", draft)}
           <label class="field wide-field">
             <span>Activity</span>
             <select name="activityId" required>
@@ -4468,10 +4568,10 @@
           </label>
           <div class="wide-field">
             <div class="line-editor-header">
-              <h3>${isComplimentary ? "Books for Complimentary Issue" : `Books${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}`}</h3>
+              <h3>${isComplimentary ? `${getItemGroupLabel(itemGroup)} for Complimentary Issue` : `${getItemGroupLabel(itemGroup)}${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}`}</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addIssueLine()">Add Line</button>
             </div>
-            ${booksWithStock.length ? issueLinesMarkup(booksWithStock, fromWarehouseId) : '<div class="empty-state">' + (fromWarehouseId ? `No books with available stock at ${getWarehouseName(fromWarehouseId)}.` : "Select a warehouse to see available books.") + '</div>'}
+            ${booksWithStock.length ? issueLinesMarkup(booksWithStock, fromWarehouseId, itemGroup) : '<div class="empty-state">' + (fromWarehouseId ? `No ${getItemGroupLabel(itemGroup).toLowerCase()} with available stock at ${getWarehouseName(fromWarehouseId)}.` : `Select a warehouse to see available ${getItemGroupLabel(itemGroup).toLowerCase()}.`) + '</div>'}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
@@ -4484,12 +4584,12 @@
     document.getElementById("issueForm").addEventListener("submit", saveIssueDocument);
   }
 
-  function issueLinesMarkup(activeBooks, fromWarehouseId) {
+  function issueLinesMarkup(activeBooks, fromWarehouseId, itemGroup) {
     return `
       <div class="line-table">
         ${state.issueLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("issue", index, activeBooks, line, state.issueBookQueries[index] || "", fromWarehouseId)}
+            ${bookPickerMarkup("issue", index, activeBooks, line, state.issueBookQueries[index] || "", fromWarehouseId, itemGroup)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateIssueLine(${index}, 'quantity', this.value)" required>
@@ -4536,7 +4636,8 @@
       documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
       fromWarehouseId: data.get("fromWarehouseId") || "",
       activityId: data.get("activityId") || "",
-      notes: data.get("notes") || ""
+      notes: data.get("notes") || "",
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.issueDraft.itemGroup || "BOOK")
     };
   }
 
@@ -4563,6 +4664,7 @@
       documentDate: data.get("documentDate"),
       fromWarehouseId: data.get("fromWarehouseId"),
       activityId: data.get("activityId"),
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.issueDraft.itemGroup || "BOOK"),
       status: "Posted",
       notes: data.get("notes").trim(),
       lines
@@ -4582,14 +4684,16 @@
     }
   }
 
-  function openReceiveForm() {
+  async function openReceiveForm() {
+    await ensureDocumentItemMastersLoaded().catch(() => {});
     const activityId = getIssuedActivityOptions()[0]?.activityId || "";
     state.receiveDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
       toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
       activityId,
       notes: "",
-      returnSettlement: "Settled"
+      returnSettlement: "Settled",
+      itemGroup: "BOOK"
     };
     state.receiveLines = [blankReceiveLine()];
     state.receiveBookQueries = [""];
@@ -4601,7 +4705,8 @@
   }
 
   function renderReceiveModal() {
-    const activeBooks = state.books.filter((book) => book.active !== false);
+    const itemGroup = normalizeItemGroup(state.receiveDraft.itemGroup || "BOOK");
+    const activeBooks = getDocumentItemsForGroup(itemGroup);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const issuedActivities = getIssuedActivityOptions();
     const draft = state.receiveDraft;
@@ -4625,6 +4730,7 @@
               ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.toWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
             </select>
           </label>
+          ${renderDocumentItemGroupField("receive", draft)}
           ${issuedActivities.length ? `
             <label class="field wide-field">
               <span>Activity</span>
@@ -4647,10 +4753,10 @@
           </label>
           <div class="wide-field">
             <div class="line-editor-header">
-              <h3>Books</h3>
+              <h3>${getItemGroupLabel(itemGroup)}</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addReceiveLine()">Add Line</button>
             </div>
-            ${activeBooks.length ? receiveLinesMarkup(activeBooks) : '<div class="empty-state">Add active books before posting returns.</div>'}
+            ${activeBooks.length ? receiveLinesMarkup(activeBooks, itemGroup) : `<div class="empty-state">Add active ${getItemGroupLabel(itemGroup).toLowerCase()} before posting returns.</div>`}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
@@ -4663,12 +4769,12 @@
     document.getElementById("receiveForm").addEventListener("submit", saveReceiveDocument);
   }
 
-  function receiveLinesMarkup(activeBooks) {
+  function receiveLinesMarkup(activeBooks, itemGroup) {
     return `
       <div class="line-table">
         ${state.receiveLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("receive", index, activeBooks, line, state.receiveBookQueries[index] || "")}
+            ${bookPickerMarkup("receive", index, activeBooks, line, state.receiveBookQueries[index] || "", "", itemGroup)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateReceiveLine(${index}, 'quantity', this.value)" required>
@@ -4716,7 +4822,8 @@
       toWarehouseId: data.get("toWarehouseId") || "",
       activityId: data.get("activityId") || "",
       notes: data.get("notes") || "",
-      returnSettlement: data.get("returnSettlement") || "Settled"
+      returnSettlement: data.get("returnSettlement") || "Settled",
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.receiveDraft.itemGroup || "BOOK")
     };
   }
 
@@ -4742,6 +4849,7 @@
       documentDate: data.get("documentDate"),
       toWarehouseId: data.get("toWarehouseId"),
       activityId: data.get("activityId"),
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.receiveDraft.itemGroup || "BOOK"),
       status: data.get("returnSettlement") || "Settled",
       notes: data.get("notes").trim(),
       lines
@@ -4761,12 +4869,14 @@
     }
   }
 
-  function openTransferForm() {
+  async function openTransferForm() {
+    await ensureDocumentItemMastersLoaded().catch(() => {});
     state.transferDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
       fromWarehouseId: "",
       toWarehouseId: "",
-      notes: ""
+      notes: "",
+      itemGroup: "BOOK"
     };
     state.transferLines = [blankTransferLine()];
     state.transferBookQueries = [""];
@@ -4779,7 +4889,8 @@
   }
 
   function renderTransferModal() {
-    const activeBooks = state.books.filter((book) => book.active !== false);
+    const itemGroup = normalizeItemGroup(state.transferDraft.itemGroup || "BOOK");
+    const activeBooks = getDocumentItemsForGroup(itemGroup);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const draft = state.transferDraft;
     const fromWarehouseId = draft.fromWarehouseId || "";
@@ -4813,16 +4924,17 @@
               ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.toWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
             </select>
           </label>
+          ${renderDocumentItemGroupField("transfer", draft)}
           <label class="field wide-field">
             <span>Notes</span>
             <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Vehicle, person, or transfer reference">
           </label>
           <div class="wide-field">
             <div class="line-editor-header">
-              <h3>Books${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}</h3>
+              <h3>${getItemGroupLabel(itemGroup)}${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addTransferLine()">Add Line</button>
             </div>
-            ${booksWithStock.length ? transferLinesMarkup(booksWithStock, fromWarehouseId) : '<div class="empty-state">' + (fromWarehouseId ? `No books with available stock at ${getWarehouseName(fromWarehouseId)}.` : "Select a source warehouse to see available books.") + '</div>'}
+            ${booksWithStock.length ? transferLinesMarkup(booksWithStock, fromWarehouseId, itemGroup) : '<div class="empty-state">' + (fromWarehouseId ? `No ${getItemGroupLabel(itemGroup).toLowerCase()} with available stock at ${getWarehouseName(fromWarehouseId)}.` : `Select a source warehouse to see available ${getItemGroupLabel(itemGroup).toLowerCase()}.`) + '</div>'}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
@@ -4835,12 +4947,12 @@
     document.getElementById("transferForm").addEventListener("submit", saveTransferDocument);
   }
 
-  function transferLinesMarkup(activeBooks, fromWarehouseId) {
+  function transferLinesMarkup(activeBooks, fromWarehouseId, itemGroup) {
     return `
       <div class="line-table">
         ${state.transferLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("transfer", index, activeBooks, line, state.transferBookQueries[index] || "", fromWarehouseId)}
+            ${bookPickerMarkup("transfer", index, activeBooks, line, state.transferBookQueries[index] || "", fromWarehouseId, itemGroup)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateTransferLine(${index}, 'quantity', this.value)" required>
@@ -4887,7 +4999,8 @@
       documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
       fromWarehouseId: data.get("fromWarehouseId") || "",
       toWarehouseId: data.get("toWarehouseId") || "",
-      notes: data.get("notes") || ""
+      notes: data.get("notes") || "",
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.transferDraft.itemGroup || "BOOK")
     };
   }
 
@@ -4913,6 +5026,67 @@
     state.transferLines = [blankTransferLine()];
     renderTransferModal();
     refreshCurrentStockForOpenDocumentModal();
+  }
+
+  function onDocumentItemGroupChange(kind, itemGroup) {
+    const normalized = normalizeItemGroup(itemGroup);
+    if (kind === "purchase") {
+      syncPurchaseDraft();
+      state.purchaseDraft.itemGroup = normalized;
+      state.purchaseLines = [blankPurchaseLine()];
+      renderPurchaseModal();
+      return;
+    }
+    if (kind === "opening") {
+      syncOpeningDraft();
+      state.openingDraft.itemGroup = normalized;
+      state.openingLines = [blankOpeningLine()];
+      state.openingBookQueries = [""];
+      renderOpeningStockModal();
+      return;
+    }
+    if (kind === "unsettled") {
+      syncUnsettledDraft();
+      state.unsettledDraft.itemGroup = normalized;
+      state.unsettledLines = [blankUnsettledLine()];
+      state.unsettledBookQueries = [""];
+      renderUnsettledOpeningModal();
+      return;
+    }
+    if (kind === "issue") {
+      syncIssueDraft();
+      state.issueDraft.itemGroup = normalized;
+      state.issueLines = [blankIssueLine()];
+      state.issueBookQueries = [""];
+      renderIssueModal();
+      refreshCurrentStockForOpenDocumentModal();
+      return;
+    }
+    if (kind === "sale") {
+      syncSaleDraft();
+      state.saleDraft.itemGroup = normalized;
+      state.saleLines = [blankSaleLine()];
+      state.saleBookQueries = [""];
+      renderSaleModal();
+      refreshCurrentStockForOpenDocumentModal();
+      return;
+    }
+    if (kind === "receive") {
+      syncReceiveDraft();
+      state.receiveDraft.itemGroup = normalized;
+      state.receiveLines = [blankReceiveLine()];
+      state.receiveBookQueries = [""];
+      renderReceiveModal();
+      return;
+    }
+    if (kind === "transfer") {
+      syncTransferDraft();
+      state.transferDraft.itemGroup = normalized;
+      state.transferLines = [blankTransferLine()];
+      state.transferBookQueries = [""];
+      renderTransferModal();
+      refreshCurrentStockForOpenDocumentModal();
+    }
   }
 
   async function ensureCurrentStockLoaded() {
@@ -4985,6 +5159,7 @@
       documentDate: data.get("documentDate"),
       fromWarehouseId,
       toWarehouseId,
+      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.transferDraft.itemGroup || "BOOK"),
       status: "Posted",
       notes: data.get("notes").trim(),
       lines
@@ -5286,6 +5461,7 @@
     onIssueWarehouseChange,
     onSaleWarehouseChange,
     onTransferWarehouseChange,
+    onDocumentItemGroupChange,
     openUserForm,
     closeModal
   };
