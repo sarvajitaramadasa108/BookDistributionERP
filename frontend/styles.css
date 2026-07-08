@@ -461,11 +461,13 @@ table {
 table.warehouse-report-table {
   min-width: 0;
   table-layout: fixed;
+  font-size: 10px;
 }
 
 table.warehouse-daywise-table {
   min-width: 0;
   table-layout: fixed;
+  font-size: 10px;
 }
 
 .warehouse-report-wrap {
@@ -482,18 +484,34 @@ table.warehouse-daywise-table {
 
 .warehouse-report-table th,
 .warehouse-report-table td {
-  padding: 8px 6px;
+  padding: 5px 4px;
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
 .warehouse-report-table th {
-  font-size: 11px;
+  font-size: 10px;
+  line-height: 1.15;
 }
 
 .warehouse-report-table td {
-  font-size: 11px;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.warehouse-daywise-table th,
+.warehouse-daywise-table td {
+  padding: 5px 4px;
+  font-size: 10px;
+  line-height: 1.15;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.warehouse-daywise-table th {
+  vertical-align: middle;
 }
 
 .activity-report-table {
@@ -922,5 +940,18 @@ tbody tr:hover td {
 
   .metric-value {
     font-size: 24px;
+  }
+
+  .warehouse-report-table,
+  .warehouse-daywise-table {
+    font-size: 9px;
+  }
+
+  .warehouse-report-table th,
+  .warehouse-report-table td,
+  .warehouse-daywise-table th,
+  .warehouse-daywise-table td {
+    padding: 4px 3px;
+    font-size: 9px;
   }
 }
