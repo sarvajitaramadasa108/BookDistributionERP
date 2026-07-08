@@ -489,17 +489,12 @@
     state.books = books;
     state.warehouses = warehouses.map(normalizeWarehouse);
     state.activities = activities.map(normalizeActivity);
+    void ensureDocumentItemMastersLoaded().catch(() => {});
 
     return `
       <section class="card">
         <div class="panel-header">
           <h2>Stock Documents</h2>
-          <div class="row-actions">
-            <div class="segmented-control" role="tablist" aria-label="Document entry category">
-              <button class="button secondary ${state.documentEntryGroup === "BOOK" ? "active" : ""}" type="button" onclick="window.erpApp.setDocumentEntryGroup('BOOK')">Books</button>
-              <button class="button secondary ${state.documentEntryGroup === "PARAPHERNALIA" ? "active" : ""}" type="button" onclick="window.erpApp.setDocumentEntryGroup('PARAPHERNALIA')">Devotional Items</button>
-            </div>
-          </div>
           <div class="row-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">Opening Stock Entry</button>
             <button class="button secondary" type="button" onclick="window.erpApp.openUnsettledOpeningForm()">Unsettled Issue Entry</button>
@@ -770,13 +765,6 @@
         </div>
       </section>
     `;
-  }
-
-  async function setDocumentEntryGroup(itemGroup) {
-    state.documentEntryGroup = normalizeItemGroup(itemGroup);
-    if (state.view === "documents") {
-      content.innerHTML = await renderDocuments();
-    }
   }
 
   async function renderReports() {
@@ -3292,8 +3280,8 @@
     return `<tr><td colspan="2"><strong>Worth</strong></td><td>${escapeHtml(String(totals.opening || 0))}</td>${cells}</tr>`;
   }
 
-  async function openIssueForm() {
-    await ensureDocumentItemMastersLoaded().catch(() => {});
+  function openIssueForm() {
+    void ensureDocumentItemMastersLoaded().catch(() => {});
     state.issueDocumentType = "ISSUE";
     state.issueDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
@@ -3308,8 +3296,8 @@
     refreshCurrentStockForOpenDocumentModal();
   }
 
-  async function openComplimentaryForm() {
-    await ensureDocumentItemMastersLoaded().catch(() => {});
+  function openComplimentaryForm() {
+    void ensureDocumentItemMastersLoaded().catch(() => {});
     state.issueDocumentType = "COMPLIMENTARY";
     state.issueDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
@@ -3328,8 +3316,8 @@
     return { bookId: "", quantity: 1, rate: 0 };
   }
 
-  async function openSaleForm() {
-    await ensureDocumentItemMastersLoaded().catch(() => {});
+  function openSaleForm() {
+    void ensureDocumentItemMastersLoaded().catch(() => {});
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0);
     state.saleDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
@@ -3347,8 +3335,8 @@
     return { bookId: "", quantity: 1, rate: 0 };
   }
 
-  async function openOpeningStockForm() {
-    await ensureDocumentItemMastersLoaded().catch(() => {});
+  function openOpeningStockForm() {
+    void ensureDocumentItemMastersLoaded().catch(() => {});
     state.openingDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
       toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
@@ -3364,8 +3352,8 @@
     return { bookId: "", quantity: 1, rate: 0 };
   }
 
-  async function openPurchaseForm() {
-    await ensureDocumentItemMastersLoaded().catch(() => {});
+  function openPurchaseForm() {
+    void ensureDocumentItemMastersLoaded().catch(() => {});
     state.purchaseDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
       toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || state.warehouses[0]?.warehouseId || "",
@@ -4201,8 +4189,8 @@
     }
   }
 
-  async function openUnsettledOpeningForm() {
-    await ensureDocumentItemMastersLoaded().catch(() => {});
+  function openUnsettledOpeningForm() {
+    void ensureDocumentItemMastersLoaded().catch(() => {});
     state.unsettledDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
       fromWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
@@ -4698,8 +4686,8 @@
     }
   }
 
-  async function openReceiveForm() {
-    await ensureDocumentItemMastersLoaded().catch(() => {});
+  function openReceiveForm() {
+    void ensureDocumentItemMastersLoaded().catch(() => {});
     const activityId = getIssuedActivityOptions()[0]?.activityId || "";
     state.receiveDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
@@ -4883,8 +4871,8 @@
     }
   }
 
-  async function openTransferForm() {
-    await ensureDocumentItemMastersLoaded().catch(() => {});
+  function openTransferForm() {
+    void ensureDocumentItemMastersLoaded().catch(() => {});
     state.transferDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
       fromWarehouseId: "",
@@ -5424,7 +5412,6 @@
     setReportView,
     setReportWarehouse,
     setReportMonth,
-    setDocumentEntryGroup,
     loadWarehouseReport,
     loadWarehouseDayWiseSales,
     downloadWarehouseReport,
