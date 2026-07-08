@@ -1346,7 +1346,28 @@
     rerenderContentKeepingFocus("activitySearchInput", renderActivitiesMarkup);
   }
 
-  function openActivityForm(activityId) {
+  async function openActivityForm(activityId) {
+    if (!state.devotees.length || !state.warehouses.length) {
+      setLoading(true);
+      try {
+        const [warehouses, devotees] = await Promise.all([
+          state.warehouses.length ? Promise.resolve(state.warehouses) : window.erpApi.request("warehouses.list"),
+          state.devotees.length ? Promise.resolve(state.devotees) : window.erpApi.request("devotees.list")
+        ]);
+        if (!state.warehouses.length) {
+          state.warehouses = warehouses.map(normalizeWarehouse);
+        }
+        if (!state.devotees.length) {
+          state.devotees = devotees.map(normalizeDevotee);
+        }
+      } catch (error) {
+        showToast(error.message || "Could not load activity form data");
+        return;
+      } finally {
+        setLoading(false);
+      }
+    }
+
     const activity = state.activities.find((item) => item.activityId === activityId) || {
       activityId: "",
       name: "",
@@ -1384,7 +1405,7 @@
           <label class="field wide-field">
             <span>Devotee</span>
             <select name="devoteeId" required>
-              <option value="">Select devotee</option>
+              <option value="" disabled ${!activity.devoteeId ? "selected" : ""}>Select devotee</option>
               ${state.devotees.map((devotee) => `<option value="${escapeAttribute(devotee.devoteeId)}" ${activity.devoteeId === devotee.devoteeId ? "selected" : ""}>${escapeHtml(devotee.devoteeName)}</option>`).join("")}
             </select>
           </label>
