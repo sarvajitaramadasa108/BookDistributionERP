@@ -772,10 +772,10 @@
     `;
   }
 
-  function setDocumentEntryGroup(itemGroup) {
+  async function setDocumentEntryGroup(itemGroup) {
     state.documentEntryGroup = normalizeItemGroup(itemGroup);
     if (state.view === "documents") {
-      content.innerHTML = renderDocuments();
+      content.innerHTML = await renderDocuments();
     }
   }
 
