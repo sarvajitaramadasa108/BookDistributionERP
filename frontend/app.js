@@ -353,6 +353,22 @@
     return renderActivitiesMarkup();
   }
 
+  async function ensureActivityMastersLoaded() {
+    if (state.warehouses.length && state.devotees.length) {
+      return;
+    }
+    const [warehouses, devotees] = await Promise.all([
+      state.warehouses.length ? Promise.resolve(state.warehouses) : window.erpApi.request("warehouses.list"),
+      state.devotees.length ? Promise.resolve(state.devotees) : window.erpApi.request("devotees.list")
+    ]);
+    if (!state.warehouses.length) {
+      state.warehouses = Array.isArray(warehouses) ? warehouses.map(normalizeWarehouse) : [];
+    }
+    if (!state.devotees.length) {
+      state.devotees = Array.isArray(devotees) ? devotees.map(normalizeDevotee) : [];
+    }
+  }
+
   window.addEventListener("resize", () => {
     if (!isMobileViewport()) {
       sidebar.classList.remove("open");
@@ -1350,25 +1366,14 @@
   }
 
   async function openActivityForm(activityId) {
-    if (!state.devotees.length || !state.warehouses.length) {
-      setLoading(true);
-      try {
-        const [warehouses, devotees] = await Promise.all([
-          state.warehouses.length ? Promise.resolve(state.warehouses) : window.erpApi.request("warehouses.list"),
-          state.devotees.length ? Promise.resolve(state.devotees) : window.erpApi.request("devotees.list")
-        ]);
-        if (!state.warehouses.length) {
-          state.warehouses = warehouses.map(normalizeWarehouse);
-        }
-        if (!state.devotees.length) {
-          state.devotees = devotees.map(normalizeDevotee);
-        }
-      } catch (error) {
-        showToast(error.message || "Could not load activity form data");
-        return;
-      } finally {
-        setLoading(false);
-      }
+    setLoading(true);
+    try {
+      await ensureActivityMastersLoaded();
+    } catch (error) {
+      showToast(error.message || "Could not load activity form data");
+      return;
+    } finally {
+      setLoading(false);
     }
 
     const activity = state.activities.find((item) => item.activityId === activityId) || {
@@ -1409,7 +1414,9 @@
             <span>Devotee</span>
             <select name="devoteeId" required>
               <option value="" disabled ${!activity.devoteeId ? "selected" : ""}>Select devotee</option>
-              ${state.devotees.map((devotee) => `<option value="${escapeAttribute(devotee.devoteeId)}" ${activity.devoteeId === devotee.devoteeId ? "selected" : ""}>${escapeHtml(devotee.devoteeName)}</option>`).join("")}
+              ${state.devotees.length
+                ? state.devotees.map((devotee) => `<option value="${escapeAttribute(devotee.devoteeId)}" ${activity.devoteeId === devotee.devoteeId ? "selected" : ""}>${escapeHtml(devotee.devoteeName || devotee.devoteeId || "-")}</option>`).join("")
+                : '<option value="" disabled>No devotees found</option>'}
             </select>
           </label>
           <label class="field">
@@ -4851,6 +4858,7 @@
           updateCurrentUser(user, token);
           hideAuthScreen();
           await navigate(state.view);
+          ensureActivityMastersLoaded().catch(() => {});
           return;
         }
       } catch (error) {
@@ -4882,6 +4890,7 @@
       updateCurrentUser(result.user, result.sessionToken);
       hideAuthScreen();
       await navigate(state.view);
+      ensureActivityMastersLoaded().catch(() => {});
       showToast(`Welcome, ${result.user.name}`);
     } catch (error) {
       renderAuthScreen(error.message || "Could not log in");
