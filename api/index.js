@@ -254,10 +254,11 @@ async function createItem(supabase, payload) {
   const erpCode = String(payload.erpCode || payload.bookId || "").trim();
   const name = String(payload.name || payload.bookName || "").trim();
   if (!erpCode || !name) throw new Error("ERP Code and book name are required");
+  const itemGroup = String(payload.itemGroup || payload.group || "BOOK").trim().toUpperCase();
   const { data, error } = await supabase.from("items").insert({
     erp_code: erpCode,
     item_name: name,
-    item_group: "BOOK",
+    item_group: ["BOOK", "PARAPHERNALIA", "OTHER"].includes(itemGroup) ? itemGroup : "BOOK",
     item_type: String(payload.bookType || payload.category || "").trim(),
     unit: payload.unit || "pcs",
     purchase_price: Number(payload.purchasePrice || payload.distributorPrice || 0),
@@ -272,6 +273,10 @@ async function updateItem(supabase, payload) {
   const erpCode = String(payload.erpCode || payload.bookId || "").trim();
   if (!erpCode) throw new Error("ERP Code is required");
   const updates = {};
+  if (payload.itemGroup !== undefined || payload.group !== undefined) {
+    const itemGroup = String(payload.itemGroup || payload.group || "BOOK").trim().toUpperCase();
+    updates.item_group = ["BOOK", "PARAPHERNALIA", "OTHER"].includes(itemGroup) ? itemGroup : "BOOK";
+  }
   if (payload.name !== undefined || payload.bookName !== undefined) updates.item_name = String(payload.name || payload.bookName || "").trim();
   if (payload.bookType !== undefined || payload.category !== undefined) updates.item_type = String(payload.bookType || payload.category || "").trim();
   if (payload.purchasePrice !== undefined || payload.distributorPrice !== undefined) updates.purchase_price = Number(payload.purchasePrice || payload.distributorPrice || 0);
@@ -289,15 +294,43 @@ async function deleteItem(supabase, payload) {
   return mapItem(data);
 }
 
+async function itemsList(supabase, payload = {}) {
+  let query = supabase.from("items").select("*").order("item_name", { ascending: true });
+  const itemGroup = String(payload.itemGroup || payload.group || "").trim().toUpperCase();
+  if (itemGroup) {
+    query = query.eq("item_group", itemGroup);
+  }
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map(mapItem);
+}
+
+async function itemsCreate(supabase, payload) {
+  return createItem(supabase, payload);
+}
+
+async function itemsUpdate(supabase, payload) {
+  return updateItem(supabase, payload);
+}
+
+async function itemsDelete(supabase, payload) {
+  return deleteItem(supabase, payload);
+}
+
 async function upsertItemIfMissing(supabase, line) {
   const erpCode = String(line.erpCode || line.bookId || "").trim();
   const name = String(line.bookName || line.name || "").trim();
   if (!name) throw new Error("Book name is required for purchase input");
+  const itemGroup = String(line.itemGroup || line.group || "BOOK").trim().toUpperCase();
   if (erpCode) {
     const existing = await findByCode(supabase, "items", "erp_code", erpCode);
     if (existing) return mapItem(existing);
   }
-  const { data: byName } = await supabase.from("items").select("*").ilike("item_name", name).maybeSingle();
+  let byNameQuery = supabase.from("items").select("*").ilike("item_name", name);
+  if (itemGroup) {
+    byNameQuery = byNameQuery.eq("item_group", itemGroup);
+  }
+  const { data: byName } = await byNameQuery.maybeSingle();
   if (byName) return mapItem(byName);
   return await createItem(supabase, {
     erpCode: erpCode || await nextCode(supabase, "items", "erp_code", "BK"),
@@ -305,6 +338,7 @@ async function upsertItemIfMissing(supabase, line) {
     bookType: line.bookType || line.category || "General",
     purchasePrice: line.purchasePrice || line.rate || 0,
     salePrice: line.salePrice || line.mrp || 0,
+    itemGroup,
     active: true
   });
 }
@@ -524,9 +558,7 @@ async function updateUser(supabase, payload) {
 }
 
 async function booksList(supabase) {
-  const { data, error } = await supabase.from("items").select("*").eq("item_group", "BOOK").order("item_name", { ascending: true });
-  if (error) throw error;
-  return (data || []).map(mapItem);
+  return itemsList(supabase, { itemGroup: "BOOK" });
 }
 
 async function booksAdminList(supabase) {
@@ -534,11 +566,11 @@ async function booksAdminList(supabase) {
 }
 
 async function booksCreate(supabase, payload) {
-  return createItem(supabase, payload);
+  return createItem(supabase, { ...payload, itemGroup: "BOOK" });
 }
 
 async function booksUpdate(supabase, payload) {
-  return updateItem(supabase, payload);
+  return updateItem(supabase, { ...payload, itemGroup: payload.itemGroup || "BOOK" });
 }
 
 async function booksDelete(supabase, payload) {
@@ -580,6 +612,10 @@ async function booksBulkUpsert(supabase, payload) {
   return { created, updated, total: normalized.length };
 }
 
+async function devotionalItemsList(supabase) {
+  return itemsList(supabase, { itemGroup: "PARAPHERNALIA" });
+}
+
 async function warehousesList(supabase) {
   return listTable(supabase, "warehouses", mapWarehouse);
 }
@@ -613,6 +649,7 @@ async function createDocument(supabase, payload, currentUser) {
   const allowed = ["OPENING", "ISSUE", "COMPLIMENTARY", "RECEIVE", "PURCHASE", "SALE", "RETURN", "TRANSFER", "ADJUSTMENT", "UNSETTLED_OPENING"];
   if (!allowed.includes(documentType)) throw new Error("Invalid document type");
   const lines = Array.isArray(payload.lines) ? payload.lines : [];
+  const itemGroup = String(payload.itemGroup || "BOOK").trim().toUpperCase();
   if (!lines.length) throw new Error("At least one document line is required");
   if (documentTypeRequiresActivity(documentType) && !payload.activityId) throw new Error("Activity is required for this document");
   if ((documentType === "OPENING" || documentType === "UNSETTLED_OPENING" || documentType === "PURCHASE") && !payload.toWarehouseId && !payload.fromWarehouseId) {
@@ -647,13 +684,16 @@ async function createDocument(supabase, payload, currentUser) {
     lineNo += 1;
     let item = null;
     if (documentType === "PURCHASE") {
-      item = await upsertItemIfMissing(supabase, rawLine);
+      item = await upsertItemIfMissing(supabase, { ...rawLine, itemGroup });
     } else {
       const erpCode = String(rawLine.bookId || rawLine.erpCode || "").trim();
       item = await findByCode(supabase, "items", "erp_code", erpCode);
       if (!item && documentType !== "PURCHASE") throw new Error(`Book not found: ${erpCode}`);
+      if (item && itemGroup && String(item.item_group || "").toUpperCase() !== itemGroup) {
+        throw new Error(`Item category mismatch for ${erpCode}`);
+      }
       if (item && documentType === "PURCHASE" && rawLine.bookName) {
-        item = await upsertItemIfMissing(supabase, rawLine);
+        item = await upsertItemIfMissing(supabase, { ...rawLine, itemGroup });
       }
     }
     const qty = Number(rawLine.quantity || 0);
@@ -757,6 +797,7 @@ async function importUnsettledOpeningDocuments(supabase, payload, currentUser) {
       activityId: entry.activityId,
       status: "Posted",
       notes: payload.notes || "",
+      itemGroup: payload.itemGroup || "BOOK",
       lines: cleanLines
     }, currentUser);
     created.push(result);
@@ -809,6 +850,7 @@ async function getActivityUnsettled(supabase) {
       activityId: doc.activity_id,
       activityName: activity.activity_name || doc.activity_id,
       bookId: item.erp_code || line.item_id,
+      itemGroup: item.item_group || "BOOK",
       warehouseId: doc.from_warehouse_id || doc.to_warehouse_id || "",
       issuedQty: 0,
       returnedQty: 0,
@@ -862,6 +904,7 @@ async function getActivityComplimentary(supabase) {
       activityName: activity.activity_name || doc.activity_id,
       bookId: item.erp_code || line.item_id,
       bookName: item.item_name || item.erp_code || line.item_id,
+      itemGroup: item.item_group || "BOOK",
       warehouseId: doc.from_warehouse_id || doc.to_warehouse_id || activity.warehouse_id || "",
       complimentaryQty: 0,
       worth: 0
@@ -923,6 +966,7 @@ async function getActivityMonthlyReport(supabase, payload) {
         bookId: item.erp_code || line.item_id,
         bookName: item.item_name || line.item_id,
         bookType: item.item_type || "",
+        itemGroup: item.item_group || "BOOK",
         issueQty: 0,
         returnQty: 0,
         saleQty: 0,
@@ -1169,6 +1213,16 @@ async function main(request) {
         return json(200, { ok: true, data: await booksDelete(supabase, payload) });
       case "books.bulkUpsert":
         return json(200, { ok: true, data: await booksBulkUpsert(supabase, payload) });
+      case "items.list":
+        return json(200, { ok: true, data: await itemsList(supabase, payload) });
+      case "items.create":
+        return json(200, { ok: true, data: await itemsCreate(supabase, payload) });
+      case "items.update":
+        return json(200, { ok: true, data: await itemsUpdate(supabase, payload) });
+      case "items.delete":
+        return json(200, { ok: true, data: await itemsDelete(supabase, payload) });
+      case "devotionalItems.list":
+        return json(200, { ok: true, data: await devotionalItemsList(supabase) });
       case "warehouses.list":
         return json(200, { ok: true, data: await warehousesList(supabase) });
       case "warehouses.create":

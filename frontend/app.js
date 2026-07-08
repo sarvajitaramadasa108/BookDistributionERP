@@ -5,6 +5,9 @@
     books: [],
     bookSearch: "",
     bookStatus: "active",
+    devotionalItems: [],
+    devotionalSearch: "",
+    devotionalStatus: "active",
     warehouses: [],
     warehouseSearch: "",
     warehouseStatus: "active",
@@ -65,6 +68,7 @@
   const views = {
     dashboard: ["Home", "Daily view of distribution, stock, and active service.", renderDashboard],
     books: ["Books", "Book master with ERP codes, book type, sale price, and status.", renderBooks],
+    devotional: ["Devotional Items", "Devotional items and paraphernalia master.", renderDevotionalItems],
     warehouses: ["Warehouses", "Main and event stock locations.", renderWarehouses],
     activities: ["Activities", "Daily stalls, marathons, events, and closing workflow.", renderActivities],
     documents: ["Stock Documents", "Issue, receive, sale, return, transfer, and adjustment entries.", renderDocuments],
@@ -170,6 +174,11 @@
   async function renderBooks() {
     state.books = await window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list");
     return renderBooksMarkup();
+  }
+
+  async function renderDevotionalItems() {
+    state.devotionalItems = await window.erpApi.request("items.list", { itemGroup: "PARAPHERNALIA" });
+    return renderDevotionalItemsMarkup();
   }
 
   function rerenderContentKeepingFocus(inputId, renderFn) {
@@ -532,6 +541,7 @@
     const results = await Promise.allSettled([
       window.erpApi.request("stock.current"),
       window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
+      window.erpApi.request("items.list", { itemGroup: "PARAPHERNALIA" }),
       window.erpApi.request("warehouses.list"),
       window.erpApi.request("devotees.list"),
       window.erpApi.request("activities.list"),
@@ -540,14 +550,16 @@
     ]);
     const stockResult = results[0];
     const booksResult = results[1];
-    const warehousesResult = results[2];
-    const devoteesResult = results[3];
-    const activitiesResult = results[4];
-    const unsettledResult = results[5];
-    const complimentaryResult = results[6];
+    const devotionalResult = results[2];
+    const warehousesResult = results[3];
+    const devoteesResult = results[4];
+    const activitiesResult = results[5];
+    const unsettledResult = results[6];
+    const complimentaryResult = results[7];
     const reportErrors = [];
     if (stockResult.status === "rejected") reportErrors.push("Current stock");
     if (booksResult.status === "rejected") reportErrors.push("Books");
+    if (devotionalResult.status === "rejected") reportErrors.push("Devotional items");
     if (warehousesResult.status === "rejected") reportErrors.push("Warehouses");
     if (devoteesResult.status === "rejected") reportErrors.push("Devotees");
     if (activitiesResult.status === "rejected") reportErrors.push("Activities");
@@ -560,6 +572,9 @@
     }
     if (booksResult.status === "fulfilled") {
       state.books = Array.isArray(booksResult.value) ? booksResult.value : [];
+    }
+    if (devotionalResult.status === "fulfilled") {
+      state.devotionalItems = Array.isArray(devotionalResult.value) ? devotionalResult.value : [];
     }
     if (warehousesResult.status === "fulfilled") {
       state.warehouses = Array.isArray(warehousesResult.value) ? warehousesResult.value.map(normalizeWarehouse) : [];
@@ -882,6 +897,77 @@
     `;
   }
 
+  function renderDevotionalItemsMarkup() {
+    const rows = getFilteredDevotionalItems();
+    return `
+      <section class="card">
+        <div class="panel-header">
+          <h2>Devotional Items</h2>
+          ${isMainAdmin() ? `
+            <div class="row-actions">
+              <button class="button" type="button" onclick="window.erpApp.openDevotionalItemForm()">Add Item</button>
+            </div>
+          ` : ""}
+        </div>
+        <div class="panel-body">
+          <div class="toolbar">
+            <label class="field compact-field">
+              <span>Search</span>
+              <input id="devotionalSearchInput" type="search" value="${escapeAttribute(state.devotionalSearch)}" placeholder="Search code, name, or type" oninput="window.erpApp.setDevotionalSearch(this.value)">
+            </label>
+            <label class="field compact-field">
+              <span>Status</span>
+              <select onchange="window.erpApp.setDevotionalStatus(this.value)">
+                <option value="active" ${state.devotionalStatus === "active" ? "selected" : ""}>Active items</option>
+                <option value="all" ${state.devotionalStatus === "all" ? "selected" : ""}>All items</option>
+                <option value="inactive" ${state.devotionalStatus === "inactive" ? "selected" : ""}>Inactive items</option>
+              </select>
+            </label>
+          </div>
+          ${rows.length ? devotionalItemsTable(rows) : '<div class="empty-state">No devotional items found.</div>'}
+        </div>
+      </section>
+    `;
+  }
+
+  function devotionalItemsTable(rows) {
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ERP Code</th>
+              <th>Name</th>
+              <th>Item Type</th>
+              <th>Sale Price</th>
+              ${isMainAdmin() ? "<th>Purchase Price</th>" : ""}
+              <th>Status</th>
+              ${isMainAdmin() ? "<th>Actions</th>" : ""}
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.erpCode || row.bookId)}</td>
+                <td><strong>${escapeHtml(row.name)}</strong></td>
+                <td>${escapeHtml(row.bookType || row.category || "-")}</td>
+                <td>${money(row.salePrice || row.mrp)}</td>
+                ${isMainAdmin() ? `<td>${money(row.purchasePrice || row.distributorPrice)}</td>` : ""}
+                <td>${status(row.active ? "Active" : "Inactive", row.active ? "good" : "warn")}</td>
+                ${isMainAdmin() ? `<td>
+                  <div class="row-actions">
+                    <button class="small-button" type="button" onclick="window.erpApp.openDevotionalItemForm('${escapeAttribute(row.erpCode || row.bookId)}')">Edit</button>
+                    ${row.active ? `<button class="small-button danger" type="button" onclick="window.erpApp.deactivateDevotionalItem('${escapeAttribute(row.erpCode || row.bookId)}')">Deactivate</button>` : ""}
+                  </div>
+                </td>` : ""}
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
   function openUserForm(userId) {
     const user = state.users.find((item) => item.userId === userId) || {
       userId: "",
@@ -1001,6 +1087,19 @@
     });
   }
 
+  function getFilteredDevotionalItems() {
+    const query = state.devotionalSearch.trim().toLowerCase();
+    return state.devotionalItems.filter((item) => {
+      const matchesStatus =
+        state.devotionalStatus === "all" ||
+        (state.devotionalStatus === "active" && item.active) ||
+        (state.devotionalStatus === "inactive" && !item.active);
+
+      const haystack = [item.erpCode, item.bookId, item.name, item.bookType, item.category].join(" ").toLowerCase();
+      return matchesStatus && (!query || haystack.includes(query));
+    });
+  }
+
   function setBookSearch(value) {
     state.bookSearch = value;
     rerenderContentKeepingFocus("bookSearchInput", renderBooksMarkup);
@@ -1011,8 +1110,29 @@
     rerenderContentKeepingFocus("bookSearchInput", renderBooksMarkup);
   }
 
-  function openBookForm(bookId) {
-    const book = state.books.find((item) => item.bookId === bookId || item.erpCode === bookId) || {
+  function setDevotionalSearch(value) {
+    state.devotionalSearch = value;
+    rerenderContentKeepingFocus("devotionalSearchInput", renderDevotionalItemsMarkup);
+  }
+
+  function setDevotionalStatus(value) {
+    state.devotionalStatus = value;
+    rerenderContentKeepingFocus("devotionalSearchInput", renderDevotionalItemsMarkup);
+  }
+
+  function getItemCollection(itemGroup) {
+    return String(itemGroup || "BOOK").toUpperCase() === "BOOK" ? state.books : state.devotionalItems;
+  }
+
+  function getItemLabel(itemGroup) {
+    return String(itemGroup || "BOOK").toUpperCase() === "BOOK" ? "Book" : "Item";
+  }
+
+  function openBookForm(bookId, itemGroup = "BOOK") {
+    state.itemFormGroup = itemGroup;
+    const collection = getItemCollection(itemGroup);
+    const label = getItemLabel(itemGroup);
+    const book = collection.find((item) => item.bookId === bookId || item.erpCode === bookId) || {
       bookId: "",
       erpCode: "",
       name: "",
@@ -1039,8 +1159,8 @@
             <input name="erpCode" required value="${escapeAttribute(erpCode)}" placeholder="PRB-00074" ${isEdit ? "readonly" : ""}>
           </label>
           <label class="field wide-field">
-            <span>Book Name</span>
-            <input name="name" required value="${escapeAttribute(book.name)}" placeholder="Bhagavad Gita As It Is">
+            <span>${label} Name</span>
+            <input name="name" required value="${escapeAttribute(book.name)}" placeholder="${label} Name">
           </label>
           <label class="field">
             <span>Book Type</span>
@@ -1054,19 +1174,24 @@
             <span>Purchase Price</span>
             <input name="purchasePrice" type="number" min="0" step="0.01" required value="${escapeAttribute(book.purchasePrice || book.distributorPrice || "")}">
           </label>` : ""}
+          <input type="hidden" name="itemGroup" value="${escapeAttribute(itemGroup)}">
           <label class="check-field">
             <input name="active" type="checkbox" ${book.active ? "checked" : ""}>
             <span>Active</span>
           </label>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit">${isEdit ? "Save Changes" : "Create Book"}</button>
+            <button class="button" type="submit">${isEdit ? "Save Changes" : `Create ${label}`}</button>
           </div>
         </form>
       </section>
     `;
 
     document.getElementById("bookForm").addEventListener("submit", saveBook);
+  }
+
+  function openDevotionalItemForm(itemId) {
+    openBookForm(itemId, "PARAPHERNALIA");
   }
 
   async function saveBook(event) {
@@ -1079,6 +1204,7 @@
       bookType: data.get("bookType").trim(),
       salePrice: Number(data.get("salePrice")),
       purchasePrice: isMainAdmin() ? Number(data.get("purchasePrice")) : 0,
+      itemGroup: data.get("itemGroup") || "BOOK",
       active: data.get("active") === "on"
     };
 
@@ -1089,13 +1215,17 @@
 
     setLoading(true);
     try {
-      const existing = state.books.some((book) => (book.erpCode || book.bookId) === payload.erpCode);
-      await window.erpApi.request(existing ? "books.update" : "books.create", payload);
+      const collection = getItemCollection(payload.itemGroup);
+      const existing = collection.some((item) => (item.erpCode || item.bookId) === payload.erpCode);
+      const action = payload.itemGroup === "BOOK"
+        ? (existing ? "books.update" : "books.create")
+        : (existing ? "items.update" : "items.create");
+      await window.erpApi.request(action, payload);
       closeModal();
-      content.innerHTML = await renderBooks();
-      showToast(existing ? "Book updated" : "Book created");
+      content.innerHTML = payload.itemGroup === "BOOK" ? await renderBooks() : await renderDevotionalItems();
+      showToast(existing ? `${getItemLabel(payload.itemGroup)} updated` : `${getItemLabel(payload.itemGroup)} created`);
     } catch (error) {
-      showToast(error.message || "Could not save book");
+      showToast(error.message || "Could not save item");
     } finally {
       setLoading(false);
     }
@@ -1223,6 +1353,25 @@
       if (input) {
         input.value = "";
       }
+    }
+  }
+
+  async function deactivateDevotionalItem(itemId) {
+    const item = state.devotionalItems.find((entry) => entry.bookId === itemId || entry.erpCode === itemId);
+    if (!item) {
+      showToast("Item not found");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await window.erpApi.request("items.delete", { erpCode: itemId });
+      content.innerHTML = await renderDevotionalItems();
+      showToast("Item deactivated");
+    } catch (error) {
+      showToast(error.message || "Could not deactivate item");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -1542,13 +1691,24 @@
     const showAction = rows.some((row) => Number(row.unsettledQty || 0) > 0);
     const worthTotals = rows.reduce((acc, row) => {
       const price = getBookSalePrice(row.bookId);
-      acc.issue += Number(row.issueQty || 0) * price;
-      acc.return += Number(row.returnQty || 0) * price;
-      acc.sale += Number(row.saleQty || 0) * price;
-      acc.complimentary += Number(row.complimentaryQty || 0) * price;
-      acc.balance += Number(row.unsettledQty || 0) * price;
+      const group = String(row.itemGroup || "BOOK").toUpperCase();
+      const bucket = group === "BOOK" ? "books" : "devotional";
+      acc[bucket].issue += Number(row.issueQty || 0) * price;
+      acc[bucket].return += Number(row.returnQty || 0) * price;
+      acc[bucket].sale += Number(row.saleQty || 0) * price;
+      acc[bucket].complimentary += Number(row.complimentaryQty || 0) * price;
+      acc[bucket].balance += Number(row.unsettledQty || 0) * price;
       return acc;
-    }, { issue: 0, return: 0, sale: 0, complimentary: 0, balance: 0 });
+    }, {
+      books: { issue: 0, return: 0, sale: 0, complimentary: 0, balance: 0 },
+      devotional: { issue: 0, return: 0, sale: 0, complimentary: 0, balance: 0 }
+    });
+    const sortedRows = rows.slice().sort((a, b) => {
+      const groupA = String(a.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
+      const groupB = String(b.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
+      if (groupA !== groupB) return groupA - groupB;
+      return String(a.bookId || "").localeCompare(String(b.bookId || ""));
+    });
     return `
       <div class="table-wrap">
         <table>
@@ -1557,6 +1717,7 @@
               <th>Devotee</th>
               <th>Activity</th>
               <th>Book</th>
+              <th>Category</th>
               <th>Issue</th>
               <th>Return</th>
               <th>Sale</th>
@@ -1567,19 +1728,29 @@
           </thead>
           <tbody>
             <tr class="worth-row">
-              <td colspan="3"><strong>Worth</strong></td>
-              <td>${money(worthTotals.issue)}</td>
-              <td>${money(worthTotals.return)}</td>
-              <td>${money(worthTotals.sale)}</td>
-              <td>${money(worthTotals.complimentary)}</td>
-              <td><strong>${money(worthTotals.balance)}</strong></td>
+              <td colspan="4"><strong>Worth</strong></td>
+              <td>${money(worthTotals.books.issue)}</td>
+              <td>${money(worthTotals.books.return)}</td>
+              <td>${money(worthTotals.books.sale)}</td>
+              <td>${money(worthTotals.books.complimentary)}</td>
+              <td><strong>${money(worthTotals.books.balance)}</strong></td>
               ${showAction ? "<td></td>" : ""}
             </tr>
-            ${rows.map((row) => `
+            <tr class="worth-row">
+              <td colspan="4"><strong>Devotional Worth</strong></td>
+              <td>${money(worthTotals.devotional.issue)}</td>
+              <td>${money(worthTotals.devotional.return)}</td>
+              <td>${money(worthTotals.devotional.sale)}</td>
+              <td>${money(worthTotals.devotional.complimentary)}</td>
+              <td><strong>${money(worthTotals.devotional.balance)}</strong></td>
+              ${showAction ? "<td></td>" : ""}
+            </tr>
+            ${sortedRows.map((row) => `
               <tr>
                 <td>${escapeHtml(row.devoteeName || row.devoteeId || "-")}</td>
                 <td>${escapeHtml(row.activityName || row.activityId || "-")}</td>
                 <td>${escapeHtml(getBookName(row.bookId))}</td>
+                <td>${escapeHtml(String(row.itemGroup || "BOOK"))}</td>
                 <td>${Number(row.issueQty || 0)}</td>
                 <td>${Number(row.returnQty || 0)}</td>
                 <td>${Number(row.saleQty || 0)}</td>
@@ -2167,17 +2338,23 @@
   }
 
   function getBook(bookId) {
-    return state.books.find((item) => item.bookId === bookId || item.erpCode === bookId || item["ERP Code"] === bookId || item["Book ID"] === bookId) || {};
+    return getItem(bookId);
   }
 
   function getBookSalePrice(bookId) {
-    const book = getBook(bookId);
-    return Number(book.salePrice || book.mrp || book["Sale Price"] || 0);
+    const item = getItem(bookId);
+    return Number(item.salePrice || item.mrp || item["Sale Price"] || 0);
   }
 
   function getBookName(bookId) {
-    const book = getBook(bookId);
-    return book.name || book["Book Name"] || bookId || "-";
+    const item = getItem(bookId);
+    return item.name || item["Book Name"] || bookId || "-";
+  }
+
+  function getItem(bookId) {
+    return state.books.find((item) => item.bookId === bookId || item.erpCode === bookId || item["ERP Code"] === bookId || item["Book ID"] === bookId)
+      || state.devotionalItems.find((item) => item.bookId === bookId || item.erpCode === bookId || item["ERP Code"] === bookId || item["Book ID"] === bookId)
+      || {};
   }
 
   function getAvailableStock(warehouseId, bookId) {
@@ -2302,6 +2479,8 @@
           devoteeName: row.devoteeName || getDevoteeName(row.devoteeId),
           activityId: row.activityId,
           activityName: row.activityName || getActivityName(row.activityId),
+          booksWorth: 0,
+          devotionalWorth: 0,
           worth: 0,
           unsettledQty: 0,
           rowCount: 0
@@ -2309,7 +2488,13 @@
       }
       index[key].rowCount += 1;
       index[key].unsettledQty += Number(row.unsettledQty || 0);
-      index[key].worth += Number(row.unsettledQty || 0) * getBookSalePrice(row.bookId);
+      const worth = Number(row.unsettledQty || 0) * getBookSalePrice(row.bookId);
+      if (String(row.itemGroup || "BOOK").toUpperCase() === "BOOK") {
+        index[key].booksWorth += worth;
+      } else {
+        index[key].devotionalWorth += worth;
+      }
+      index[key].worth += worth;
     });
     return Object.keys(index)
       .map((key) => index[key])
@@ -2327,14 +2512,16 @@
               <th>SNo</th>
               <th>Devotee Name</th>
               <th>Activity Name</th>
-              <th>Worth of Unsettled</th>
+              <th>Books Worth</th>
+              <th>Devotional Worth</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody>
             <tr class="worth-row">
               <td colspan="3"><strong>Worth</strong></td>
-              <td><strong>${money(totalWorth)}</strong></td>
+              <td><strong>${money(summaryRows.reduce((sum, row) => sum + Number(row.booksWorth || 0), 0))}</strong></td>
+              <td><strong>${money(summaryRows.reduce((sum, row) => sum + Number(row.devotionalWorth || 0), 0))}</strong></td>
               <td></td>
             </tr>
             ${summaryRows.map((row, index) => `
@@ -2342,7 +2529,8 @@
                 <td>${index + 1}</td>
                 <td>${escapeHtml(row.devoteeName || row.devoteeId || "-")}</td>
                 <td>${escapeHtml(row.activityName || row.activityId || "-")}</td>
-                <td><strong>${money(row.worth || 0)}</strong></td>
+                <td><strong>${money(row.booksWorth || 0)}</strong></td>
+                <td><strong>${money(row.devotionalWorth || 0)}</strong></td>
                 <td><button class="small-button" type="button" onclick="window.erpApp.showUnsettledActivityDetails('${escapeAttribute(row.activityId)}')">Show Details</button></td>
               </tr>
             `).join("")}
@@ -2360,6 +2548,7 @@
         index[row.bookId] = {
           bookId: row.bookId,
           bookName: getBookName(row.bookId),
+          itemGroup: row.itemGroup || "BOOK",
           unsettledQty: 0
         };
       }
@@ -2388,13 +2577,14 @@
             <tr>
               <th>ERP Code</th>
               <th>Book Name</th>
+              <th>Category</th>
               <th>Unsettled Quantity</th>
               <th>Total Unsettled Qty of all activities</th>
             </tr>
           </thead>
           <tbody>
             <tr class="worth-row">
-              <td colspan="2"><strong>Worth</strong></td>
+              <td colspan="3"><strong>Worth</strong></td>
               <td><strong>${Number(detailRows.reduce((sum, row) => sum + Number(row.unsettledQty || 0), 0))}</strong></td>
               <td><strong>${Number(totalUnsettled)}</strong></td>
             </tr>
@@ -2402,6 +2592,7 @@
               <tr>
                 <td>${escapeHtml(row.bookId)}</td>
                 <td>${escapeHtml(row.bookName)}</td>
+                <td>${escapeHtml(row.itemGroup || "BOOK")}</td>
                 <td><strong>${Number(row.unsettledQty || 0)}</strong></td>
                 <td>${Number(totalUnsettled)}</td>
               </tr>
@@ -2425,12 +2616,20 @@
           devoteeName: row.devoteeName || getDevoteeName(row.devoteeId),
           activityId: row.activityId,
           activityName: row.activityName || getActivityName(row.activityId),
+          booksWorth: 0,
+          devotionalWorth: 0,
           worth: 0,
           complimentaryQty: 0
         };
       }
       index[key].complimentaryQty += Number(row.complimentaryQty || 0);
-      index[key].worth += Number(row.complimentaryQty || 0) * getBookSalePrice(row.bookId);
+      const worth = Number(row.complimentaryQty || 0) * getBookSalePrice(row.bookId);
+      if (String(row.itemGroup || "BOOK").toUpperCase() === "BOOK") {
+        index[key].booksWorth += worth;
+      } else {
+        index[key].devotionalWorth += worth;
+      }
+      index[key].worth += worth;
     });
     return Object.keys(index)
       .map((key) => index[key])
@@ -2444,18 +2643,20 @@
       <div class="table-wrap">
         <table>
           <thead>
-            <tr>
-              <th>SNo</th>
-              <th>Devotee Name</th>
-              <th>Activity Name</th>
-              <th>Worth of Complimentary</th>
-              <th>Action</th>
-            </tr>
+          <tr>
+            <th>SNo</th>
+            <th>Devotee Name</th>
+            <th>Activity Name</th>
+            <th>Books Worth</th>
+            <th>Devotional Worth</th>
+            <th>Action</th>
+          </tr>
           </thead>
           <tbody>
             <tr class="worth-row">
               <td colspan="3"><strong>Worth</strong></td>
-              <td><strong>${money(totalWorth)}</strong></td>
+              <td><strong>${money(summaryRows.reduce((sum, row) => sum + Number(row.booksWorth || 0), 0))}</strong></td>
+              <td><strong>${money(summaryRows.reduce((sum, row) => sum + Number(row.devotionalWorth || 0), 0))}</strong></td>
               <td></td>
             </tr>
             ${summaryRows.map((row, index) => `
@@ -2463,7 +2664,8 @@
                 <td>${index + 1}</td>
                 <td>${escapeHtml(row.devoteeName || row.devoteeId || "-")}</td>
                 <td>${escapeHtml(row.activityName || row.activityId || "-")}</td>
-                <td><strong>${money(row.worth || 0)}</strong></td>
+                <td><strong>${money(row.booksWorth || 0)}</strong></td>
+                <td><strong>${money(row.devotionalWorth || 0)}</strong></td>
                 <td><button class="small-button" type="button" onclick="window.erpApp.showComplimentaryActivityDetails('${escapeAttribute(row.activityId)}')">Show Details</button></td>
               </tr>
             `).join("")}
@@ -2481,6 +2683,7 @@
         index[row.bookId] = {
           bookId: row.bookId,
           bookName: row.bookName || getBookName(row.bookId),
+          itemGroup: row.itemGroup || "BOOK",
           complimentaryQty: 0
         };
       }
@@ -2509,13 +2712,14 @@
             <tr>
               <th>ERP Code</th>
               <th>Book Name</th>
+              <th>Category</th>
               <th>Complimentary Quantity</th>
               <th>Total Complimentary Qty of all activities</th>
             </tr>
           </thead>
           <tbody>
             <tr class="worth-row">
-              <td colspan="2"><strong>Worth</strong></td>
+              <td colspan="3"><strong>Worth</strong></td>
               <td><strong>${Number(detailRows.reduce((sum, row) => sum + Number(row.complimentaryQty || 0), 0))}</strong></td>
               <td><strong>${Number(totalComplimentary)}</strong></td>
             </tr>
@@ -2523,6 +2727,7 @@
               <tr>
                 <td>${escapeHtml(row.bookId)}</td>
                 <td>${escapeHtml(row.bookName)}</td>
+                <td>${escapeHtml(row.itemGroup || "BOOK")}</td>
                 <td><strong>${Number(row.complimentaryQty || 0)}</strong></td>
                 <td>${Number(totalComplimentary)}</td>
               </tr>
@@ -2573,7 +2778,7 @@
       .slice()
       .sort((a, b) => String(a.devoteeName || "").localeCompare(String(b.devoteeName || "")) || String(a.activityName || "").localeCompare(String(b.activityName || "")));
     const activityIds = activityList.map((row) => row.activityId);
-    const activeBooks = state.books
+    const activeBooks = [...state.books, ...state.devotionalItems]
       .slice()
       .sort((a, b) => String(getBookName(a.erpCode || a.bookId)).localeCompare(String(getBookName(b.erpCode || b.bookId))) || String(a.erpCode || a.bookId).localeCompare(String(b.erpCode || b.bookId)));
     const bookIndex = {};
@@ -4924,6 +5129,10 @@
     setBookStatus,
     openBookForm,
     deactivateBook,
+    setDevotionalSearch,
+    setDevotionalStatus,
+    openDevotionalItemForm,
+    deactivateDevotionalItem,
     setWarehouseSearch,
     setWarehouseStatus,
     downloadWarehouseSample,
