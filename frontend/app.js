@@ -283,20 +283,21 @@
 
   function renderWarehousesMarkup() {
     const rows = getFilteredWarehouses();
+    const canEditWarehouses = isMainAdmin();
     return `
       <section class="card">
         <div class="panel-header">
           <h2>Warehouse Master</h2>
           <div class="row-actions">
-            ${isMainAdmin() ? `
+            ${canEditWarehouses ? `
               <button class="small-button" type="button" onclick="document.getElementById('warehouseImportInput').click()">Import Excel</button>
               <button class="small-button" type="button" onclick="window.erpApp.downloadWarehouseSample()">Download Sample</button>
             ` : ""}
-            <button class="button" type="button" onclick="window.erpApp.openWarehouseForm()">Add Warehouse</button>
+            ${canEditWarehouses ? '<button class="button" type="button" onclick="window.erpApp.openWarehouseForm()">Add Warehouse</button>' : ""}
           </div>
         </div>
         <div class="panel-body">
-          ${isMainAdmin() ? '<input id="warehouseImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importWarehouseFile(this.files[0])">' : ""}
+          ${canEditWarehouses ? '<input id="warehouseImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importWarehouseFile(this.files[0])">' : ""}
           <div class="toolbar">
             <label class="field compact-field">
               <span>Search</span>
@@ -318,6 +319,7 @@
   }
 
   function warehousesTable(rows) {
+    const canEditWarehouses = isMainAdmin();
     return `
       <div class="table-wrap">
         <table>
@@ -329,7 +331,7 @@
               <th>SPOC</th>
               <th>Mobile</th>
               <th>Status</th>
-              <th>Actions</th>
+              ${canEditWarehouses ? "<th>Actions</th>" : ""}
             </tr>
           </thead>
           <tbody>
@@ -341,12 +343,12 @@
                 <td>${escapeHtml(row.spoc || "-")}</td>
                 <td>${escapeHtml(row.mobile || "-")}</td>
                 <td>${status(row.active ? "Active" : "Inactive", row.active ? "good" : "warn")}</td>
-                <td>
+                ${canEditWarehouses ? `<td>
                   <div class="row-actions">
                     <button class="small-button" type="button" onclick="window.erpApp.openWarehouseForm('${escapeAttribute(row.warehouseId)}')">Edit</button>
                     ${row.active ? `<button class="small-button danger" type="button" onclick="window.erpApp.deactivateWarehouse('${escapeAttribute(row.warehouseId)}')">Deactivate</button>` : ""}
                   </div>
-                </td>
+                </td>` : ""}
               </tr>
             `).join("")}
           </tbody>
@@ -1732,6 +1734,10 @@
   }
 
   async function importWarehouseFile(file) {
+    if (!isMainAdmin()) {
+      showToast("Only admin can import warehouses");
+      return;
+    }
     if (!file) return;
     try {
       const name = file.name || "import";
@@ -1804,6 +1810,10 @@
   }
 
   function openWarehouseForm(warehouseId) {
+    if (!isMainAdmin()) {
+      showToast("Only admin can edit warehouses");
+      return;
+    }
     const warehouse = state.warehouses.find((item) => item.warehouseId === warehouseId) || {
       warehouseId: "",
       name: "",
@@ -1861,6 +1871,10 @@
 
   async function saveWarehouse(event) {
     event.preventDefault();
+    if (!isMainAdmin()) {
+      showToast("Only admin can edit warehouses");
+      return;
+    }
     const form = event.currentTarget;
     const data = new FormData(form);
     const payload = {
@@ -1891,6 +1905,10 @@
   }
 
   async function deactivateWarehouse(warehouseId) {
+    if (!isMainAdmin()) {
+      showToast("Only admin can edit warehouses");
+      return;
+    }
     const warehouse = state.warehouses.find((item) => item.warehouseId === warehouseId);
     if (!warehouse) {
       showToast("Warehouse not found");
