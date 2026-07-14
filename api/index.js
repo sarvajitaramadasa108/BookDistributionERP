@@ -182,7 +182,8 @@ function mapActivity(row, devoteesById = {}, warehousesById = {}) {
     devoteeName: devotee.devotee_name || "",
     startDate: row.start_date,
     endDate: row.end_date,
-    warehouseId: row.warehouse_id || "",
+    warehouseId: warehouse.warehouse_code || row.warehouse_id || "",
+    warehouseRowId: row.warehouse_id || "",
     warehouseName: warehouse.warehouse_name || "",
     spoc: row.spoc,
     status: row.status,
@@ -502,12 +503,13 @@ async function resolveDevoteeRef(supabase, value) {
 async function createActivity(supabase, payload) {
   const activityCode = payload.activityId || payload.activityCode || await nextCode(supabase, "activities", "activity_code", "ACT");
   const devoteeId = await resolveDevoteeRef(supabase, payload.devoteeId);
+  const warehouseId = await resolveWarehouseRef(supabase, payload.warehouseId);
   const { data, error } = await supabase.from("activities").insert({
     activity_code: activityCode,
     activity_name: String(payload.name || "").trim(),
     activity_type: String(payload.type || "Stall").trim(),
     devotee_id: devoteeId,
-    warehouse_id: payload.warehouseId || null,
+    warehouse_id: warehouseId,
     spoc: String(payload.spoc || "").trim(),
     status: payload.status || "Draft",
     start_date: payload.startDate || null,
@@ -522,11 +524,12 @@ async function createActivity(supabase, payload) {
 async function updateActivity(supabase, payload) {
   const activityCode = String(payload.activityId || payload.activityCode || "").trim();
   const devoteeId = await resolveDevoteeRef(supabase, payload.devoteeId);
+  const warehouseId = await resolveWarehouseRef(supabase, payload.warehouseId);
   const updates = {
     activity_name: String(payload.name || "").trim(),
     activity_type: String(payload.type || "Stall").trim(),
     devotee_id: devoteeId,
-    warehouse_id: payload.warehouseId || null,
+    warehouse_id: warehouseId,
     spoc: String(payload.spoc || "").trim(),
     status: payload.status || "Draft",
     start_date: payload.startDate || null,
