@@ -4178,10 +4178,13 @@
         rows = parseCsvRows(text);
       }
 
+      const itemGroup = normalizeItemGroup(state.purchaseDraft.itemGroup || "BOOK");
+      const singular = getItemGroupSingularLabel(itemGroup);
+
       state.purchaseLines = rows.map((row) => ({
         erpCode: String(row["ERP Code"] || row.erpCode || row["ERP"] || "").trim(),
-        bookName: String(row["Book Name"] || row.bookName || row["Name"] || "").trim(),
-        bookType: String(row["Book Type"] || row.bookType || row["Type"] || "General").trim() || "General",
+        bookName: String(row[`${singular} Name`] || row["Item Name"] || row["Book Name"] || row.bookName || row["Name"] || "").trim(),
+        bookType: String(row[`${singular} Type`] || row["Item Type"] || row["Book Type"] || row.bookType || row["Type"] || "General").trim() || "General",
         quantity: Number(row["Quantity"] || row.quantity || 0),
         purchasePrice: Number(row["Purchase Price"] || row.purchasePrice || row["Distributor Price"] || row.rate || 0),
         salePrice: Number(row["Sale Price"] || row.salePrice || row.mrp || 0)
@@ -4214,6 +4217,18 @@
       });
       return row;
     });
+  }
+
+  function resolveImportedItemFromRow(row, itemGroup) {
+    const selectedCollection = getItemCollection(itemGroup);
+    const combinedCollection = [...state.books, ...state.devotionalItems];
+    const erpCode = String(row["ERP Code"] || row.erpCode || row["ERP"] || "").trim();
+    const itemName = String(row["Item Name"] || row["Book Name"] || row.name || row["Name"] || row["Item"] || row["Book"] || "").trim();
+    const byCode = erpCode ? combinedCollection.find((item) => item.erpCode === erpCode || item.bookId === erpCode) : null;
+    if (byCode) return byCode;
+    if (!itemName) return null;
+    const normalizedName = itemName.trim().toLowerCase();
+    return selectedCollection.find((item) => String(item.name || item["Item Name"] || item["Book Name"] || "").trim().toLowerCase() === normalizedName) || null;
   }
 
   function splitCsvLine(line) {
@@ -4554,10 +4569,17 @@
         rows = parseCsvRows(text);
       }
 
+      const itemGroup = normalizeItemGroup(state.openingDraft.itemGroup || "BOOK");
+      const singular = getItemGroupSingularLabel(itemGroup);
+
       const bookRows = rows.map((row) => {
         const erpCode = String(row["ERP Code"] || row.erpCode || row["ERP"] || "").trim();
-        const bookName = String(row["Book Name"] || row.bookName || row["Name"] || "").trim();
-        const book = erpCode ? getBook(erpCode) : (bookName ? state.books.find((item) => String(item.name || "").trim().toLowerCase() === bookName.toLowerCase()) || {} : {});
+        const bookName = String(row[`${singular} Name`] || row["Item Name"] || row["Book Name"] || row.bookName || row["Name"] || "").trim();
+        const book = resolveImportedItemFromRow(row, itemGroup);
+        const label = getItemLabel(itemGroup).toLowerCase();
+        if (!book) {
+          throw new Error(`${label} not found: ${erpCode || bookName || "-"}`);
+        }
         return {
           bookId: book.erpCode || book.bookId || erpCode || "",
           quantity: Number(row["Qty"] || row.qty || row.quantity || 0),
@@ -4614,8 +4636,10 @@
         return;
       }
 
+      const itemGroup = normalizeItemGroup(state.unsettledDraft.itemGroup || "BOOK");
+      const singular = getItemGroupSingularLabel(itemGroup);
       const fields = Object.keys(rows[0] || {});
-      const fixedFields = new Set(["ERP Code", "Book Name", "ERP", "Book"]);
+      const fixedFields = new Set(["ERP Code", "Book Name", "Item Name", "ERP", "Book", "Item"]);
       const activityHeaders = fields.filter((field) => !fixedFields.has(String(field).trim()));
       if (!activityHeaders.length) {
         showToast("Add activity columns to the file");
@@ -4643,12 +4667,10 @@
       const entriesByActivityId = new Map();
       for (const row of rows) {
         const erpCode = String(row["ERP Code"] || row.erpCode || row["ERP"] || "").trim();
-        const bookName = String(row["Book Name"] || row.bookName || row["Book"] || "").trim();
-        const book = erpCode
-          ? getBook(erpCode)
-          : (bookName ? state.books.find((item) => String(item.name || "").trim().toLowerCase() === bookName.toLowerCase()) || null : null);
+        const bookName = String(row[`${singular} Name`] || row["Item Name"] || row["Book Name"] || row.bookName || row["Book"] || row["Item"] || "").trim();
+        const book = resolveImportedItemFromRow(row, itemGroup);
         if (!book) {
-          throw new Error(`Book not found: ${erpCode || bookName || "-"}`);
+          throw new Error(`${getItemLabel(itemGroup).toLowerCase()} not found: ${erpCode || bookName || "-"}`);
         }
         const bookId = book.erpCode || book.bookId || erpCode || "";
         activityHeaders.forEach((header, index) => {
