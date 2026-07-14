@@ -976,6 +976,55 @@ async function importUnsettledOpeningDocuments(supabase, payload, currentUser) {
   return { created: created.length, documents: created };
 }
 
+async function halveWarehouseOpeningStock(supabase, payload) {
+  const warehouseId = await resolveWarehouseRef(supabase, payload.warehouseId);
+  if (!warehouseId) throw new Error("Warehouse is required");
+  const { data: docs, error: docsError } = await supabase
+    .from("documents")
+    .select("id, document_code")
+    .eq("document_type", "OPENING")
+    .eq("to_warehouse_id", warehouseId);
+  if (docsError) throw docsError;
+  if (!docs || !docs.length) throw new Error("No opening stock found for that warehouse");
+  const docIds = docs.map((doc) => doc.id);
+  const [linesResult, ledgerResult] = await Promise.all([
+    supabase.from("document_lines").select("*").in("document_id", docIds),
+    supabase.from("stock_ledger").select("*").in("document_id", docIds)
+  ]);
+  if (linesResult.error) throw linesResult.error;
+  if (ledgerResult.error) throw ledgerResult.error;
+  const lineUpdates = (linesResult.data || []).map(async (line) => {
+    const oldQty = Number(line.quantity || 0);
+    const newQty = oldQty / 2;
+    const newAmount = Number(line.rate || 0) * newQty;
+    const { error } = await supabase.from("document_lines").update({
+      quantity: newQty,
+      amount: newAmount
+    }).eq("id", line.id);
+    if (error) throw error;
+  });
+  const ledgerUpdates = (ledgerResult.data || []).map(async (row) => {
+    const qtyIn = Number(row.quantity_in || 0);
+    const qtyOut = Number(row.quantity_out || 0);
+    const oldQty = qtyIn > 0 ? qtyIn : qtyOut;
+    const newQty = oldQty / 2;
+    const update = {
+      quantity_in: qtyIn > 0 ? newQty : 0,
+      quantity_out: qtyOut > 0 ? newQty : 0,
+      amount: Number(row.rate || 0) * newQty
+    };
+    const { error } = await supabase.from("stock_ledger").update(update).eq("id", row.id);
+    if (error) throw error;
+  });
+  await Promise.all([...lineUpdates, ...ledgerUpdates]);
+  return {
+    warehouseId,
+    openingDocuments: docs.length,
+    updatedLines: (linesResult.data || []).length,
+    updatedLedgerRows: (ledgerResult.data || []).length
+  };
+}
+
 async function stockCurrent(supabase) {
   const { data: ledger, error } = await supabase.from("stock_ledger").select("warehouse_id,item_id,quantity_in,quantity_out,movement_type");
   if (error) throw error;
@@ -1663,6 +1712,9 @@ async function main(request) {
         return json(200, { ok: true, data: await correctDocument(supabase, payload, currentUser) });
       case "documents.importUnsettledOpening":
         return json(200, { ok: true, data: await importUnsettledOpeningDocuments(supabase, payload, currentUser) });
+      case "documents.halveWarehouseOpening":
+        requireAdminUser(currentUser);
+        return json(200, { ok: true, data: await halveWarehouseOpeningStock(supabase, payload) });
       case "stock.current":
         return json(200, { ok: true, data: await stockCurrent(supabase) });
       case "activity.unsettled":

@@ -43,6 +43,7 @@
     openingDraft: {},
     openingLines: [],
     openingBookQueries: [],
+    openingHalfQty: false,
     unsettledDraft: {},
     unsettledLines: [],
     unsettledBookQueries: [],
@@ -4289,6 +4290,8 @@
     const activeBooks = getDocumentItemsForGroup(itemGroup);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const draft = state.openingDraft;
+    const selectedWarehouse = state.warehouses.find((warehouse) => warehouse.warehouseId === draft.toWarehouseId || warehouse.rowId === draft.toWarehouseId) || null;
+    const isGambhiramWarehouse = /gambhiram|gmb/i.test(String(selectedWarehouse?.name || ""));
 
     modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
@@ -4319,6 +4322,7 @@
               <h3>${getItemGroupLabel(itemGroup)}</h3>
               <div class="row-actions">
                 <button class="small-button" type="button" onclick="window.erpApp.halveOpeningQuantities()">Half Qty</button>
+                ${isGambhiramWarehouse ? '<button class="small-button" type="button" onclick="window.erpApp.halveWarehouseOpeningStock()">Half Warehouse Stock</button>' : ""}
                 <button class="small-button" type="button" onclick="window.erpApp.downloadOpeningSample()">Download Sample</button>
                 <button class="small-button" type="button" onclick="document.getElementById('openingImportInput').click()">Import Excel</button>
                 <button class="small-button" type="button" onclick="window.erpApp.addOpeningLine()">Add Line</button>
@@ -4393,6 +4397,30 @@
     }));
     renderOpeningStockModal();
     showToast("Opening quantities halved");
+  }
+
+  async function halveWarehouseOpeningStock() {
+    syncOpeningDraft();
+    const warehouseId = state.openingDraft.toWarehouseId;
+    if (!warehouseId) {
+      showToast("Select a warehouse first");
+      return;
+    }
+    if (!confirm("This will halve the posted opening stock for the selected warehouse. Continue?")) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await window.erpApi.request("documents.halveWarehouseOpening", { warehouseId });
+      invalidateCurrentStockCache();
+      showToast(`Halved opening stock for ${result.openingDocuments} document(s)`);
+      content.innerHTML = await renderDocuments();
+      closeModal();
+    } catch (error) {
+      showToast(error.message || "Could not halve warehouse stock");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function syncOpeningDraft() {
@@ -6084,6 +6112,7 @@
     removeOpeningLine,
     updateOpeningLine,
     halveOpeningQuantities,
+    halveWarehouseOpeningStock,
     downloadOpeningSample,
     importOpeningFile,
     downloadUnsettledOpeningSample,
