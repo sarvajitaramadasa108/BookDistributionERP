@@ -134,6 +134,15 @@ function mapDevotee(row) {
   };
 }
 
+function mapDevoteeRow(row) {
+  return {
+    devoteeRowId: row.id,
+    devoteeId: row.devotee_code,
+    devoteeName: row.devotee_name,
+    active: row.active
+  };
+}
+
 function mapWarehouse(row) {
   return {
     rowId: row.id,
@@ -168,7 +177,8 @@ function mapActivity(row, devoteesById = {}, warehousesById = {}) {
     activityId: row.activity_code,
     name: row.activity_name,
     type: row.activity_type,
-    devoteeId: row.devotee_id || "",
+    devoteeId: devotee.devotee_code || row.devotee_id || "",
+    devoteeRowId: row.devotee_id || "",
     devoteeName: devotee.devotee_name || "",
     startDate: row.start_date,
     endDate: row.end_date,
@@ -477,13 +487,26 @@ async function updateDevotee(supabase, payload) {
   return mapDevotee(data);
 }
 
+async function resolveDevoteeRef(supabase, value) {
+  const devoteeRef = String(value || "").trim();
+  if (!devoteeRef) return null;
+  const query = supabase.from("devotees").select("id, devotee_code");
+  const { data, error } = isUuidLike(devoteeRef)
+    ? await query.eq("id", devoteeRef).maybeSingle()
+    : await query.eq("devotee_code", devoteeRef).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error(`Devotee not found: ${devoteeRef}`);
+  return data.id;
+}
+
 async function createActivity(supabase, payload) {
   const activityCode = payload.activityId || payload.activityCode || await nextCode(supabase, "activities", "activity_code", "ACT");
+  const devoteeId = await resolveDevoteeRef(supabase, payload.devoteeId);
   const { data, error } = await supabase.from("activities").insert({
     activity_code: activityCode,
     activity_name: String(payload.name || "").trim(),
     activity_type: String(payload.type || "Stall").trim(),
-    devotee_id: payload.devoteeId || null,
+    devotee_id: devoteeId,
     warehouse_id: payload.warehouseId || null,
     spoc: String(payload.spoc || "").trim(),
     status: payload.status || "Draft",
@@ -498,10 +521,11 @@ async function createActivity(supabase, payload) {
 
 async function updateActivity(supabase, payload) {
   const activityCode = String(payload.activityId || payload.activityCode || "").trim();
+  const devoteeId = await resolveDevoteeRef(supabase, payload.devoteeId);
   const updates = {
     activity_name: String(payload.name || "").trim(),
     activity_type: String(payload.type || "Stall").trim(),
-    devotee_id: payload.devoteeId || null,
+    devotee_id: devoteeId,
     warehouse_id: payload.warehouseId || null,
     spoc: String(payload.spoc || "").trim(),
     status: payload.status || "Draft",
@@ -1050,6 +1074,7 @@ async function getActivityUnsettled(supabase) {
   const activityById = Object.fromEntries((activities || []).map((row) => [row.id, row]));
   const itemById = Object.fromEntries((items || []).map((row) => [row.id, row]));
   const devoteeById = Object.fromEntries((devotees || []).map((row) => [row.id, row]));
+  const devoteeByCode = Object.fromEntries((devotees || []).map((row) => [row.devotee_code, row]));
   const docsById = Object.fromEntries((documents || []).map((row) => [row.id, row]));
   const index = new Map();
   for (const line of lines || []) {
@@ -1059,10 +1084,11 @@ async function getActivityUnsettled(supabase) {
     if (!["ISSUE", "RETURN", "SALE", "COMPLIMENTARY", "UNSETTLED_OPENING"].includes(type)) continue;
     const activity = activityById[doc.activity_id] || {};
     const item = itemById[line.item_id] || {};
+    const devotee = devoteeById[activity.devotee_id] || devoteeByCode[activity.devotee_id] || {};
     const key = `${doc.activity_id}|${line.item_id}`;
     const existing = index.get(key) || {
-      devoteeId: activity.devotee_id || "",
-      devoteeName: devoteeById[activity.devotee_id]?.devotee_name || "",
+      devoteeId: devotee.devotee_code || activity.devotee_id || "",
+      devoteeName: devotee.devotee_name || "",
       activityId: doc.activity_id,
       activityName: activity.activity_name || doc.activity_id,
       bookId: item.erp_code || line.item_id,
@@ -1104,6 +1130,7 @@ async function getActivityComplimentary(supabase) {
   const activityById = Object.fromEntries((activities || []).map((row) => [row.id, row]));
   const itemById = Object.fromEntries((items || []).map((row) => [row.id, row]));
   const devoteeById = Object.fromEntries((devotees || []).map((row) => [row.id, row]));
+  const devoteeByCode = Object.fromEntries((devotees || []).map((row) => [row.devotee_code, row]));
   const warehouseById = Object.fromEntries((warehouses || []).map((row) => [row.id, row]));
   const docsById = Object.fromEntries((documents || []).map((row) => [row.id, row]));
   const index = new Map();
@@ -1112,10 +1139,11 @@ async function getActivityComplimentary(supabase) {
     if (!doc || !doc.activity_id) continue;
     const activity = activityById[doc.activity_id] || {};
     const item = itemById[line.item_id] || {};
+    const devotee = devoteeById[activity.devotee_id] || devoteeByCode[activity.devotee_id] || {};
     const key = `${doc.activity_id}|${line.item_id}`;
     const existing = index.get(key) || {
-      devoteeId: activity.devotee_id || "",
-      devoteeName: devoteeById[activity.devotee_id]?.devotee_name || "",
+      devoteeId: devotee.devotee_code || activity.devotee_id || "",
+      devoteeName: devotee.devotee_name || "",
       activityId: doc.activity_id,
       activityName: activity.activity_name || doc.activity_id,
       bookId: item.erp_code || line.item_id,
@@ -1267,7 +1295,7 @@ function buildSettlementSummaryForActivity(activity, context) {
     activityType: activity.activity_type,
     activityStatus: activity.status,
     settledAt: activity.settled_at,
-    devoteeId: activity.devotee_id || "",
+    devoteeId: devoteeById[activity.devotee_id]?.devotee_code || activity.devotee_id || "",
     devoteeName: devoteeById[activity.devotee_id]?.devotee_name || "",
     warehouseId: activity.warehouse_id || "",
     warehouseName: warehouseById[activity.warehouse_id]?.warehouse_name || "",
@@ -1358,14 +1386,16 @@ async function getActivityMonthlyReport(supabase, payload) {
   const { data: items } = await supabase.from("items").select("*");
   const { data: documents } = await supabase.from("documents").select("*").gte("document_date", `${month}-01`).lt("document_date", monthEnd(month));
   const { data: lines } = await supabase.from("document_lines").select("*");
-  const activity = (activities || []).find((row) => row.activity_code === activityId || (!activityId && row.devotee_id === devoteeId)) || null;
+  const devoteeById = Object.fromEntries((devotees || []).map((row) => [row.id, row]));
+  const devoteeByCode = Object.fromEntries((devotees || []).map((row) => [row.devotee_code, row]));
+  const selectedDevotee = devoteeByCode[devoteeId] || devoteeById[devoteeId] || null;
+  const activity = (activities || []).find((row) => row.activity_code === activityId || (!activityId && selectedDevotee && row.devotee_id === selectedDevotee.id)) || null;
   if (!activity) {
     return { month, rows: [], documents: [], totals: {} };
   }
   const docs = (documents || []).filter((doc) => doc.activity_id === activity.id);
   const docsById = Object.fromEntries(docs.map((doc) => [doc.id, doc]));
   const itemById = Object.fromEntries((items || []).map((row) => [row.id, row]));
-  const devoteeById = Object.fromEntries((devotees || []).map((row) => [row.id, row]));
   const warehouseById = Object.fromEntries((warehouses || []).map((row) => [row.id, row]));
   const index = new Map();
   const docMap = {};
@@ -1454,8 +1484,8 @@ async function getActivityMonthlyReport(supabase, payload) {
   }));
   return {
     month,
-    devoteeId: activity.devotee_id || "",
-    devoteeName: devoteeById[activity.devotee_id]?.devotee_name || "",
+    devoteeId: selectedDevotee?.devotee_code || devoteeById[activity.devotee_id]?.devotee_code || "",
+    devoteeName: devoteeById[activity.devotee_id]?.devotee_name || selectedDevotee?.devotee_name || "",
     activityId: activity.activity_code,
     activityName: activity.activity_name,
     activityStatus: activity.status,
