@@ -808,9 +808,6 @@ async function createDocument(supabase, payload, currentUser) {
       const erpCode = String(rawLine.bookId || rawLine.erpCode || "").trim();
       item = await findByCode(supabase, "items", "erp_code", erpCode);
       if (!item && documentType !== "PURCHASE") throw new Error(`Book not found: ${erpCode}`);
-      if (item && itemGroup && String(item.item_group || "").toUpperCase() !== itemGroup) {
-        throw new Error(`Item category mismatch for ${erpCode}`);
-      }
       if (item && documentType === "PURCHASE" && rawLine.bookName) {
         item = await upsertItemIfMissing(supabase, { ...rawLine, itemGroup });
       }
