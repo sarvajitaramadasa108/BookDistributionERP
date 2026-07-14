@@ -1512,6 +1512,7 @@ async function getWarehouseMonthlyReport(supabase, payload) {
         bookId: item.erp_code || line.item_id,
         bookName: item.item_name || line.item_id,
         bookType: item.item_type || "",
+        itemGroup: item.item_group || "BOOK",
         openingQty: 0,
         issueQty: 0,
         returnQty: 0,

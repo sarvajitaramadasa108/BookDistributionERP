@@ -2334,7 +2334,7 @@
           <thead>
             <tr>
               <th rowspan="2">ERP Code</th>
-              <th rowspan="2">Book</th>
+              <th rowspan="2">Item</th>
               <th rowspan="2">Category</th>
               ${docs.map((doc) => `<th colspan="5">${escapeHtml(doc.documentId)}</th>`).join("")}
               <th rowspan="2">Issue</th>
@@ -2411,7 +2411,7 @@
     const headerTop = `
       <tr>
         <th rowspan="2">ERP Code</th>
-        <th rowspan="2">Book</th>
+        <th rowspan="2">Item</th>
         <th rowspan="2">Category</th>
         ${docs.map((doc) => `<th colspan="5">${escapeHtml(doc.documentId)}</th>`).join("")}
         <th rowspan="2">Issue</th>
@@ -2425,7 +2425,7 @@
     `;
     const totalsRow = `
       <tr>
-        <td colspan="3"><strong>Worth</strong></td>
+      <td colspan="3"><strong>Worth</strong></td>
         ${worthTotals.totals.map((value) => `<td colspan="5">${escapeHtml(String(value))}</td>`).join("")}
         <td>${Number(report.totals && report.totals.issueQty || 0)}</td>
         <td>${Number(report.totals && report.totals.returnQty || 0)}</td>
@@ -2437,9 +2437,9 @@
     `;
     const rows = report.rows.map((row) => `
       <tr>
-        <td>${escapeHtml(row.bookId)}</td>
-        <td>${escapeHtml(row.bookName)}</td>
-        <td>${escapeHtml(getItemGroupLabel(row.itemGroup))}</td>
+          <td>${escapeHtml(row.bookId)}</td>
+          <td>${escapeHtml(row.bookName)}</td>
+          <td>${escapeHtml(getItemGroupLabel(row.itemGroup))}</td>
         ${(row.docMapArray || []).map((doc) => `
           <td>${Number(doc.issueQty || 0)}</td>
           <td>${Number(doc.returnQty || 0)}</td>
@@ -2494,7 +2494,7 @@
           <thead>
             <tr>
               <th>ERP Code</th>
-              <th>Book</th>
+              <th>Item</th>
               <th>Category</th>
               <th>Opening</th>
               ${isMain
@@ -2560,7 +2560,7 @@
             <thead>
               <tr>
                 <th>ERP Code</th>
-                <th>Book</th>
+                <th>Item</th>
                 <th>Category</th>
                 ${report.dayColumns.map((day) => `<th>${escapeHtml(day)}</th>`).join("")}
               </tr>
@@ -2614,7 +2614,7 @@
           String(warehouse.type || "").toLowerCase() !== "temporary" &&
           (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0)
       : [];
-    const headerCells = ["ERP Code", "Book", "Opening"];
+    const headerCells = ["ERP Code", "Item", "Opening"];
     const sortedRows = report.rows.slice().sort((a, b) => {
       const groupA = String(a.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
       const groupB = String(b.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
@@ -2704,6 +2704,7 @@
       activityName: row.activityName || row["Activity Name"] || "",
       bookId: row.bookId || row["Book ID"] || "",
       warehouseId: row.warehouseId || row["Warehouse ID"] || "",
+      itemGroup: row.itemGroup || row["Item Group"] || "BOOK",
       issueQty: Number(row.issueQty || row["Issue Qty"] || 0),
       returnQty: Number(row.returnQty || row["Return Qty"] || 0),
       saleQty: Number(row.saleQty || row["Sale Qty"] || 0),
@@ -2733,6 +2734,7 @@
         bookId: item.bookId || item["Book ID"] || "",
         bookName: item.bookName || item["Book Name"] || "",
         bookType: item.bookType || item["Book Type"] || "",
+        itemGroup: item.itemGroup || item["Item Group"] || "BOOK",
         issueQty: Number(item.issueQty || item["Issue Qty"] || 0),
         returnQty: Number(item.returnQty || item["Return Qty"] || 0),
         saleQty: Number(item.saleQty || item["Sale Qty"] || 0),
@@ -2781,6 +2783,7 @@
         bookId: item.bookId || item["Book ID"] || "",
         bookName: item.bookName || item["Book Name"] || "",
         bookType: item.bookType || item["Book Type"] || "",
+        itemGroup: item.itemGroup || item["Item Group"] || "BOOK",
         openingQty: Number(item.openingQty || item["Opening Qty"] || 0),
         issueQty: Number(item.issueQty || item["Issue Qty"] || 0),
         returnQty: Number(item.returnQty || item["Return Qty"] || 0),
@@ -3098,23 +3101,22 @@
     const detailRows = unsettledActivityDetailRows(rows, activityId);
     const totalUnsettled = rows.reduce((sum, row) => sum + Number(row.unsettledQty || 0), 0);
     const selectedActivity = rows.find((row) => row.activityId === activityId);
-    const itemLabel = selectedActivity && String(selectedActivity.itemGroup || "BOOK").toUpperCase() === "PARAPHERNALIA" ? "Item" : "Book";
     if (!selectedActivity) {
       return '<div class="empty-state">Unsettled activity not found.</div>';
     }
     return `
       <div class="grid metrics reports-metrics activity-report-metrics">
         ${metric("Total Unsettled Qty of All Activities", totalUnsettled, "All unsettled quantities currently on record")}
-        ${metric("Selected Activity", selectedActivity.activityName || selectedActivity.activityId, "Book-wise unsettled details below")}
+        ${metric("Selected Activity", selectedActivity.activityName || selectedActivity.activityId, "Item-wise unsettled details below")}
       </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th>ERP Code</th>
-              <th>${itemLabel} Name</th>
+              <th>Item Name</th>
               <th>Category</th>
-              <th>${itemLabel} Quantity</th>
+              <th>Item Quantity</th>
               <th>Total Unsettled Qty of all activities</th>
             </tr>
           </thead>
@@ -3234,23 +3236,22 @@
     const detailRows = complimentaryActivityDetailRows(rows, activityId);
     const totalComplimentary = rows.reduce((sum, row) => sum + Number(row.complimentaryQty || 0), 0);
     const selectedActivity = rows.find((row) => row.activityId === activityId);
-    const itemLabel = selectedActivity && String(selectedActivity.itemGroup || "BOOK").toUpperCase() === "PARAPHERNALIA" ? "Item" : "Book";
     if (!selectedActivity) {
       return '<div class="empty-state">Complimentary activity not found.</div>';
     }
     return `
       <div class="grid metrics reports-metrics activity-report-metrics">
         ${metric("Total Complimentary Qty of All Activities", totalComplimentary, "All complimentary quantities currently on record")}
-        ${metric("Selected Activity", selectedActivity.activityName || selectedActivity.activityId, "Book-wise complimentary details below")}
+        ${metric("Selected Activity", selectedActivity.activityName || selectedActivity.activityId, "Item-wise complimentary details below")}
       </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th>ERP Code</th>
-              <th>${itemLabel} Name</th>
+              <th>Item Name</th>
               <th>Category</th>
-              <th>${itemLabel} Quantity</th>
+              <th>Item Quantity</th>
               <th>Total Complimentary Qty of all activities</th>
             </tr>
           </thead>
@@ -3391,7 +3392,7 @@
 
     const headerCells = [
       "<th rowspan=\"2\">ERP Code</th>",
-      "<th rowspan=\"2\">Book Name</th>",
+      "<th rowspan=\"2\">Item Name</th>",
       "<th rowspan=\"2\">Category</th>",
       "<th rowspan=\"2\">Sale Price</th>",
       `<th colspan="${Math.max(activityIds.length, 1)}">Activities</th>`
