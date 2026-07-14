@@ -386,6 +386,14 @@
     }
   }
 
+  async function ensureActivitiesLoaded() {
+    if (state.activities.length) {
+      return;
+    }
+    const activities = await window.erpApi.request("activities.list");
+    state.activities = Array.isArray(activities) ? activities.map(normalizeActivity) : [];
+  }
+
   async function ensureDocumentItemMastersLoaded() {
     const jobs = [];
     if (!state.books.length) {
@@ -4617,6 +4625,7 @@
   async function importUnsettledOpeningFile(file) {
     if (!file) return;
     try {
+      await ensureActivitiesLoaded();
       const name = file.name || "import";
       const lower = name.toLowerCase();
       let rows = [];
@@ -4664,7 +4673,7 @@
 
       const missingActivities = activityHeaders.filter((header, index) => !resolvedActivities[index]).map((header) => String(header || "").trim());
       if (missingActivities.length) {
-        throw new Error("Please create activities first");
+        throw new Error(`Missing activities in master: ${missingActivities.join(", ")}`);
       }
 
       const entriesByActivityId = new Map();
