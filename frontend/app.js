@@ -4289,6 +4289,8 @@
     const activeBooks = getDocumentItemsForGroup(itemGroup);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const draft = state.openingDraft;
+    const selectedWarehouse = state.warehouses.find((warehouse) => warehouse.warehouseId === draft.toWarehouseId || warehouse.rowId === draft.toWarehouseId) || null;
+    const showHalfQtyButton = /gambhiram|gmb/i.test(String(selectedWarehouse?.name || ""));
 
     modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
@@ -4318,6 +4320,7 @@
             <div class="line-editor-header">
               <h3>${getItemGroupLabel(itemGroup)}</h3>
               <div class="row-actions">
+                ${showHalfQtyButton ? '<button class="small-button" type="button" onclick="window.erpApp.halveOpeningQuantities()">Half Qty</button>' : ""}
                 <button class="small-button" type="button" onclick="window.erpApp.downloadOpeningSample()">Download Sample</button>
                 <button class="small-button" type="button" onclick="document.getElementById('openingImportInput').click()">Import Excel</button>
                 <button class="small-button" type="button" onclick="window.erpApp.addOpeningLine()">Add Line</button>
@@ -4345,7 +4348,7 @@
             ${bookPickerMarkup("opening", index, activeBooks, line, state.openingBookQueries[index] || "", "", itemGroup)}
             <label class="field">
               <span>Qty</span>
-              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateOpeningLine(${index}, 'quantity', this.value)" required>
+              <input type="number" min="0" step="0.5" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateOpeningLine(${index}, 'quantity', this.value)" required>
             </label>
             <label class="field">
               <span>Cost</span>
@@ -4379,6 +4382,19 @@
   function updateOpeningLine(index, key, value) {
     if (!state.openingLines[index]) return;
     state.openingLines[index][key] = key === "bookId" ? value : Number(value || 0);
+  }
+
+  function halveOpeningQuantities() {
+    if (!state.openingLines.length) {
+      showToast("No opening lines to adjust");
+      return;
+    }
+    state.openingLines = state.openingLines.map((line) => ({
+      ...line,
+      quantity: Number(line.quantity || 0) / 2
+    }));
+    renderOpeningStockModal();
+    showToast("Opening quantities halved");
   }
 
   function syncOpeningDraft() {
@@ -6069,6 +6085,7 @@
     addOpeningLine,
     removeOpeningLine,
     updateOpeningLine,
+    halveOpeningQuantities,
     downloadOpeningSample,
     importOpeningFile,
     downloadUnsettledOpeningSample,
