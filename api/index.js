@@ -136,6 +136,7 @@ function mapDevotee(row) {
 
 function mapWarehouse(row) {
   return {
+    rowId: row.id,
     warehouseId: row.warehouse_code,
     name: row.warehouse_name,
     type: row.warehouse_type,
@@ -690,6 +691,19 @@ async function documentsList(supabase) {
   return (data || []).map(mapDocument);
 }
 
+async function resolveWarehouseRef(supabase, value) {
+  const warehouseRef = String(value || "").trim();
+  if (!warehouseRef) return null;
+  const { data, error } = await supabase
+    .from("warehouses")
+    .select("id, warehouse_code")
+    .or(`id.eq.${warehouseRef},warehouse_code.eq.${warehouseRef}`)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error(`Warehouse not found: ${warehouseRef}`);
+  return data.id;
+}
+
 async function documentDetail(supabase, payload) {
   const documentId = String(payload.documentId || payload.documentCode || "").trim();
   if (!documentId) throw new Error("Document is required");
@@ -762,6 +776,8 @@ async function createDocument(supabase, payload, currentUser) {
   if (documentType === "ADJUSTMENT" && !["IN", "OUT"].includes(adjustmentDirection)) {
     throw new Error("Adjustment direction is required");
   }
+  const fromWarehouseId = await resolveWarehouseRef(supabase, payload.fromWarehouseId);
+  const toWarehouseId = await resolveWarehouseRef(supabase, payload.toWarehouseId);
   if (documentType === "RETURN") {
     const { data: existingIssue } = await supabase.from("documents").select("id").eq("activity_id", payload.activityId).in("document_type", ["ISSUE", "UNSETTLED_OPENING"]).limit(1);
     if (!existingIssue || !existingIssue.length) throw new Error("Return can be posted only for an activity that already has issue or unsettled opening entries");
@@ -773,8 +789,8 @@ async function createDocument(supabase, payload, currentUser) {
     document_code: docCode,
     document_type: documentType,
     document_date: documentDate,
-    from_warehouse_id: payload.fromWarehouseId || null,
-    to_warehouse_id: payload.toWarehouseId || null,
+    from_warehouse_id: fromWarehouseId,
+    to_warehouse_id: toWarehouseId,
     activity_id: payload.activityId || null,
     created_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null,
     status: payload.status || "Posted",
@@ -782,7 +798,7 @@ async function createDocument(supabase, payload, currentUser) {
   }).select("*").single();
   if (docError) throw docError;
 
-  const warehouseId = payload.toWarehouseId || payload.fromWarehouseId || null;
+  const warehouseId = toWarehouseId || fromWarehouseId || null;
   let lineNo = 0;
   for (const rawLine of lines) {
     lineNo += 1;
@@ -820,7 +836,7 @@ async function createDocument(supabase, payload, currentUser) {
         document_id: doc.id,
         document_line_id: line.id,
         ledger_date: documentDate,
-        warehouse_id: payload.fromWarehouseId || null,
+        warehouse_id: fromWarehouseId,
         activity_id: payload.activityId || null,
         item_id: item.id,
         movement_type: "TRANSFER_OUT",
@@ -833,7 +849,7 @@ async function createDocument(supabase, payload, currentUser) {
         document_id: doc.id,
         document_line_id: line.id,
         ledger_date: documentDate,
-        warehouse_id: payload.toWarehouseId || null,
+        warehouse_id: toWarehouseId,
         activity_id: payload.activityId || null,
         item_id: item.id,
         movement_type: "TRANSFER_IN",

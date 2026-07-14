@@ -1936,6 +1936,7 @@
 
   function normalizeWarehouse(row) {
     return {
+      rowId: row.rowId || row.id || row["Row ID"] || "",
       warehouseId: row.warehouseId || row["Warehouse ID"] || "",
       name: row.name || row["Warehouse Name"] || "",
       type: row.type || row.Type || "",
@@ -2811,7 +2812,7 @@
   }
 
   function getWarehouseName(warehouseId) {
-    const warehouse = state.warehouses.find((item) => item.warehouseId === warehouseId);
+    const warehouse = state.warehouses.find((item) => item.warehouseId === warehouseId || item.rowId === warehouseId);
     return warehouse ? warehouse.name : warehouseId || "-";
   }
 
