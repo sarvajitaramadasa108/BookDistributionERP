@@ -213,8 +213,9 @@ body.auth-mode .app-shell {
 
 .topbar p {
   margin: 5px 0 0;
-  color: var(--muted);
+  color: #6b341d;
   font-size: 14px;
+  font-weight: 600;
 }
 
 .user-chip {
@@ -878,6 +879,7 @@ tbody tr:hover td {
 
   .topbar p {
     font-size: 13px;
+    color: #7a4023;
   }
 
   .content {

@@ -993,7 +993,7 @@
     content.innerHTML = renderDocuments();
   }
 
-  function pendingSettlementsSummaryMarkup(rows) {
+  function pendingSettlementSummaryMarkup(rows) {
     return `
       <div class="table-wrap">
         <table>
@@ -1104,6 +1104,57 @@
     `;
   }
 
+  function pendingSettlementAdminActionsMarkup(detail) {
+    if (!isMainAdmin() || !detail || !Array.isArray(detail.books) || !detail.books.length) {
+      return "";
+    }
+    const bookOptions = detail.books.map((row) => `<option value="${escapeAttribute(row.bookId)}">${escapeHtml(row.bookName || row.bookId || "-")}</option>`).join("");
+    return `
+      <div class="section-gap">
+        <h3>Admin Actions</h3>
+        <form class="form-grid" id="pendingSettlementActionForm" onsubmit="window.erpApp.savePendingSettlementAdjustment(event)">
+          <label class="field">
+            <span>Action Type</span>
+            <select name="actionType" onchange="window.erpApp.onPendingSettlementActionChange(this.value)">
+              <option value="COMPLIMENTARY">Complimentary</option>
+              <option value="ADJUSTMENT">Correction</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Document Date</span>
+            <input name="documentDate" type="date" value="${escapeAttribute(new Date().toISOString().slice(0, 10))}" required>
+          </label>
+          <label class="field wide-field">
+            <span>Book</span>
+            <select name="bookId" required>
+              <option value="">Select book</option>
+              ${bookOptions}
+            </select>
+          </label>
+          <label class="field">
+            <span>Quantity</span>
+            <input name="quantity" type="number" min="1" step="1" value="1" required>
+          </label>
+          <label class="field">
+            <span>Direction</span>
+            <select name="adjustmentDirection" style="display:none">
+              <option value="OUT">Reduce stock</option>
+              <option value="IN">Add stock</option>
+            </select>
+          </label>
+          <label class="field wide-field">
+            <span>Notes</span>
+            <input name="notes" placeholder="Optional note">
+          </label>
+          <div class="form-actions wide-field">
+            <button class="button secondary" type="button" onclick="window.erpApp.onPendingSettlementActionChange('COMPLIMENTARY')">Complimentary</button>
+            <button class="button" type="submit">Post Action</button>
+          </div>
+        </form>
+      </div>
+    `;
+  }
+
   function pendingSettlementDetailMarkup(detail) {
     if (!detail) {
       return '<div class="empty-state">Choose a pending activity to view the settlement details.</div>';
@@ -1119,6 +1170,7 @@
       <div class="grid metrics">
         ${metric("Sale Due", money(Number(summary.saleDueAmount || 0)), "Total issue less return value")}
         ${metric("Paid", money(Number(summary.paidTotalAmount || 0)), "Cash plus online already received")}
+        ${metric("Complimentary", Number(summary.complimentaryQty || 0), "Marked as free issue")}
         ${metric("Pending", money(Number(summary.pendingAmount || 0)), "Still to be collected")}
         ${metric("Activity", escapeHtml(detail.activityId || "-"), "Settlement record")}
       </div>
@@ -1171,6 +1223,7 @@
         <h3>Payment History</h3>
         ${pendingSettlementPaymentsMarkup(detail)}
       </div>
+      ${pendingSettlementAdminActionsMarkup(detail)}
     `;
   }
 
@@ -1203,6 +1256,67 @@
       showToast("Settlement payment saved");
     } catch (error) {
       showToast(error.message || "Could not save settlement payment");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function onPendingSettlementActionChange(value) {
+    const form = document.getElementById("pendingSettlementActionForm");
+    if (!form) return;
+    const actionField = form.querySelector('select[name="actionType"]');
+    const directionField = form.querySelector('select[name="adjustmentDirection"]');
+    const actionType = String(value || "COMPLIMENTARY");
+    if (actionField) {
+      actionField.value = actionType;
+    }
+    if (directionField) {
+      directionField.style.display = actionType === "ADJUSTMENT" ? "" : "none";
+    }
+  }
+
+  async function savePendingSettlementAdjustment(event) {
+    event.preventDefault();
+    const detail = state.pendingSettlementDetails;
+    if (!detail) {
+      showToast("Select a pending settlement first");
+      return;
+    }
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const actionType = String(data.get("actionType") || "COMPLIMENTARY");
+    const quantity = Number(data.get("quantity") || 0);
+    if (quantity <= 0) {
+      showToast("Quantity must be greater than zero");
+      return;
+    }
+    const payload = {
+      documentType: actionType,
+      documentDate: data.get("documentDate"),
+      activityId: detail.activityId,
+      fromWarehouseId: detail.warehouseId,
+      toWarehouseId: detail.warehouseId,
+      adjustmentDirection: actionType === "ADJUSTMENT" ? String(data.get("adjustmentDirection") || "OUT") : "OUT",
+      notes: String(data.get("notes") || "").trim(),
+      lines: [{
+        bookId: String(data.get("bookId") || "").trim(),
+        quantity,
+        rate: 0
+      }]
+    };
+    if (!payload.lines[0].bookId) {
+      showToast("Select a book");
+      return;
+    }
+    setLoading(true);
+    try {
+      await window.erpApi.request("documents.create", payload);
+      state.pendingSettlementDetails = await window.erpApi.request("activity.pendingSettlementDetails", { activityId: detail.activityId });
+      state.pendingSettlements = await window.erpApi.request("activity.pendingSettlements");
+      content.innerHTML = await renderDocuments();
+      showToast(actionType === "COMPLIMENTARY" ? "Complimentary entry saved" : "Correction entry saved");
+    } catch (error) {
+      showToast(error.message || "Could not save adjustment");
     } finally {
       setLoading(false);
     }
@@ -3342,7 +3456,7 @@
   }
 
   function isMainAdmin() {
-    return Boolean(state.currentUser) || appConfig.currentUserRole === "mainAdmin";
+    return (state.currentUser && state.currentUser.role === "mainAdmin") || appConfig.currentUserRole === "mainAdmin";
   }
 
   function getActivityName(activityId) {
@@ -5739,6 +5853,8 @@
     showPendingSettlementDetails,
     backToPendingSettlementSummary,
     savePendingSettlementPayment,
+    savePendingSettlementAdjustment,
+    onPendingSettlementActionChange,
     settleActivity,
     openOpeningStockForm,
     openPurchaseForm,

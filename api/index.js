@@ -229,6 +229,12 @@ async function requireCurrentUser(supabase, payload, publicAction) {
   return currentUser;
 }
 
+function requireAdminUser(currentUser) {
+  if (!currentUser || currentUser.role !== "mainAdmin") {
+    throw new Error("Admin access required");
+  }
+}
+
 async function listTable(supabase, tableName, mapper) {
   const { data, error } = await supabase.from(tableName).select("*");
   if (error) throw error;
@@ -594,11 +600,14 @@ async function updateUser(supabase, payload) {
 }
 
 async function booksList(supabase) {
-  return itemsList(supabase, { itemGroup: "BOOK" });
+  return (await itemsList(supabase, { itemGroup: "BOOK" })).map((row) => {
+    const { purchasePrice, distributorPrice, ...publicRow } = row;
+    return publicRow;
+  });
 }
 
 async function booksAdminList(supabase) {
-  return booksList(supabase);
+  return itemsList(supabase, { itemGroup: "BOOK" });
 }
 
 async function booksCreate(supabase, payload) {
@@ -649,7 +658,10 @@ async function booksBulkUpsert(supabase, payload) {
 }
 
 async function devotionalItemsList(supabase) {
-  return itemsList(supabase, { itemGroup: "PARAPHERNALIA" });
+  return (await itemsList(supabase, { itemGroup: "PARAPHERNALIA" })).map((row) => {
+    const { purchasePrice, distributorPrice, ...publicRow } = row;
+    return publicRow;
+  });
 }
 
 async function warehousesList(supabase) {
@@ -677,7 +689,7 @@ async function documentsList(supabase) {
 }
 
 function documentTypeRequiresActivity(documentType) {
-  return ["ISSUE", "COMPLIMENTARY", "RETURN", "UNSETTLED_OPENING", "SALE"].includes(documentType);
+  return ["ISSUE", "COMPLIMENTARY", "RETURN", "UNSETTLED_OPENING", "SALE", "ADJUSTMENT"].includes(documentType);
 }
 
 async function createDocument(supabase, payload, currentUser) {
@@ -686,6 +698,7 @@ async function createDocument(supabase, payload, currentUser) {
   if (!allowed.includes(documentType)) throw new Error("Invalid document type");
   const lines = Array.isArray(payload.lines) ? payload.lines : [];
   const itemGroup = String(payload.itemGroup || "BOOK").trim().toUpperCase();
+  const adjustmentDirection = String(payload.adjustmentDirection || payload.adjustmentMode || "").trim().toUpperCase();
   if (!lines.length) throw new Error("At least one document line is required");
   if (documentTypeRequiresActivity(documentType) && !payload.activityId) throw new Error("Activity is required for this document");
   if ((documentType === "OPENING" || documentType === "UNSETTLED_OPENING" || documentType === "PURCHASE") && !payload.toWarehouseId && !payload.fromWarehouseId) {
@@ -693,6 +706,9 @@ async function createDocument(supabase, payload, currentUser) {
   }
   if (documentType === "TRANSFER" && (!payload.fromWarehouseId || !payload.toWarehouseId)) {
     throw new Error("Both warehouses are required for transfer");
+  }
+  if (documentType === "ADJUSTMENT" && !["IN", "OUT"].includes(adjustmentDirection)) {
+    throw new Error("Adjustment direction is required");
   }
   if (documentType === "RETURN") {
     const { data: existingIssue } = await supabase.from("documents").select("id").eq("activity_id", payload.activityId).in("document_type", ["ISSUE", "UNSETTLED_OPENING"]).limit(1);
@@ -774,7 +790,7 @@ async function createDocument(supabase, payload, currentUser) {
         rate,
         amount
       });
-    } else if (documentType === "OPENING" || documentType === "RECEIVE" || documentType === "RETURN" || documentType === "PURCHASE") {
+    } else if (documentType === "OPENING" || documentType === "RECEIVE" || documentType === "RETURN" || documentType === "PURCHASE" || (documentType === "ADJUSTMENT" && adjustmentDirection === "IN")) {
       ledgerRows.push({
         document_id: doc.id,
         document_line_id: line.id,
@@ -816,6 +832,57 @@ async function createDocument(supabase, payload, currentUser) {
   }
 
   return { documentId: doc.document_code };
+}
+
+async function correctDocument(supabase, payload, currentUser) {
+  const sourceDocumentId = String(payload.documentId || payload.sourceDocumentId || "").trim();
+  if (!sourceDocumentId) throw new Error("Document ID is required");
+  const { data: sourceDoc, error: lookupError } = await supabase
+    .from("documents")
+    .select("*")
+    .or(`document_code.eq.${sourceDocumentId},id.eq.${sourceDocumentId}`)
+    .maybeSingle();
+  if (lookupError) throw lookupError;
+  if (!sourceDoc) throw new Error("Document not found");
+  const { data: sourceLines, error: linesError } = await supabase.from("document_lines").select("*").eq("document_id", sourceDoc.id);
+  if (linesError) throw linesError;
+
+  const correctionType = String(payload.documentType || sourceDoc.document_type || "").trim();
+  const correctionPayload = {
+    documentType: correctionType,
+    documentDate: payload.documentDate || sourceDoc.document_date,
+    fromWarehouseId: payload.fromWarehouseId !== undefined ? payload.fromWarehouseId : sourceDoc.from_warehouse_id,
+    toWarehouseId: payload.toWarehouseId !== undefined ? payload.toWarehouseId : sourceDoc.to_warehouse_id,
+    activityId: payload.activityId !== undefined ? payload.activityId : sourceDoc.activity_id,
+    volunteerId: payload.volunteerId !== undefined ? payload.volunteerId : sourceDoc.created_by_user_id,
+    status: payload.status || "Posted",
+    notes: payload.notes || sourceDoc.notes || "",
+    itemGroup: payload.itemGroup || "BOOK",
+    adjustmentDirection: String(payload.adjustmentDirection || payload.adjustmentMode || "OUT").trim().toUpperCase(),
+    lines: Array.isArray(payload.lines) && payload.lines.length ? payload.lines : (sourceLines || []).map((line) => ({
+      bookId: line.item_id,
+      quantity: Number(line.quantity || 0),
+      rate: Number(line.rate || 0),
+      notes: line.line_notes || ""
+    }))
+  };
+
+  if (!correctionPayload.lines.length) {
+    throw new Error("At least one document line is required");
+  }
+
+  const { error: cancelError } = await supabase.from("documents").update({
+    status: "Corrected",
+    notes: [sourceDoc.notes, payload.correctionNote || ""].filter(Boolean).join(" | "),
+    updated_at: nowIso()
+  }).eq("id", sourceDoc.id);
+  if (cancelError) throw cancelError;
+
+  const result = await createDocument(supabase, correctionPayload, currentUser);
+  return {
+    originalDocumentId: sourceDoc.document_code,
+    correctedDocumentId: result.documentId
+  };
 }
 
 async function importUnsettledOpeningDocuments(supabase, payload, currentUser) {
@@ -993,6 +1060,7 @@ function buildSettlementSummaryForActivity(activity, context) {
     issueQty: 0,
     returnQty: 0,
     saleQty: 0,
+    complimentaryQty: 0,
     saleDueAmount: 0,
     paidCashAmount: 0,
     paidOnlineAmount: 0,
@@ -1040,10 +1108,14 @@ function buildSettlementSummaryForActivity(activity, context) {
         existingBookRow.returnQty += qty;
       } else if (doc.document_type === "SALE") {
         existingBookRow.saleQty += qty;
+      } else if (doc.document_type === "COMPLIMENTARY") {
+        existingBookRow.saleQty += qty;
       }
       if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") {
         existingBookRow.amount += qty * price;
       } else if (doc.document_type === "RETURN") {
+        existingBookRow.amount -= qty * price;
+      } else if (doc.document_type === "COMPLIMENTARY") {
         existingBookRow.amount -= qty * price;
       }
       bookIndex.set(bookKey, existingBookRow);
@@ -1064,6 +1136,7 @@ function buildSettlementSummaryForActivity(activity, context) {
     summary.returnQty += returnQty;
     summary.saleQty += saleQty;
     summary.saleDueAmount += amount;
+    summary.complimentaryQty += complimentaryQty;
   }
   const paidCashAmount = activityPayments.reduce((sum, row) => sum + Number(row.cash_amount || 0), 0);
   const paidOnlineAmount = activityPayments.reduce((sum, row) => sum + Number(row.online_amount || 0), 0);
@@ -1439,51 +1512,70 @@ async function main(request) {
       case "auth.me":
         return json(200, { ok: true, data: currentUser });
       case "users.list":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await usersList(supabase) });
       case "users.create":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await createUser(supabase, payload) });
       case "users.update":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await updateUser(supabase, payload) });
       case "dashboard.summary":
         return json(200, { ok: true, data: await dashboardSummary(supabase) });
       case "books.list":
-      case "books.adminList":
         return json(200, { ok: true, data: await booksList(supabase) });
+      case "books.adminList":
+        requireAdminUser(currentUser);
+        return json(200, { ok: true, data: await booksAdminList(supabase) });
       case "books.create":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await booksCreate(supabase, payload) });
       case "books.update":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await booksUpdate(supabase, payload) });
       case "books.delete":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await booksDelete(supabase, payload) });
       case "books.bulkUpsert":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await booksBulkUpsert(supabase, payload) });
       case "items.list":
         return json(200, { ok: true, data: await itemsList(supabase, payload) });
       case "items.create":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await itemsCreate(supabase, payload) });
       case "items.update":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await itemsUpdate(supabase, payload) });
       case "items.delete":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await itemsDelete(supabase, payload) });
       case "items.bulkUpsert":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await itemsBulkUpsert(supabase, payload) });
       case "devotionalItems.list":
         return json(200, { ok: true, data: await devotionalItemsList(supabase) });
       case "warehouses.list":
         return json(200, { ok: true, data: await warehousesList(supabase) });
       case "warehouses.create":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await createWarehouse(supabase, payload) });
       case "warehouses.update":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await updateWarehouse(supabase, payload) });
       case "warehouses.delete":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await deleteWarehouse(supabase, payload) });
       case "warehouses.bulkUpsert":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await warehousesBulkUpsert(supabase, payload) });
       case "devotees.list":
         return json(200, { ok: true, data: await devoteesList(supabase) });
       case "devotees.create":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await createDevotee(supabase, payload) });
       case "devotees.update":
+        requireAdminUser(currentUser);
         return json(200, { ok: true, data: await updateDevotee(supabase, payload) });
       case "activities.list":
         return json(200, { ok: true, data: await activitiesList(supabase) });
@@ -1497,6 +1589,9 @@ async function main(request) {
         return json(200, { ok: true, data: await documentsList(supabase) });
       case "documents.create":
         return json(200, { ok: true, data: await createDocument(supabase, payload, currentUser) });
+      case "documents.correct":
+        requireAdminUser(currentUser);
+        return json(200, { ok: true, data: await correctDocument(supabase, payload, currentUser) });
       case "documents.importUnsettledOpening":
         return json(200, { ok: true, data: await importUnsettledOpeningDocuments(supabase, payload, currentUser) });
       case "stock.current":
