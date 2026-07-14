@@ -4229,7 +4229,9 @@
     if (byCode) return byCode;
     if (!itemName) return null;
     const normalizedName = itemName.trim().toLowerCase();
-    return selectedCollection.find((item) => String(item.name || item["Item Name"] || item["Book Name"] || "").trim().toLowerCase() === normalizedName) || null;
+    return combinedCollection.find((item) => String(item.name || item["Item Name"] || item["Book Name"] || "").trim().toLowerCase() === normalizedName)
+      || selectedCollection.find((item) => String(item.name || item["Item Name"] || item["Book Name"] || "").trim().toLowerCase() === normalizedName)
+      || null;
   }
 
   function splitCsvLine(line) {
