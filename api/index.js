@@ -259,8 +259,9 @@ async function nextCode(supabase, tableName, columnName, prefix, pad = 4) {
 async function createItem(supabase, payload) {
   const erpCode = String(payload.erpCode || payload.bookId || "").trim();
   const name = String(payload.name || payload.bookName || "").trim();
-  if (!erpCode || !name) throw new Error("ERP Code and book name are required");
   const itemGroup = String(payload.itemGroup || payload.group || "BOOK").trim().toUpperCase();
+  const label = itemGroup === "PARAPHERNALIA" ? "item" : "book";
+  if (!erpCode || !name) throw new Error(`ERP Code and ${label} name are required`);
   const { data, error } = await supabase.from("items").insert({
     erp_code: erpCode,
     item_name: name,
@@ -362,8 +363,9 @@ async function itemsBulkUpsert(supabase, payload) {
 async function upsertItemIfMissing(supabase, line) {
   const erpCode = String(line.erpCode || line.bookId || "").trim();
   const name = String(line.bookName || line.name || "").trim();
-  if (!name) throw new Error("Book name is required for purchase input");
   const itemGroup = String(line.itemGroup || line.group || "BOOK").trim().toUpperCase();
+  const label = itemGroup === "PARAPHERNALIA" ? "item" : "book";
+  if (!name) throw new Error(`${label[0].toUpperCase()}${label.slice(1)} name is required for purchase input`);
   if (erpCode) {
     const existing = await findByCode(supabase, "items", "erp_code", erpCode);
     if (existing) return mapItem(existing);

@@ -1367,14 +1367,15 @@
   }
 
   function devotionalItemsTable(rows) {
+    const label = getItemLabel("PARAPHERNALIA");
     return `
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th>ERP Code</th>
-              <th>Name</th>
-              <th>Item Type</th>
+              <th>${label} Name</th>
+              <th>${label} Type</th>
               <th>Sale Price</th>
               ${isMainAdmin() ? "<th>Purchase Price</th>" : ""}
               <th>Status</th>
@@ -1599,8 +1600,8 @@
             <input name="name" required value="${escapeAttribute(book.name)}" placeholder="${label} Name">
           </label>
           <label class="field">
-            <span>Book Type</span>
-            <input name="bookType" required value="${escapeAttribute(bookType)}" placeholder="Maha Big Books">
+            <span>${label} Type</span>
+            <input name="bookType" required value="${escapeAttribute(bookType)}" placeholder="${label} Type">
           </label>
           <label class="field">
             <span>Sale Price</span>
@@ -1645,7 +1646,7 @@
     };
 
     if (!payload.erpCode || !payload.name || !payload.bookType) {
-      showToast("ERP code, book name, and book type are required");
+      showToast(`ERP code, ${getItemLabel(payload.itemGroup).toLowerCase()} name, and ${getItemLabel(payload.itemGroup).toLowerCase()} type are required`);
       return;
     }
 
@@ -3095,6 +3096,7 @@
     const detailRows = unsettledActivityDetailRows(rows, activityId);
     const totalUnsettled = rows.reduce((sum, row) => sum + Number(row.unsettledQty || 0), 0);
     const selectedActivity = rows.find((row) => row.activityId === activityId);
+    const itemLabel = selectedActivity && String(selectedActivity.itemGroup || "BOOK").toUpperCase() === "PARAPHERNALIA" ? "Item" : "Book";
     if (!selectedActivity) {
       return '<div class="empty-state">Unsettled activity not found.</div>';
     }
@@ -3108,9 +3110,9 @@
           <thead>
             <tr>
               <th>ERP Code</th>
-              <th>Book Name</th>
+              <th>${itemLabel} Name</th>
               <th>Category</th>
-              <th>Unsettled Quantity</th>
+              <th>${itemLabel} Quantity</th>
               <th>Total Unsettled Qty of all activities</th>
             </tr>
           </thead>
@@ -3230,6 +3232,7 @@
     const detailRows = complimentaryActivityDetailRows(rows, activityId);
     const totalComplimentary = rows.reduce((sum, row) => sum + Number(row.complimentaryQty || 0), 0);
     const selectedActivity = rows.find((row) => row.activityId === activityId);
+    const itemLabel = selectedActivity && String(selectedActivity.itemGroup || "BOOK").toUpperCase() === "PARAPHERNALIA" ? "Item" : "Book";
     if (!selectedActivity) {
       return '<div class="empty-state">Complimentary activity not found.</div>';
     }
@@ -3243,9 +3246,9 @@
           <thead>
             <tr>
               <th>ERP Code</th>
-              <th>Book Name</th>
+              <th>${itemLabel} Name</th>
               <th>Category</th>
-              <th>Complimentary Quantity</th>
+              <th>${itemLabel} Quantity</th>
               <th>Total Complimentary Qty of all activities</th>
             </tr>
           </thead>
@@ -4022,8 +4025,9 @@
   }
 
   function downloadDevotionalItemSample() {
+    const label = getItemLabel("PARAPHERNALIA");
     const rows = [
-      ["ERP Code", "Book Name", "Book Type", "Purchase Price", "Sale Price"],
+      ["ERP Code", `${label} Name`, `${label} Type`, "Purchase Price", "Sale Price"],
       ["DVA-0001", "Incense Sticks", "Puja Items", "25", "40"]
     ];
     if (window.XLSX && window.XLSX.utils) {
@@ -4121,8 +4125,8 @@
 
       const items = rows.map((row) => ({
         erpCode: String(row["ERP Code"] || row.erpCode || row["ERP"] || "").trim(),
-        name: String(row["Book Name"] || row["Item Name"] || row.name || row["Name"] || "").trim(),
-        bookType: String(row["Book Type"] || row["Item Type"] || row.bookType || row.category || "General").trim() || "General",
+        name: String(row["Item Name"] || row["Book Name"] || row.name || row["Name"] || "").trim(),
+        bookType: String(row["Item Type"] || row["Book Type"] || row.bookType || row.category || "General").trim() || "General",
         purchasePrice: Number(row["Purchase Price"] || row.purchasePrice || row["Distributor Price"] || 0),
         salePrice: Number(row["Sale Price"] || row.salePrice || row.mrp || 0),
         active: true
@@ -5744,6 +5748,8 @@
       }
 
       const rows = Array.isArray(detail.lines) ? detail.lines : [];
+      const usesItems = rows.some((line) => String(line.itemGroup || "").toUpperCase() === "PARAPHERNALIA");
+      const rowLabel = usesItems ? "Item" : "Book";
       const body = rows.map((line, index) => ([
         String(index + 1),
         String(line.erpCode || "-"),
@@ -5758,9 +5764,9 @@
         head: [[
           "SNo",
           "ERP Code",
-          "Book Name",
+          `${rowLabel} Name`,
           "Category",
-          "Qty",
+          `${rowLabel} Qty`,
           "Rate",
           "Amount"
         ]],
