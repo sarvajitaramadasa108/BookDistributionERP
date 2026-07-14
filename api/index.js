@@ -688,6 +688,56 @@ async function documentsList(supabase) {
   return (data || []).map(mapDocument);
 }
 
+async function documentDetail(supabase, payload) {
+  const documentId = String(payload.documentId || payload.documentCode || "").trim();
+  if (!documentId) throw new Error("Document is required");
+  const { data: doc, error: docError } = await supabase.from("documents").select("*").eq("document_code", documentId).maybeSingle();
+  if (docError) throw docError;
+  if (!doc) throw new Error("Document not found");
+  const [linesResult, itemsResult, warehousesResult, activitiesResult] = await Promise.all([
+    supabase.from("document_lines").select("*").eq("document_id", doc.id).order("line_no", { ascending: true }),
+    supabase.from("items").select("*"),
+    supabase.from("warehouses").select("*"),
+    supabase.from("activities").select("*")
+  ]);
+  if (linesResult.error) throw linesResult.error;
+  if (itemsResult.error) throw itemsResult.error;
+  if (warehousesResult.error) throw warehousesResult.error;
+  if (activitiesResult.error) throw activitiesResult.error;
+  const itemById = Object.fromEntries((itemsResult.data || []).map((row) => [row.id, row]));
+  const warehouseById = Object.fromEntries((warehousesResult.data || []).map((row) => [row.id, row]));
+  const activityById = Object.fromEntries((activitiesResult.data || []).map((row) => [row.id, row]));
+  const lines = (linesResult.data || []).map((line, index) => {
+    const item = itemById[line.item_id] || {};
+    return {
+      lineNo: Number(line.line_no || index + 1),
+      erpCode: item.erp_code || line.item_id || "",
+      bookName: item.item_name || "",
+      bookType: item.item_type || "",
+      itemGroup: item.item_group || "",
+      quantity: Number(line.quantity || 0),
+      rate: Number(line.rate || 0),
+      amount: Number(line.amount || Number(line.quantity || 0) * Number(line.rate || 0)),
+      notes: line.line_notes || "",
+      rawItemId: line.item_id || ""
+    };
+  });
+  return {
+    documentId: doc.document_code,
+    documentType: doc.document_type,
+    documentDate: doc.document_date,
+    status: doc.status,
+    notes: doc.notes || "",
+    fromWarehouseId: doc.from_warehouse_id || "",
+    fromWarehouseName: warehouseById[doc.from_warehouse_id || ""]?.warehouse_name || "",
+    toWarehouseId: doc.to_warehouse_id || "",
+    toWarehouseName: warehouseById[doc.to_warehouse_id || ""]?.warehouse_name || "",
+    activityId: doc.activity_id || "",
+    activityName: activityById[doc.activity_id || ""]?.activity_name || "",
+    lines
+  };
+}
+
 function documentTypeRequiresActivity(documentType) {
   return ["ISSUE", "COMPLIMENTARY", "RETURN", "UNSETTLED_OPENING", "SALE", "ADJUSTMENT"].includes(documentType);
 }
@@ -1587,6 +1637,8 @@ async function main(request) {
         return json(200, { ok: true, data: await deleteActivity(supabase, payload) });
       case "documents.list":
         return json(200, { ok: true, data: await documentsList(supabase) });
+      case "documents.detail":
+        return json(200, { ok: true, data: await documentDetail(supabase, payload) });
       case "documents.create":
         return json(200, { ok: true, data: await createDocument(supabase, payload, currentUser) });
       case "documents.correct":

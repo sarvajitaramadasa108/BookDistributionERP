@@ -559,6 +559,7 @@
               <th>Activity</th>
               <th>Status</th>
               <th>Notes</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -572,6 +573,11 @@
                 <td>${escapeHtml(getActivityName(row.activityId))}</td>
                 <td>${escapeHtml(row.status || "-")}</td>
                 <td>${escapeHtml(row.notes || "-")}</td>
+                <td>
+                  <div class="row-actions">
+                    <button class="small-button" type="button" onclick="window.erpApp.downloadDocumentPdf('${escapeAttribute(row.documentId)}')">PDF</button>
+                  </div>
+                </td>
               </tr>
             `).join("")}
           </tbody>
@@ -2123,6 +2129,22 @@
       status: row.status || row.Status || "",
       notes: row.notes || row.Notes || ""
     };
+  }
+
+  function documentTypeLabel(documentType) {
+    const labels = {
+      OPENING: "Opening Stock",
+      UNSETTLED_OPENING: "Unsettled Issue Entry",
+      PURCHASE: "Purchase Stock Entry",
+      ISSUE: "Issue Entry",
+      RECEIVE: "Returns Entry",
+      RETURN: "Returns Entry",
+      SALE: "Sale Entry",
+      TRANSFER: "Transfer Entry",
+      COMPLIMENTARY: "Complimentary Issue Entry",
+      ADJUSTMENT: "Adjustment Entry"
+    };
+    return labels[String(documentType || "").toUpperCase()] || String(documentType || "-").replace(/_/g, " ");
   }
 
   function normalizeStockRow(row) {
@@ -5641,6 +5663,166 @@
     return start || end || "-";
   }
 
+  async function downloadDocumentPdf(documentId) {
+    if (!documentId) {
+      showToast("Document not found");
+      return;
+    }
+    const jsPdfNamespace = window.jspdf || {};
+    const JsPdfCtor = jsPdfNamespace.jsPDF;
+    if (!JsPdfCtor) {
+      showToast("PDF library is not loaded");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const detail = await window.erpApi.request("documents.detail", { documentId });
+      const pdf = new JsPdfCtor({ orientation: "p", unit: "mm", format: "a4" });
+      if (typeof pdf.autoTable !== "function") {
+        throw new Error("PDF table plugin is not loaded");
+      }
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 11;
+      const accent = [120, 70, 30];
+      const gold = [196, 153, 61];
+      const soft = [248, 243, 233];
+
+      pdf.setFillColor(...accent);
+      pdf.rect(0, 0, pageWidth, 34, "F");
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(17);
+      pdf.text("HARE KRISHNA MOVEMENT VISAKHAPATNAM", pageWidth / 2, 13, { align: "center" });
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(10);
+      pdf.text("Stock Document", pageWidth / 2, 20, { align: "center" });
+      pdf.setFontSize(9);
+      pdf.text(`${documentTypeLabel(detail.documentType)} • ${detail.status || "Posted"}`, pageWidth / 2, 26, { align: "center" });
+
+      let y = 41;
+      const infoBoxes = [
+        { label: "Stock Doc ID", value: detail.documentId || "-" },
+        { label: "Date", value: toInputDate(detail.documentDate) || "-" },
+        { label: "Activity ID", value: detail.activityId || "-" },
+        { label: "Activity Name", value: detail.activityName || "-" },
+        { label: "From", value: detail.fromWarehouseName || detail.fromWarehouseId || "-" },
+        { label: "To", value: detail.toWarehouseName || detail.toWarehouseId || "-" }
+      ];
+      const boxWidth = (pageWidth - (margin * 2) - 4) / 2;
+      const boxHeight = 14;
+      pdf.setDrawColor(...gold);
+      pdf.setLineWidth(0.2);
+      pdf.setFontSize(8);
+      pdf.setTextColor(70, 50, 25);
+      infoBoxes.forEach((box, index) => {
+        const col = index % 2;
+        const row = Math.floor(index / 2);
+        const x = margin + (col * (boxWidth + 4));
+        const boxY = y + (row * (boxHeight + 3));
+        pdf.setFillColor(...soft);
+        pdf.roundedRect(x, boxY, boxWidth, boxHeight, 2, 2, "FD");
+        pdf.setFont("helvetica", "bold");
+        pdf.text(box.label, x + 2, boxY + 5);
+        pdf.setFont("helvetica", "normal");
+        pdf.text(String(box.value), x + 2, boxY + 10);
+      });
+
+      y += 2 * (boxHeight + 3) + 4;
+      if (detail.notes) {
+        const noteLines = pdf.splitTextToSize(String(detail.notes), pageWidth - (margin * 2) - 4);
+        const noteBoxHeight = Math.max(11, (noteLines.length * 4) + 6);
+        pdf.setFillColor(255, 252, 244);
+        pdf.roundedRect(margin, y, pageWidth - (margin * 2), noteBoxHeight, 2, 2, "FD");
+        pdf.setFont("helvetica", "bold");
+        pdf.setTextColor(70, 50, 25);
+        pdf.text("Notes", margin + 2, y + 4);
+        pdf.setFont("helvetica", "normal");
+        pdf.text(noteLines, margin + 2, y + 8);
+        y += noteBoxHeight + 2;
+      }
+
+      const rows = Array.isArray(detail.lines) ? detail.lines : [];
+      const body = rows.map((line, index) => ([
+        String(index + 1),
+        String(line.erpCode || "-"),
+        String(line.bookName || "-"),
+        String(line.bookType || "-"),
+        String(Number(line.quantity || 0)),
+        money(line.rate || 0).replace(/^Rs\.\s*/, ""),
+        money(line.amount || 0).replace(/^Rs\.\s*/, "")
+      ]));
+      pdf.autoTable({
+        startY: y + 2,
+        head: [[
+          "SNo",
+          "ERP Code",
+          "Book Name",
+          "Category",
+          "Qty",
+          "Rate",
+          "Amount"
+        ]],
+        body,
+        theme: "grid",
+        margin: { left: margin, right: margin },
+        styles: {
+          font: "helvetica",
+          fontSize: 8,
+          cellPadding: 2,
+          overflow: "linebreak",
+          valign: "middle",
+          textColor: [40, 35, 30]
+        },
+        headStyles: {
+          fillColor: accent,
+          textColor: 255,
+          fontStyle: "bold"
+        },
+        alternateRowStyles: {
+          fillColor: [252, 248, 240]
+        },
+        columnStyles: {
+          0: { cellWidth: 12, halign: "center" },
+          4: { cellWidth: 14, halign: "right" },
+          5: { cellWidth: 22, halign: "right" },
+          6: { cellWidth: 24, halign: "right" }
+        },
+        didDrawPage: (data) => {
+          if (data.pageNumber > 1) {
+            pdf.setFillColor(...accent);
+            pdf.rect(0, 0, pageWidth, 12, "F");
+            pdf.setTextColor(255, 255, 255);
+            pdf.setFontSize(9);
+            pdf.text("HARE KRISHNA MOVEMENT VISAKHAPATNAM", pageWidth / 2, 7, { align: "center" });
+            pdf.setTextColor(40, 35, 30);
+          }
+        }
+      });
+
+      const totalQty = rows.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+      const totalAmount = rows.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+      const finalY = pdf.lastAutoTable ? pdf.lastAutoTable.finalY + 6 : y + 70;
+      if (finalY < pageHeight - 26) {
+        pdf.setDrawColor(...gold);
+        pdf.setFillColor(255, 252, 244);
+        pdf.roundedRect(margin, finalY, pageWidth - (margin * 2), 18, 2, 2, "FD");
+        pdf.setFont("helvetica", "bold");
+        pdf.setTextColor(70, 50, 25);
+        pdf.text(`Total Qty: ${totalQty}`, margin + 3, finalY + 7);
+        pdf.text(`Total Amount: ${money(totalAmount)}`, margin + 3, finalY + 13);
+      }
+
+      const safeFileName = String(detail.documentId || "stock-document").replace(/[\\/:*?"<>|]+/g, "_");
+      pdf.save(`${safeFileName}.pdf`);
+    } catch (error) {
+      showToast(error.message || "Could not generate PDF");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function metric(label, value, note) {
     return `
       <article class="card metric-card">
@@ -5868,6 +6050,7 @@
     showComplimentaryActivityDetails,
     backToComplimentarySummary,
     setDocumentsMode,
+    downloadDocumentPdf,
     showPendingSettlementDetails,
     backToPendingSettlementSummary,
     savePendingSettlementPayment,
