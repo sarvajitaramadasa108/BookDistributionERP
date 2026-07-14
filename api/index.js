@@ -694,11 +694,10 @@ async function documentsList(supabase) {
 async function resolveWarehouseRef(supabase, value) {
   const warehouseRef = String(value || "").trim();
   if (!warehouseRef) return null;
-  const { data, error } = await supabase
-    .from("warehouses")
-    .select("id, warehouse_code")
-    .or(`id.eq.${warehouseRef},warehouse_code.eq.${warehouseRef}`)
-    .maybeSingle();
+  const query = supabase.from("warehouses").select("id, warehouse_code");
+  const { data, error } = isUuidLike(warehouseRef)
+    ? await query.eq("id", warehouseRef).maybeSingle()
+    : await query.eq("warehouse_code", warehouseRef).maybeSingle();
   if (error) throw error;
   if (!data) throw new Error(`Warehouse not found: ${warehouseRef}`);
   return data.id;
