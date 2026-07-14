@@ -4290,8 +4290,6 @@
     const activeBooks = getDocumentItemsForGroup(itemGroup);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const draft = state.openingDraft;
-    const selectedWarehouse = state.warehouses.find((warehouse) => warehouse.warehouseId === draft.toWarehouseId || warehouse.rowId === draft.toWarehouseId) || null;
-    const isGambhiramWarehouse = /gambhiram|gmb/i.test(String(selectedWarehouse?.name || ""));
 
     modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
@@ -4322,7 +4320,7 @@
               <h3>${getItemGroupLabel(itemGroup)}</h3>
               <div class="row-actions">
                 <button class="small-button" type="button" onclick="window.erpApp.halveOpeningQuantities()">Half Qty</button>
-                ${isGambhiramWarehouse ? '<button class="small-button" type="button" onclick="window.erpApp.halveWarehouseOpeningStock()">Half Warehouse Stock</button>' : ""}
+                <button class="small-button" type="button" onclick="window.erpApp.halveWarehouseOpeningStock()">Half Warehouse Stock</button>
                 <button class="small-button" type="button" onclick="window.erpApp.downloadOpeningSample()">Download Sample</button>
                 <button class="small-button" type="button" onclick="document.getElementById('openingImportInput').click()">Import Excel</button>
                 <button class="small-button" type="button" onclick="window.erpApp.addOpeningLine()">Add Line</button>
