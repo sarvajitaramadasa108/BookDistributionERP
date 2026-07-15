@@ -4228,6 +4228,42 @@
     });
   }
 
+  async function parseSpreadsheetRows(file) {
+    const name = file.name || "import";
+    const lower = name.toLowerCase();
+    if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+      if (!window.XLSX) {
+        throw new Error("Excel import library is not loaded");
+      }
+      const buffer = await file.arrayBuffer();
+      const workbook = window.XLSX.read(buffer, { type: "array" });
+      const sheet = workbook.SheetNames[0];
+      const matrix = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { header: 1, defval: "" });
+      const headers = (matrix[0] || []).map((header) => String(header || "").trim());
+      return {
+        headers,
+        rows: matrix.slice(1).filter((row) => Array.isArray(row) && row.some((cell) => String(cell || "").trim() !== ""))
+      };
+    }
+
+    const text = await file.text();
+    const lines = String(text || "").trim().split(/\r?\n/).filter(Boolean);
+    if (!lines.length) return { headers: [], rows: [] };
+    const headers = splitCsvLine(lines[0]).map((header) => header.trim());
+    const rows = lines.slice(1).map((line) => splitCsvLine(line));
+    return { headers, rows };
+  }
+
+  function spreadsheetRowToObject(headers, rowValues) {
+    const row = {};
+    (headers || []).forEach((header, index) => {
+      const key = String(header || "").trim();
+      if (!key) return;
+      row[key] = rowValues && rowValues[index] !== undefined ? rowValues[index] : "";
+    });
+    return row;
+  }
+
   function resolveImportedItemFromRow(row, itemGroup) {
     const selectedCollection = getItemCollection(itemGroup);
     const combinedCollection = [...state.books, ...state.devotionalItems];
@@ -4626,34 +4662,22 @@
     if (!file) return;
     try {
       await ensureActivitiesLoaded();
-      const name = file.name || "import";
-      const lower = name.toLowerCase();
-      let rows = [];
-      if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
-        if (!window.XLSX) {
-          showToast("Excel import library is not loaded");
-          return;
-        }
-        const buffer = await file.arrayBuffer();
-        const workbook = window.XLSX.read(buffer, { type: "array" });
-        const sheet = workbook.SheetNames[0];
-        rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheet], { defval: "" });
-      } else {
-        const text = await file.text();
-        rows = parseCsvRows(text);
-      }
-
-      if (!rows.length) {
+      const parsed = await parseSpreadsheetRows(file);
+      if (!parsed.rows.length) {
         showToast("No rows found in the file");
         return;
       }
 
       const itemGroup = normalizeItemGroup(state.unsettledDraft.itemGroup || "BOOK");
       const singular = getItemGroupSingularLabel(itemGroup);
-      const fields = Object.keys(rows[0] || {});
       const fixedFields = new Set(["ERP Code", "Book Name", "Item Name", "ERP", "Book", "Item"]);
-      const activityHeaders = fields.filter((field) => !fixedFields.has(String(field).trim()));
-      if (!activityHeaders.length) {
+      const activityColumns = parsed.headers
+        .map((header, columnIndex) => ({
+          header: String(header || "").trim(),
+          index: columnIndex
+        }))
+        .filter((column) => !fixedFields.has(column.header));
+      if (!activityColumns.length) {
         showToast("Add activity columns to the file");
         return;
       }
@@ -4666,18 +4690,19 @@
         }
       });
 
-      const resolvedActivities = activityHeaders.map((header) => {
-        const key = String(header || "").trim().toLowerCase();
+      const resolvedActivities = activityColumns.map((column) => {
+        const key = String(column.header || "").trim().toLowerCase();
         return activityLookup.get(key) || null;
       });
 
-      const missingActivities = activityHeaders.filter((header, index) => !resolvedActivities[index]).map((header) => String(header || "").trim());
+      const missingActivities = activityColumns.filter((column, index) => !resolvedActivities[index]).map((column) => String(column.header || "").trim());
       if (missingActivities.length) {
         throw new Error(`Missing activities in master: ${missingActivities.join(", ")}`);
       }
 
       const entriesByActivityId = new Map();
-      for (const row of rows) {
+      for (const rowValues of parsed.rows) {
+        const row = spreadsheetRowToObject(parsed.headers, rowValues);
         const erpCode = String(row["ERP Code"] || row.erpCode || row["ERP"] || "").trim();
         const bookName = String(row[`${singular} Name`] || row["Item Name"] || row["Book Name"] || row.bookName || row["Book"] || row["Item"] || "").trim();
         const book = resolveImportedItemFromRow(row, itemGroup);
@@ -4685,10 +4710,10 @@
           throw new Error(`${getItemLabel(itemGroup).toLowerCase()} not found: ${erpCode || bookName || "-"}`);
         }
         const bookId = book.erpCode || book.bookId || erpCode || "";
-        activityHeaders.forEach((header, index) => {
+        activityColumns.forEach((column, index) => {
           const activity = resolvedActivities[index];
           if (!activity) return;
-          const quantity = Number(row[header] || row[String(header).trim()] || 0);
+          const quantity = Number(rowValues[column.index] || 0);
           if (quantity <= 0) return;
           const entry = entriesByActivityId.get(activity.activityId) || {
             activityId: activity.activityId,
