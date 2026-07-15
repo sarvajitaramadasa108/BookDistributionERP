@@ -4661,6 +4661,8 @@
   async function importUnsettledOpeningFile(file) {
     if (!file) return;
     try {
+      const form = document.getElementById("unsettledForm");
+      const formData = form ? new FormData(form) : null;
       await ensureActivitiesLoaded();
       const parsed = await parseSpreadsheetRows(file);
       if (!parsed.rows.length) {
@@ -4735,9 +4737,9 @@
       }
 
       const payload = {
-        documentDate: state.unsettledDraft.documentDate || new Date().toISOString().slice(0, 10),
-        fromWarehouseId: state.unsettledDraft.fromWarehouseId || state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
-        notes: state.unsettledDraft.notes || "Legacy unsettled issue opening",
+        documentDate: (formData && formData.get("documentDate")) || state.unsettledDraft.documentDate || new Date().toISOString().slice(0, 10),
+        fromWarehouseId: (formData && (formData.get("fromWarehouseId") || formData.get("toWarehouseId"))) || state.unsettledDraft.fromWarehouseId || state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
+        notes: (formData && formData.get("notes")) || state.unsettledDraft.notes || "Legacy unsettled issue opening",
         entries
       };
 
