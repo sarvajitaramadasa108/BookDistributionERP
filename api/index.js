@@ -208,6 +208,33 @@ function mapDocument(row) {
   };
 }
 
+function mapOnlineClassRegistration(row, warehousesById = {}, itemsById = {}) {
+  const warehouse = warehousesById[row.source_warehouse_id] || {};
+  const item = itemsById[row.item_id] || {};
+  return {
+    registrationId: row.id,
+    language: row.language || "English",
+    sourceWarehouseId: row.source_warehouse_id || "",
+    sourceWarehouseCode: row.source_warehouse_code || warehouse.warehouse_code || "",
+    sourceWarehouseName: row.source_warehouse_name || warehouse.warehouse_name || "",
+    utmSource: row.utm_source || "",
+    utmMedium: row.utm_medium || "",
+    utmCampaign: row.utm_campaign || "",
+    name: row.name || "",
+    whatsappNumber: row.whatsapp_number || "",
+    age: row.age,
+    occupation: row.occupation || "",
+    stayArea: row.stay_area || "",
+    itemId: row.item_id || "",
+    itemErpCode: row.item_erp_code || item.erp_code || "",
+    itemName: row.item_name || item.item_name || "",
+    itemGroup: row.item_group || item.item_group || "BOOK",
+    interestedInClasses: row.interested_in_classes || false,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 async function getSessionUser(supabase, sessionToken) {
   if (!sessionToken) return null;
   const bootstrapAccount = parseBootstrapSessionToken(sessionToken);
@@ -718,6 +745,65 @@ async function documentsList(supabase) {
   return (data || []).map(mapDocument);
 }
 
+async function onlineClassRegistrationsList(supabase) {
+  const [warehousesResult, itemsResult, registrationsResult] = await Promise.all([
+    supabase.from("warehouses").select("*"),
+    supabase.from("items").select("*"),
+    supabase.from("online_class_registrations").select("*").order("created_at", { ascending: false })
+  ]);
+  if (warehousesResult.error) throw warehousesResult.error;
+  if (itemsResult.error) throw itemsResult.error;
+  if (registrationsResult.error) throw registrationsResult.error;
+  const warehousesById = Object.fromEntries((warehousesResult.data || []).map((row) => [row.id, row]));
+  const itemsById = Object.fromEntries((itemsResult.data || []).map((row) => [row.id, row]));
+  return (registrationsResult.data || []).map((row) => mapOnlineClassRegistration(row, warehousesById, itemsById));
+}
+
+async function createOnlineClassRegistration(supabase, payload) {
+  const language = String(payload.language || "English").trim() || "English";
+  if (!["English", "Telugu"].includes(language)) throw new Error("Language is required");
+  const sourceWarehouseRow = await resolveWarehouseRow(supabase, payload.sourceWarehouseId || payload.warehouseId || payload.sourceWarehouseCode || payload.sourceWarehouseName || "");
+  if (!sourceWarehouseRow) throw new Error("Warehouse is required");
+  const itemRow = await resolveItemRow(supabase, payload.itemId || payload.erpCode || payload.bookId || "");
+  if (!itemRow) throw new Error("Selected book is required");
+  const name = String(payload.name || "").trim();
+  const whatsappNumber = String(payload.whatsappNumber || "").replace(/\D/g, "").trim();
+  const age = payload.age === undefined || payload.age === null || payload.age === "" ? null : Number.parseInt(payload.age, 10);
+  const occupation = String(payload.occupation || payload.workingStatus || "").trim();
+  const stayArea = String(payload.stayArea || payload.areaOfStay || "").trim();
+  if (!name) throw new Error("Name is required");
+  if (whatsappNumber.length !== 10) throw new Error("WhatsApp number is required");
+  if (!occupation) throw new Error("Working / Student is required");
+  if (!stayArea) throw new Error("Area of stay is required");
+  if (Number.isNaN(age) && payload.age !== undefined && payload.age !== null && payload.age !== "") {
+    throw new Error("Age must be a number");
+  }
+
+  const { data, error } = await supabase.from("online_class_registrations").insert({
+    language,
+    source_warehouse_id: sourceWarehouseRow.id,
+    source_warehouse_code: sourceWarehouseRow.warehouse_code || "",
+    source_warehouse_name: sourceWarehouseRow.warehouse_name || "",
+    utm_source: String(payload.utmSource || payload.utm_source || sourceWarehouseRow.warehouse_code || sourceWarehouseRow.warehouse_name || "").trim(),
+    utm_medium: String(payload.utmMedium || payload.utm_medium || "online_classes").trim() || "online_classes",
+    utm_campaign: String(payload.utmCampaign || payload.utm_campaign || "").trim(),
+    name,
+    whatsapp_number: whatsappNumber,
+    age: Number.isNaN(age) ? null : age,
+    occupation,
+    stay_area: stayArea,
+    item_id: itemRow.id,
+    item_erp_code: itemRow.erp_code || "",
+    item_name: itemRow.item_name || "",
+    item_group: itemRow.item_group || "BOOK",
+    interested_in_classes: Boolean(payload.interestedInClasses || payload.interested_in_classes)
+  }).select("*").single();
+  if (error) throw error;
+  const registrations = await onlineClassRegistrationsList(supabase);
+  const created = registrations.find((row) => row.registrationId === data.id);
+  return created || mapOnlineClassRegistration(data, { [sourceWarehouseRow.id]: sourceWarehouseRow }, { [itemRow.id]: itemRow });
+}
+
 async function resolveWarehouseRef(supabase, value) {
   const warehouseRef = String(value || "").trim();
   if (!warehouseRef) return null;
@@ -728,6 +814,47 @@ async function resolveWarehouseRef(supabase, value) {
   if (error) throw error;
   if (!data) throw new Error(`Warehouse not found: ${warehouseRef}`);
   return data.id;
+}
+
+async function resolveWarehouseRow(supabase, value) {
+  const warehouseRef = String(value || "").trim();
+  if (!warehouseRef) return null;
+  const { data: byId, error: byIdError } = isUuidLike(warehouseRef)
+    ? await supabase.from("warehouses").select("id, warehouse_code, warehouse_name").eq("id", warehouseRef).maybeSingle()
+    : { data: null, error: null };
+  if (byIdError) throw byIdError;
+  if (byId) return byId;
+  const { data: byCode, error: byCodeError } = await supabase.from("warehouses").select("id, warehouse_code, warehouse_name").eq("warehouse_code", warehouseRef).maybeSingle();
+  if (byCodeError) throw byCodeError;
+  if (byCode) return byCode;
+  const { data: byName, error: byNameError } = await supabase.from("warehouses").select("id, warehouse_code, warehouse_name").eq("warehouse_name", warehouseRef).maybeSingle();
+  if (byNameError) throw byNameError;
+  if (byName) return byName;
+  throw new Error(`Warehouse not found: ${warehouseRef}`);
+}
+
+async function resolveItemRef(supabase, value) {
+  const itemRef = String(value || "").trim();
+  if (!itemRef) return null;
+  const query = supabase.from("items").select("id, erp_code");
+  const { data, error } = isUuidLike(itemRef)
+    ? await query.eq("id", itemRef).maybeSingle()
+    : await query.eq("erp_code", itemRef).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error(`Item not found: ${itemRef}`);
+  return data.id;
+}
+
+async function resolveItemRow(supabase, value) {
+  const itemRef = String(value || "").trim();
+  if (!itemRef) return null;
+  const query = supabase.from("items").select("id, erp_code, item_name, item_group");
+  const { data, error } = isUuidLike(itemRef)
+    ? await query.eq("id", itemRef).maybeSingle()
+    : await query.eq("erp_code", itemRef).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error(`Item not found: ${itemRef}`);
+  return data;
 }
 
 async function documentDetail(supabase, payload) {
@@ -1648,7 +1775,7 @@ async function main(request) {
     const action = body.action;
     const payload = body.payload || {};
     const supabase = getSupabase();
-    const publicActions = new Set(["auth.login", "auth.logout", "auth.me"]);
+    const publicActions = new Set(["auth.login", "auth.logout", "auth.me", "warehouses.list", "books.list", "stock.current", "onlineClasses.submit"]);
     const currentUser = await requireCurrentUser(supabase, payload, publicActions.has(action));
 
     switch (action) {
@@ -1764,6 +1891,11 @@ async function main(request) {
         return json(200, { ok: true, data: await getActivityMonthlyReport(supabase, payload) });
       case "reports.warehouseMonthly":
         return json(200, { ok: true, data: await getWarehouseMonthlyReport(supabase, payload) });
+      case "onlineClasses.submit":
+        return json(200, { ok: true, data: await createOnlineClassRegistration(supabase, payload) });
+      case "onlineClasses.list":
+        requireAdminUser(currentUser);
+        return json(200, { ok: true, data: await onlineClassRegistrationsList(supabase) });
       default:
         return json(400, { ok: false, error: `Unknown action: ${action}` });
     }

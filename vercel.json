@@ -5,6 +5,18 @@
       "handle": "filesystem"
     },
     {
+      "src": "/online-classes",
+      "dest": "/frontend/online-classes.html"
+    },
+    {
+      "src": "/online-classes/",
+      "dest": "/frontend/online-classes.html"
+    },
+    {
+      "src": "/online-classes.html",
+      "dest": "/frontend/online-classes.html"
+    },
+    {
       "src": "/assets/(.*)",
       "dest": "/frontend/assets/$1"
     },

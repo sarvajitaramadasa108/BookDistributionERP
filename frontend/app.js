@@ -28,6 +28,8 @@
     purchaseLines: [],
     purchaseImportName: "",
     documents: [],
+    onlineClasses: [],
+    onlineClassSearch: "",
     issueDraft: {},
     issueLines: [],
     issueBookQueries: [],
@@ -78,6 +80,7 @@
     warehouses: ["Warehouses", "Main and event stock locations.", renderWarehouses],
     activities: ["Activities", "Daily stalls, marathons, events, and closing workflow.", renderActivities],
     documents: ["Stock Documents", "Issue, receive, sale, return, transfer, and adjustment entries.", renderDocuments],
+    onlineClasses: ["Online Classes", "Public volunteer registrations for online Bhagavad Gita classes.", renderOnlineClasses],
     reports: ["Reports", "Current stock, activity summary, book-wise sales, and ledger.", renderReports],
     settings: ["Settings", "System configuration and backend connection.", renderSettings]
   };
@@ -947,6 +950,103 @@
                     <button class="small-button" type="button" onclick="window.erpApp.openUserForm('${escapeAttribute(row.userId)}')">Edit</button>
                   </div>
                 </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  async function renderOnlineClasses() {
+    if (!isMainAdmin()) {
+      return '<div class="empty-state">Admin access required.</div>';
+    }
+    const registrations = await window.erpApi.request("onlineClasses.list");
+    state.onlineClasses = Array.isArray(registrations) ? registrations : [];
+    return renderOnlineClassesMarkup();
+  }
+
+  function filteredOnlineClasses() {
+    const query = String(state.onlineClassSearch || "").trim().toLowerCase();
+    if (!query) {
+      return state.onlineClasses.slice();
+    }
+    return state.onlineClasses.filter((row) => {
+      const haystack = [
+        row.createdAt,
+        row.language,
+        row.sourceWarehouseCode,
+        row.sourceWarehouseName,
+        row.name,
+        row.whatsappNumber,
+        row.occupation,
+        row.stayArea,
+        row.itemErpCode,
+        row.itemName,
+        row.utmSource,
+        row.utmCampaign
+      ].join(" ").toLowerCase();
+      return haystack.includes(query);
+    });
+  }
+
+  function renderOnlineClassesMarkup() {
+    const rows = filteredOnlineClasses();
+    return `
+      <section class="card">
+        <div class="panel-header">
+          <h2>Online Classes</h2>
+          <div class="row-actions">
+            <button class="small-button" type="button" onclick="window.erpApp.downloadOnlineClassesExcel()">Download Excel</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="toolbar">
+            <label class="field compact-field">
+              <span>Search</span>
+              <input type="search" value="${escapeAttribute(state.onlineClassSearch)}" placeholder="Search name, mobile, warehouse, book..." oninput="window.erpApp.setOnlineClassSearch(this.value)">
+            </label>
+          </div>
+          ${rows.length ? onlineClassesTable(rows) : '<div class="empty-state">No online class registrations found.</div>'}
+        </div>
+      </section>
+    `;
+  }
+
+  function onlineClassesTable(rows) {
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Language</th>
+              <th>Warehouse</th>
+              <th>Name</th>
+              <th>WhatsApp Number</th>
+              <th>Age</th>
+              <th>Student / Working</th>
+              <th>Stay Area</th>
+              <th>Book</th>
+              <th>Interested</th>
+              <th>UTM Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(formatDateTime(row.createdAt))}</td>
+                <td>${escapeHtml(row.language || "-")}</td>
+                <td>${escapeHtml(row.sourceWarehouseName || row.sourceWarehouseCode || "-")}</td>
+                <td>${escapeHtml(row.name || "-")}</td>
+                <td>${escapeHtml(row.whatsappNumber || "-")}</td>
+                <td>${escapeHtml(row.age !== null && row.age !== undefined ? String(row.age) : "-")}</td>
+                <td>${escapeHtml(row.occupation || "-")}</td>
+                <td>${escapeHtml(row.stayArea || "-")}</td>
+                <td>${escapeHtml(row.itemName || row.itemErpCode || "-")}</td>
+                <td>${status(row.interestedInClasses ? "Yes" : "No", row.interestedInClasses ? "good" : "warn")}</td>
+                <td>${escapeHtml(row.utmSource || "-")}</td>
               </tr>
             `).join("")}
           </tbody>
@@ -3462,6 +3562,36 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function downloadOnlineClassesExcel() {
+    const rows = filteredOnlineClasses();
+    if (!rows.length) {
+      showToast("No online class registrations to export");
+      return;
+    }
+    if (!window.XLSX || !window.XLSX.utils) {
+      showToast("Excel library is not loaded");
+      return;
+    }
+    const exportRows = rows.map((row) => ({
+      Timestamp: formatDateTime(row.createdAt),
+      Language: row.language || "",
+      Warehouse: row.sourceWarehouseName || row.sourceWarehouseCode || "",
+      Name: row.name || "",
+      "WhatsApp Number": row.whatsappNumber || "",
+      Age: row.age !== null && row.age !== undefined ? row.age : "",
+      "Working / Student": row.occupation || "",
+      "Area of Stay": row.stayArea || "",
+      Book: row.itemName || row.itemErpCode || "",
+      Interested: row.interestedInClasses ? "Yes" : "No",
+      "UTM Source": row.utmSource || "",
+      "UTM Campaign": row.utmCampaign || ""
+    }));
+    const sheet = window.XLSX.utils.json_to_sheet(exportRows);
+    const workbook = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(workbook, sheet, "Online Classes");
+    window.XLSX.writeFile(workbook, "online-classes.xlsx");
+  }
+
   function activityComplimentaryTable(rows) {
     return complimentaryActivitySummaryMarkup(rows);
   }
@@ -3543,6 +3673,11 @@
     state.unsettledReportActivityId = "";
     state.complimentaryReportActivityId = "";
     content.innerHTML = renderReportsMarkup();
+  }
+
+  async function setOnlineClassSearch(value) {
+    state.onlineClassSearch = value;
+    content.innerHTML = renderOnlineClassesMarkup();
   }
 
   async function setActivityReportDevoteeSearch(value) {
@@ -5762,6 +5897,19 @@
     return date.toISOString().slice(0, 10);
   }
 
+  function formatDateTime(value) {
+    if (!value) return "-";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString("en-IN", {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
   function formatDateRange(startDate, endDate) {
     const start = toInputDate(startDate);
     const end = toInputDate(endDate);
@@ -6010,6 +6158,9 @@
     state.currentUser = user || null;
     state.sessionToken = sessionToken || "";
     appConfig.currentUserRole = user ? user.role : "";
+    document.querySelectorAll('.nav-item[data-view="online-classes"]').forEach((item) => {
+      item.style.display = isMainAdmin() ? "" : "none";
+    });
     if (userChip) {
       userChip.textContent = user ? (user.name || (user.role === "mainAdmin" ? "Admin" : "Store Incharge")) : "Guest";
       userChip.title = user ? "Log out" : "Not signed in";
@@ -6148,9 +6299,11 @@
     setReportView,
     setReportWarehouse,
     setReportMonth,
+    setOnlineClassSearch,
     loadWarehouseReport,
     loadWarehouseDayWiseSales,
     downloadWarehouseReport,
+    downloadOnlineClassesExcel,
     downloadUnsettledIssuesReport,
     downloadComplimentaryIssuesReport,
     showUnsettledActivityDetails,

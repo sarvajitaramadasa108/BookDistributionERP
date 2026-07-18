@@ -56,6 +56,7 @@
       { activityId: "ACT-002", name: "Annavaram Daily Stall", type: "Daily", devoteeId: "DEV-0010", devoteeName: "ADKP", warehouse: "Annavaram", status: "Running" }
     ],
     documents: [],
+    onlineClasses: [],
     users: [
       { userId: "USR-0001", name: "Admin", username: "admin", password: "admin123", role: "mainAdmin", active: true },
       { userId: "USR-0002", name: "Store Incharge", username: "incharge", password: "incharge123", role: "storeIncharge", active: true }
@@ -122,6 +123,8 @@
       "activities.delete": () => deleteMockActivity(payload),
       "documents.list": mockData.documents,
       "documents.create": () => createMockDocument(payload),
+      "onlineClasses.list": mockData.onlineClasses.slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))),
+      "onlineClasses.submit": () => createMockOnlineClassRegistration(payload),
       "stock.current": () => getMockCurrentStock(),
       "activity.unsettled": () => getMockActivityUnsettled(),
       "reports.activityLedger": () => getMockActivityLedger(payload)
@@ -157,6 +160,7 @@
         }))
       : clone.activities;
     clone.documents = Array.isArray(source.documents) ? source.documents : clone.documents;
+    clone.onlineClasses = Array.isArray(source.onlineClasses) ? source.onlineClasses : clone.onlineClasses;
     clone.users = Array.isArray(source.users) && source.users.length ? source.users : clone.users;
     clone.sessions = source.sessions || clone.sessions;
     return clone;
@@ -437,6 +441,59 @@
     mockData.documents.push(document);
     saveMockData();
     return { documentId };
+  }
+
+  function createMockOnlineClassRegistration(payload) {
+    const language = String(payload.language || "English").trim() || "English";
+    if (!["English", "Telugu"].includes(language)) {
+      throw new Error("Language is required");
+    }
+    const warehouseId = String(payload.sourceWarehouseId || payload.warehouseId || "").trim();
+    if (!warehouseId) {
+      throw new Error("Warehouse is required");
+    }
+    const warehouse = mockData.warehouses.find((item) => item.warehouseId === warehouseId || item.name === warehouseId);
+    if (!warehouse) {
+      throw new Error("Warehouse not found");
+    }
+    const itemId = String(payload.itemId || payload.erpCode || payload.bookId || "").trim();
+    const book = mockData.books.find((item) => item.erpCode === itemId || item.bookId === itemId);
+    if (!book) {
+      throw new Error("Selected book is required");
+    }
+    const name = String(payload.name || "").trim();
+    const whatsappNumber = String(payload.whatsappNumber || "").replace(/\D/g, "").trim();
+    const occupation = String(payload.occupation || payload.workingStatus || "").trim();
+    const stayArea = String(payload.stayArea || payload.areaOfStay || "").trim();
+    if (!name || whatsappNumber.length !== 10 || !occupation || !stayArea) {
+      throw new Error("Please fill all required fields");
+    }
+    const now = new Date().toISOString();
+    const registration = {
+      registrationId: nextMockId("OLC", mockData.onlineClasses, "registrationId"),
+      language,
+      sourceWarehouseId: warehouse.warehouseId,
+      sourceWarehouseCode: warehouse.warehouseId,
+      sourceWarehouseName: warehouse.name,
+      utmSource: String(payload.utmSource || payload.utm_source || warehouse.warehouseId || warehouse.name || "").trim(),
+      utmMedium: String(payload.utmMedium || payload.utm_medium || "online_classes").trim() || "online_classes",
+      utmCampaign: String(payload.utmCampaign || payload.utm_campaign || "").trim(),
+      name,
+      whatsappNumber,
+      age: payload.age ? Number(payload.age) : "",
+      occupation,
+      stayArea,
+      itemId: book.erpCode,
+      itemErpCode: book.erpCode,
+      itemName: book.name,
+      itemGroup: book.itemGroup || "BOOK",
+      interestedInClasses: Boolean(payload.interestedInClasses || payload.interested_in_classes),
+      createdAt: now,
+      updatedAt: now
+    };
+    mockData.onlineClasses.push(registration);
+    saveMockData();
+    return registration;
   }
 
   function activityHasIssueMock(activityId) {

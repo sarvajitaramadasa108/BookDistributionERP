@@ -9,6 +9,7 @@ alter table public.activities enable row level security;
 alter table public.documents enable row level security;
 alter table public.document_lines enable row level security;
 alter table public.stock_ledger enable row level security;
+alter table public.online_class_registrations enable row level security;
 alter table public.user_sessions enable row level security;
 
 drop policy if exists "users_all_access" on public.users;
@@ -63,6 +64,13 @@ with check (true);
 drop policy if exists "stock_ledger_all_access" on public.stock_ledger;
 create policy "stock_ledger_all_access"
 on public.stock_ledger
+for all
+using (true)
+with check (true);
+
+drop policy if exists "online_class_registrations_all_access" on public.online_class_registrations;
+create policy "online_class_registrations_all_access"
+on public.online_class_registrations
 for all
 using (true)
 with check (true);
