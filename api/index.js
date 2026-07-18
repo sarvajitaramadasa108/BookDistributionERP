@@ -174,6 +174,7 @@ function mapActivity(row, devoteesById = {}, warehousesById = {}) {
   const devotee = devoteesById[row.devotee_id] || {};
   const warehouse = warehousesById[row.warehouse_id] || {};
   return {
+    activityRowId: row.id,
     activityId: row.activity_code,
     name: row.activity_name,
     type: row.activity_type,

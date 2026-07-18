@@ -3645,7 +3645,10 @@
   }
 
   function getIssuedActivityOptions() {
-    return state.activities.filter((activity) => state.documents.some((document) => document.activityId === activity.activityId && (document.documentType === "ISSUE" || document.documentType === "UNSETTLED_OPENING")));
+    return state.activities.filter((activity) => {
+      const activityRef = activity.activityRowId || activity.activityId;
+      return state.documents.some((document) => String(document.activityId || "") === String(activityRef || "") && (document.documentType === "ISSUE" || document.documentType === "UNSETTLED_OPENING"));
+    });
   }
 
   function isMainAdmin() {
