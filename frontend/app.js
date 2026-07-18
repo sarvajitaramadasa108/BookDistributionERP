@@ -2225,6 +2225,7 @@
 
   function normalizeActivity(row) {
     return {
+      activityRowId: row.activityRowId || row["Activity Row ID"] || "",
       activityId: row.activityId || row["Activity ID"] || "",
       name: row.name || row.Name || "",
       type: row.type || row.Type || "",
