@@ -1207,6 +1207,39 @@ async function stockCurrent(supabase) {
   }));
 }
 
+async function onlineClassWarehouseBooks(supabase, payload) {
+  const sourceWarehouseRow = await resolveWarehouseRow(supabase, payload.sourceWarehouseId || payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
+  if (!sourceWarehouseRow) return [];
+  const [itemsResult, stockRows] = await Promise.all([
+    supabase.from("items").select("*").eq("item_group", "BOOK").eq("active", true),
+    stockCurrent(supabase)
+  ]);
+  if (itemsResult.error) throw itemsResult.error;
+  const stockByBook = new Map();
+  for (const row of stockRows || []) {
+    if (String(row.warehouseId || "") !== String(sourceWarehouseRow.id || "")) continue;
+    stockByBook.set(String(row.bookId || ""), Number(row.quantity || 0));
+  }
+  return (itemsResult.data || [])
+    .map((row) => ({
+      registrationWarehouseId: sourceWarehouseRow.id,
+      registrationWarehouseCode: sourceWarehouseRow.warehouse_code || "",
+      registrationWarehouseName: sourceWarehouseRow.warehouse_name || "",
+      bookId: row.erp_code,
+      erpCode: row.erp_code,
+      name: row.item_name,
+      bookName: row.item_name,
+      bookType: row.item_type,
+      itemGroup: row.item_group,
+      salePrice: Number(row.sale_price || 0),
+      purchasePrice: Number(row.purchase_price || 0),
+      active: row.active,
+      availableQty: Number(stockByBook.get(String(row.erp_code || "")) || 0)
+    }))
+    .filter((row) => row.active !== false && Number(row.availableQty || 0) > 0)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")) || String(a.erpCode || "").localeCompare(String(b.erpCode || "")));
+}
+
 async function getActivityUnsettled(supabase) {
   const { data: documents } = await supabase.from("documents").select("*");
   const { data: lines } = await supabase.from("document_lines").select("*");
@@ -1787,7 +1820,7 @@ async function main(request) {
     const action = body.action;
     const payload = body.payload || {};
     const supabase = getSupabase();
-    const publicActions = new Set(["auth.login", "auth.logout", "auth.me", "warehouses.list", "books.list", "stock.current", "onlineClasses.submit"]);
+    const publicActions = new Set(["auth.login", "auth.logout", "auth.me", "warehouses.list", "books.list", "stock.current", "onlineClasses.submit", "onlineClasses.warehouseBooks"]);
     const currentUser = await requireCurrentUser(supabase, payload, publicActions.has(action));
 
     switch (action) {
@@ -1905,6 +1938,8 @@ async function main(request) {
         return json(200, { ok: true, data: await getWarehouseMonthlyReport(supabase, payload) });
       case "onlineClasses.submit":
         return json(200, { ok: true, data: await createOnlineClassRegistration(supabase, payload) });
+      case "onlineClasses.warehouseBooks":
+        return json(200, { ok: true, data: await onlineClassWarehouseBooks(supabase, payload) });
       case "onlineClasses.list":
         requireAdminUser(currentUser);
         return json(200, { ok: true, data: await onlineClassRegistrationsList(supabase) });

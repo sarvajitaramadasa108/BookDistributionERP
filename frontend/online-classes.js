@@ -8,7 +8,6 @@
     language: params.get("lang") === "te" || String(params.get("language") || "").toLowerCase() === "telugu" ? "Telugu" : "English",
     warehouses: [],
     books: [],
-    stock: [],
     selectedWarehouseId: "",
     warehouseSource: String(params.get("warehouse") || params.get("warehouseId") || params.get("utm_source") || "").trim(),
     utmSource: String(params.get("utm_source") || "").trim(),
@@ -149,14 +148,6 @@
     }
   }
 
-  function normalizeStockRow(row) {
-    return {
-      warehouseId: row.warehouseId || row["Warehouse ID"] || "",
-      bookId: row.bookId || row["Book ID"] || "",
-      quantity: Number(row.quantity || row.Quantity || 0)
-    };
-  }
-
   function formatDateTime(value) {
     if (!value) return "-";
     const date = new Date(value);
@@ -182,11 +173,6 @@
     return String(book.name || book.bookName || getItemCode(book) || "").trim();
   }
 
-  function getStockQty(warehouseId, bookId) {
-    const match = state.stock.find((row) => row.warehouseId === warehouseId && row.bookId === bookId);
-    return Number(match ? match.quantity : 0);
-  }
-
   function resolveInitialWarehouse() {
     if (!state.warehouseSource) return "";
     const raw = normalizeWarehouseKey(state.warehouseSource);
@@ -206,24 +192,19 @@
   }
 
   function availableBooks() {
-    const warehouseId = state.selectedWarehouseId;
     const activeBooks = state.books
       .filter((book) => book && Number(book.active) !== 0 && book.active !== false)
       .sort((a, b) => getItemName(a).localeCompare(getItemName(b)) || getItemCode(a).localeCompare(getItemCode(b)));
-    if (!warehouseId) return activeBooks;
     const query = normalizeText(state.bookSearch);
-    const available = activeBooks
+    return activeBooks
       .filter((book) => {
         const code = getItemCode(book);
         const name = getItemName(book);
-        const stockQty = getStockQty(warehouseId, code);
         if (!code) return false;
-        if (stockQty <= 0) return false;
         if (!query) return true;
         return normalizeText(code).includes(query) || normalizeText(name).includes(query) || normalizeText(String(book.bookType || book.itemType || "")).includes(query);
       })
       .sort((a, b) => getItemName(a).localeCompare(getItemName(b)) || getItemCode(a).localeCompare(getItemCode(b)));
-    return available.length ? available : activeBooks;
   }
 
   function selectedBook() {
@@ -386,7 +367,7 @@
             ${books.length ? books.slice(0, 12).map((book) => {
               const code = getItemCode(book);
               const name = getItemName(book);
-              const qty = getStockQty(state.selectedWarehouseId, code);
+              const qty = Number(book.availableQty || book.availableQuantity || book.stockQty || 0);
               const active = state.selectedBookId === code;
               return `
                 <button class="picker-option ${active ? "active" : ""}" type="button" onclick="window.onlineClassesApp.chooseBook('${escapeAttr(code)}')">
@@ -500,15 +481,16 @@
   async function loadInitialData() {
     setLoading(true);
     try {
-      const [warehouses, books, stock] = await Promise.all([
-        window.erpApi.request("warehouses.list"),
-        window.erpApi.request("books.list"),
-        window.erpApi.request("stock.current")
-      ]);
+      const warehouses = await window.erpApi.request("warehouses.list");
       state.warehouses = Array.isArray(warehouses) ? warehouses.filter((row) => row.active !== false) : [];
-      state.books = Array.isArray(books) ? books.filter((row) => row.active !== false) : [];
-      state.stock = Array.isArray(stock) ? stock.map(normalizeStockRow) : [];
       state.selectedWarehouseId = resolveInitialWarehouse() || state.warehouses[0]?.warehouseId || "";
+      const books = await window.erpApi.request("onlineClasses.warehouseBooks", {
+        sourceWarehouseId: state.selectedWarehouseId,
+        warehouseId: state.selectedWarehouseId,
+        warehouseCode: state.selectedWarehouseId,
+        warehouseName: state.selectedWarehouseId
+      });
+      state.books = Array.isArray(books) ? books : [];
       render();
     } catch (error) {
       root.innerHTML = `

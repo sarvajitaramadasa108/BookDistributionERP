@@ -123,6 +123,7 @@
       "activities.delete": () => deleteMockActivity(payload),
       "documents.list": mockData.documents,
       "documents.create": () => createMockDocument(payload),
+      "onlineClasses.warehouseBooks": () => getMockOnlineClassWarehouseBooks(payload),
       "onlineClasses.list": mockData.onlineClasses.slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))),
       "onlineClasses.submit": () => createMockOnlineClassRegistration(payload),
       "stock.current": () => getMockCurrentStock(),
@@ -494,6 +495,36 @@
     mockData.onlineClasses.push(registration);
     saveMockData();
     return registration;
+  }
+
+  function getMockOnlineClassWarehouseBooks(payload) {
+    const warehouseId = String(payload.sourceWarehouseId || payload.warehouseId || payload.warehouseCode || payload.warehouseName || "").trim();
+    if (!warehouseId) {
+      return [];
+    }
+    const stock = getMockCurrentStock();
+    const stockByBook = new Map();
+    stock.forEach((row) => {
+      if (String(row.warehouseId || "") !== warehouseId) return;
+      stockByBook.set(String(row.bookId || ""), Number(row.quantity || 0));
+    });
+    return mockData.books
+      .filter((book) => book.active !== false)
+      .map((book) => ({
+        registrationWarehouseId: warehouseId,
+        bookId: book.erpCode,
+        erpCode: book.erpCode,
+        name: book.name,
+        bookName: book.name,
+        bookType: book.bookType,
+        itemGroup: "BOOK",
+        salePrice: Number(book.salePrice || 0),
+        purchasePrice: Number(book.purchasePrice || 0),
+        active: book.active !== false,
+        availableQty: Number(stockByBook.get(String(book.erpCode || "")) || 0)
+      }))
+      .filter((book) => Number(book.availableQty || 0) > 0)
+      .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")) || String(a.erpCode || "").localeCompare(String(b.erpCode || "")));
   }
 
   function activityHasIssueMock(activityId) {
