@@ -5459,7 +5459,7 @@
                 ${issuedActivities.map((activity) => `<option value="${escapeAttribute(activity.activityId)}" ${draft.activityId === activity.activityId ? "selected" : ""}>${escapeHtml(activity.name)} (${escapeHtml(getWarehouseName(activity.warehouseId))})</option>`).join("")}
               </select>
             </label>
-          ` : '<div class="empty-state wide-field">Create an issue for an activity first. Returns can only be posted against activities that already have issue entries.</div>'}
+          ` : '<div class="empty-state wide-field">Create an issue or unsettled opening for an activity first. Returns can be posted against activities that already have issue or unsettled opening entries.</div>'}
           <label class="field wide-field">
             <span>Notes</span>
             <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Return note">
