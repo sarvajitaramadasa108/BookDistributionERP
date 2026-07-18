@@ -523,7 +523,6 @@
         active: book.active !== false,
         availableQty: Number(stockByBook.get(String(book.erpCode || "")) || 0)
       }))
-      .filter((book) => Number(book.availableQty || 0) > 0)
       .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")) || String(a.erpCode || "").localeCompare(String(b.erpCode || "")));
   }
 
