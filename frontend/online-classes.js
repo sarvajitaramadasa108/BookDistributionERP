@@ -200,7 +200,9 @@
       .filter((book) => {
         const code = getItemCode(book);
         const name = getItemName(book);
+        const qty = Number(book.availableQty || book.availableQuantity || book.stockQty || 0);
         if (!code) return false;
+        if (qty <= 0) return false;
         if (!query) return true;
         return normalizeText(code).includes(query) || normalizeText(name).includes(query) || normalizeText(String(book.bookType || book.itemType || "")).includes(query);
       })
@@ -359,7 +361,6 @@
           ${selected ? `
             <div class="selected-chip">
               <strong>${escapeHtml(getItemName(selected))}</strong>
-              <span>${escapeHtml(getItemCode(selected))}</span>
               <button type="button" class="chip-clear" onclick="window.onlineClassesApp.clearBookSelection()">×</button>
             </div>
           ` : ""}
@@ -367,12 +368,10 @@
             ${books.length ? books.slice(0, 12).map((book) => {
               const code = getItemCode(book);
               const name = getItemName(book);
-              const qty = Number(book.availableQty || book.availableQuantity || book.stockQty || 0);
               const active = state.selectedBookId === code;
               return `
                 <button class="picker-option ${active ? "active" : ""}" type="button" onclick="window.onlineClassesApp.chooseBook('${escapeAttr(code)}')">
                   <span>${escapeHtml(name)}</span>
-                  <small>${escapeHtml(code)} · Stock ${escapeHtml(String(qty))}</small>
                 </button>
               `;
             }).join("") : `<div class="empty-note">${escapeHtml(state.bookSearch ? copyText.searchEmpty : copyText.noBooks)}</div>`}
