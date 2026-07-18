@@ -1025,11 +1025,11 @@ async function createDocument(supabase, payload, currentUser) {
 
     const ledgerRows = [];
     if (documentType === "TRANSFER") {
-        ledgerRows.push({
-          document_id: doc.id,
-          document_line_id: line.id,
-          ledger_date: documentDate,
-          warehouse_id: fromWarehouseId,
+      ledgerRows.push({
+        document_id: doc.id,
+        document_line_id: line.id,
+        ledger_date: documentDate,
+        warehouse_id: fromWarehouseId,
           activity_id: activityRow ? activityRow.id : null,
           item_id: item.id,
           movement_type: "TRANSFER_OUT",
@@ -1047,16 +1047,30 @@ async function createDocument(supabase, payload, currentUser) {
           item_id: item.id,
           movement_type: "TRANSFER_IN",
           quantity_in: qty,
-          quantity_out: 0,
+        quantity_out: 0,
         rate,
         amount
       });
+    } else if (documentType === "UNSETTLED_OPENING") {
+      ledgerRows.push({
+        document_id: doc.id,
+        document_line_id: line.id,
+        ledger_date: documentDate,
+        warehouse_id: warehouseId,
+        activity_id: activityRow ? activityRow.id : null,
+        item_id: item.id,
+        movement_type: "UNSETTLED_OPENING",
+        quantity_in: 0,
+        quantity_out: 0,
+        rate,
+        amount: 0
+      });
     } else if (documentType === "OPENING" || documentType === "RECEIVE" || documentType === "RETURN" || documentType === "PURCHASE" || (documentType === "ADJUSTMENT" && adjustmentDirection === "IN")) {
-        ledgerRows.push({
-          document_id: doc.id,
-          document_line_id: line.id,
-          ledger_date: documentDate,
-          warehouse_id: warehouseId,
+      ledgerRows.push({
+        document_id: doc.id,
+        document_line_id: line.id,
+        ledger_date: documentDate,
+        warehouse_id: warehouseId,
           activity_id: activityRow ? activityRow.id : null,
           item_id: item.id,
           movement_type: documentType,
