@@ -196,13 +196,13 @@
       .filter((book) => book && Number(book.active) !== 0 && book.active !== false)
       .sort((a, b) => getItemName(a).localeCompare(getItemName(b)) || getItemCode(a).localeCompare(getItemCode(b)));
     const query = normalizeText(state.bookSearch);
-    return activeBooks
+    const inStockBooks = activeBooks.filter((book) => Number(book.availableQty || book.availableQuantity || book.stockQty || 0) > 0);
+    const sourceBooks = inStockBooks.length ? inStockBooks : activeBooks;
+    return sourceBooks
       .filter((book) => {
         const code = getItemCode(book);
         const name = getItemName(book);
-        const qty = Number(book.availableQty || book.availableQuantity || book.stockQty || 0);
         if (!code) return false;
-        if (qty <= 0) return false;
         if (!query) return true;
         return normalizeText(code).includes(query) || normalizeText(name).includes(query) || normalizeText(String(book.bookType || book.itemType || "")).includes(query);
       })
