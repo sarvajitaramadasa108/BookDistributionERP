@@ -878,6 +878,27 @@ async function resolveItemRow(supabase, value) {
   return data;
 }
 
+async function resolveActivityRow(supabase, value) {
+  const activityRef = String(value || "").trim();
+  if (!activityRef) return null;
+  const query = supabase.from("activities").select("id, activity_code, activity_name");
+  const { data, error } = isUuidLike(activityRef)
+    ? await query.eq("id", activityRef).maybeSingle()
+    : await query.eq("activity_code", activityRef).maybeSingle();
+  if (error) throw error;
+  if (data) return data;
+  const normalizedRef = activityRef.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const { data: allActivities, error: listError } = await supabase.from("activities").select("id, activity_code, activity_name");
+  if (listError) throw listError;
+  const normalizedMatch = (allActivities || []).find((row) => {
+    const candidates = [row.id, row.activity_code, row.activity_name]
+      .map((candidate) => String(candidate || "").toLowerCase().replace(/[^a-z0-9]/g, ""));
+    return candidates.includes(normalizedRef);
+  });
+  if (normalizedMatch) return normalizedMatch;
+  throw new Error(`Activity not found: ${activityRef}`);
+}
+
 async function documentDetail(supabase, payload) {
   const documentId = String(payload.documentId || payload.documentCode || "").trim();
   if (!documentId) throw new Error("Document is required");
@@ -940,7 +961,8 @@ async function createDocument(supabase, payload, currentUser) {
   const itemGroup = String(payload.itemGroup || "BOOK").trim().toUpperCase();
   const adjustmentDirection = String(payload.adjustmentDirection || payload.adjustmentMode || "").trim().toUpperCase();
   if (!lines.length) throw new Error("At least one document line is required");
-  if (documentTypeRequiresActivity(documentType) && !payload.activityId) throw new Error("Activity is required for this document");
+  const activityRow = documentTypeRequiresActivity(documentType) ? await resolveActivityRow(supabase, payload.activityId) : null;
+  if (documentTypeRequiresActivity(documentType) && !activityRow) throw new Error("Activity is required for this document");
   if ((documentType === "OPENING" || documentType === "UNSETTLED_OPENING" || documentType === "PURCHASE") && !payload.toWarehouseId && !payload.fromWarehouseId) {
     throw new Error("Warehouse is required");
   }
@@ -953,7 +975,7 @@ async function createDocument(supabase, payload, currentUser) {
   const fromWarehouseId = await resolveWarehouseRef(supabase, payload.fromWarehouseId);
   const toWarehouseId = await resolveWarehouseRef(supabase, payload.toWarehouseId);
   if (documentType === "RETURN") {
-    const { data: existingIssue } = await supabase.from("documents").select("id").eq("activity_id", payload.activityId).in("document_type", ["ISSUE", "UNSETTLED_OPENING"]).limit(1);
+    const { data: existingIssue } = await supabase.from("documents").select("id").eq("activity_id", activityRow ? activityRow.id : null).in("document_type", ["ISSUE", "UNSETTLED_OPENING"]).limit(1);
     if (!existingIssue || !existingIssue.length) throw new Error("Return can be posted only for an activity that already has issue or unsettled opening entries");
   }
 
@@ -965,7 +987,7 @@ async function createDocument(supabase, payload, currentUser) {
     document_date: documentDate,
     from_warehouse_id: fromWarehouseId,
     to_warehouse_id: toWarehouseId,
-    activity_id: payload.activityId || null,
+    activity_id: activityRow ? activityRow.id : null,
     created_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null,
     status: payload.status || "Posted",
     notes: payload.notes || ""
@@ -1003,57 +1025,57 @@ async function createDocument(supabase, payload, currentUser) {
 
     const ledgerRows = [];
     if (documentType === "TRANSFER") {
-      ledgerRows.push({
-        document_id: doc.id,
-        document_line_id: line.id,
-        ledger_date: documentDate,
-        warehouse_id: fromWarehouseId,
-        activity_id: payload.activityId || null,
-        item_id: item.id,
-        movement_type: "TRANSFER_OUT",
-        quantity_in: 0,
-        quantity_out: qty,
+        ledgerRows.push({
+          document_id: doc.id,
+          document_line_id: line.id,
+          ledger_date: documentDate,
+          warehouse_id: fromWarehouseId,
+          activity_id: activityRow ? activityRow.id : null,
+          item_id: item.id,
+          movement_type: "TRANSFER_OUT",
+          quantity_in: 0,
+          quantity_out: qty,
         rate,
         amount
       });
-      ledgerRows.push({
-        document_id: doc.id,
-        document_line_id: line.id,
-        ledger_date: documentDate,
-        warehouse_id: toWarehouseId,
-        activity_id: payload.activityId || null,
-        item_id: item.id,
-        movement_type: "TRANSFER_IN",
-        quantity_in: qty,
-        quantity_out: 0,
+        ledgerRows.push({
+          document_id: doc.id,
+          document_line_id: line.id,
+          ledger_date: documentDate,
+          warehouse_id: toWarehouseId,
+          activity_id: activityRow ? activityRow.id : null,
+          item_id: item.id,
+          movement_type: "TRANSFER_IN",
+          quantity_in: qty,
+          quantity_out: 0,
         rate,
         amount
       });
     } else if (documentType === "OPENING" || documentType === "RECEIVE" || documentType === "RETURN" || documentType === "PURCHASE" || (documentType === "ADJUSTMENT" && adjustmentDirection === "IN")) {
-      ledgerRows.push({
-        document_id: doc.id,
-        document_line_id: line.id,
-        ledger_date: documentDate,
-        warehouse_id: warehouseId,
-        activity_id: payload.activityId || null,
-        item_id: item.id,
-        movement_type: documentType,
-        quantity_in: qty,
-        quantity_out: 0,
+        ledgerRows.push({
+          document_id: doc.id,
+          document_line_id: line.id,
+          ledger_date: documentDate,
+          warehouse_id: warehouseId,
+          activity_id: activityRow ? activityRow.id : null,
+          item_id: item.id,
+          movement_type: documentType,
+          quantity_in: qty,
+          quantity_out: 0,
         rate,
         amount
       });
     } else {
-      ledgerRows.push({
-        document_id: doc.id,
-        document_line_id: line.id,
-        ledger_date: documentDate,
-        warehouse_id: warehouseId,
-        activity_id: payload.activityId || null,
-        item_id: item.id,
-        movement_type: documentType,
-        quantity_in: 0,
-        quantity_out: qty,
+        ledgerRows.push({
+          document_id: doc.id,
+          document_line_id: line.id,
+          ledger_date: documentDate,
+          warehouse_id: warehouseId,
+          activity_id: activityRow ? activityRow.id : null,
+          item_id: item.id,
+          movement_type: documentType,
+          quantity_in: 0,
+          quantity_out: qty,
         rate,
         amount
       });
@@ -1066,7 +1088,7 @@ async function createDocument(supabase, payload, currentUser) {
     const { error: activityError } = await supabase.from("activities").update({
       status: "Completed",
       settled_at: nowIso()
-    }).eq("id", payload.activityId);
+    }).eq("id", activityRow ? activityRow.id : null);
     if (activityError) throw activityError;
   }
 
