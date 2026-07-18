@@ -80,7 +80,7 @@
     warehouses: ["Warehouses", "Main and event stock locations.", renderWarehouses],
     activities: ["Activities", "Daily stalls, marathons, events, and closing workflow.", renderActivities],
     documents: ["Stock Documents", "Issue, receive, sale, return, transfer, and adjustment entries.", renderDocuments],
-    onlineClasses: ["Online Classes", "Public volunteer registrations for online Bhagavad Gita classes.", renderOnlineClasses],
+    "online-classes": ["Online Classes", "Public volunteer registrations for online Bhagavad Gita classes.", renderOnlineClasses],
     reports: ["Reports", "Current stock, activity summary, book-wise sales, and ledger.", renderReports],
     settings: ["Settings", "System configuration and backend connection.", renderSettings]
   };

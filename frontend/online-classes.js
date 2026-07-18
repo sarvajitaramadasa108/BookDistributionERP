@@ -115,6 +115,10 @@
     return String(value || "").trim().toLowerCase();
   }
 
+  function normalizeWarehouseKey(value) {
+    return normalizeText(value).replace(/[^a-z0-9]/g, "");
+  }
+
   function setLoading(value) {
     overlay.classList.toggle("hidden", !value);
   }
@@ -186,14 +190,14 @@
 
   function resolveInitialWarehouse() {
     if (!state.warehouseSource) return "";
-    const raw = normalizeText(state.warehouseSource);
+    const raw = normalizeWarehouseKey(state.warehouseSource);
     const match = state.warehouses.find((warehouse) => {
       const candidates = [
         warehouse.warehouseId,
         warehouse.warehouseCode,
         warehouse.name,
         warehouse.warehouseName
-      ].map(normalizeText);
+      ].map(normalizeWarehouseKey);
       return candidates.includes(raw);
     });
     if (match) {
