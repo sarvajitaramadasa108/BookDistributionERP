@@ -842,6 +842,15 @@ async function resolveWarehouseRow(supabase, value) {
   const { data: byName, error: byNameError } = await supabase.from("warehouses").select("id, warehouse_code, warehouse_name").eq("warehouse_name", warehouseRef).maybeSingle();
   if (byNameError) throw byNameError;
   if (byName) return byName;
+  const normalizedRef = warehouseRef.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const { data: allWarehouses, error: listError } = await supabase.from("warehouses").select("id, warehouse_code, warehouse_name");
+  if (listError) throw listError;
+  const normalizedMatch = (allWarehouses || []).find((row) => {
+    const candidates = [row.id, row.warehouse_code, row.warehouse_name]
+      .map((candidate) => String(candidate || "").toLowerCase().replace(/[^a-z0-9]/g, ""));
+    return candidates.includes(normalizedRef);
+  });
+  if (normalizedMatch) return normalizedMatch;
   throw new Error(`Warehouse not found: ${warehouseRef}`);
 }
 
@@ -1209,7 +1218,6 @@ async function stockCurrent(supabase) {
 
 async function onlineClassWarehouseBooks(supabase, payload) {
   const sourceWarehouseRow = await resolveWarehouseRow(supabase, payload.sourceWarehouseId || payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
-  if (!sourceWarehouseRow) return [];
   const [itemsResult, stockRows] = await Promise.all([
     supabase.from("items").select("*").eq("item_group", "BOOK").eq("active", true),
     stockCurrent(supabase)
@@ -1217,14 +1225,14 @@ async function onlineClassWarehouseBooks(supabase, payload) {
   if (itemsResult.error) throw itemsResult.error;
   const stockByBook = new Map();
   for (const row of stockRows || []) {
-    if (String(row.warehouseId || "") !== String(sourceWarehouseRow.id || "")) continue;
+    if (sourceWarehouseRow && String(row.warehouseId || "") !== String(sourceWarehouseRow.id || "")) continue;
     stockByBook.set(String(row.bookId || ""), Number(row.quantity || 0));
   }
   return (itemsResult.data || [])
     .map((row) => ({
-      registrationWarehouseId: sourceWarehouseRow.id,
-      registrationWarehouseCode: sourceWarehouseRow.warehouse_code || "",
-      registrationWarehouseName: sourceWarehouseRow.warehouse_name || "",
+      registrationWarehouseId: sourceWarehouseRow ? sourceWarehouseRow.id : "",
+      registrationWarehouseCode: sourceWarehouseRow?.warehouse_code || "",
+      registrationWarehouseName: sourceWarehouseRow?.warehouse_name || "",
       bookId: row.erp_code,
       erpCode: row.erp_code,
       name: row.item_name,
@@ -1236,7 +1244,7 @@ async function onlineClassWarehouseBooks(supabase, payload) {
       active: row.active,
       availableQty: Number(stockByBook.get(String(row.erp_code || "")) || 0)
     }))
-    .filter((row) => row.active !== false && Number(row.availableQty || 0) > 0)
+    .filter((row) => row.active !== false)
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")) || String(a.erpCode || "").localeCompare(String(b.erpCode || "")));
 }
 

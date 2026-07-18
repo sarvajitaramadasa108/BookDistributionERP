@@ -962,8 +962,17 @@
     if (!isMainAdmin()) {
       return '<div class="empty-state">Admin access required.</div>';
     }
-    const registrations = await window.erpApi.request("onlineClasses.list");
-    state.onlineClasses = Array.isArray(registrations) ? registrations : [];
+    try {
+      const registrations = await window.erpApi.request("onlineClasses.list");
+      state.onlineClasses = Array.isArray(registrations) ? registrations : [];
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error || "");
+      if (!message.includes("online_class_registrations") && !message.includes("schema cache") && !message.includes("does not exist")) {
+        throw error;
+      }
+      state.onlineClasses = [];
+      return '<div class="empty-state">Online class registrations table is not available yet. Apply the Supabase schema to enable this section.</div>';
+    }
     return renderOnlineClassesMarkup();
   }
 
