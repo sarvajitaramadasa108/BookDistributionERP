@@ -753,7 +753,13 @@ async function onlineClassRegistrationsList(supabase) {
   ]);
   if (warehousesResult.error) throw warehousesResult.error;
   if (itemsResult.error) throw itemsResult.error;
-  if (registrationsResult.error) throw registrationsResult.error;
+  if (registrationsResult.error) {
+    const message = String(registrationsResult.error.message || "");
+    if (message.includes("could not find the table") || message.includes("does not exist")) {
+      return [];
+    }
+    throw registrationsResult.error;
+  }
   const warehousesById = Object.fromEntries((warehousesResult.data || []).map((row) => [row.id, row]));
   const itemsById = Object.fromEntries((itemsResult.data || []).map((row) => [row.id, row]));
   return (registrationsResult.data || []).map((row) => mapOnlineClassRegistration(row, warehousesById, itemsById));
@@ -798,7 +804,13 @@ async function createOnlineClassRegistration(supabase, payload) {
     item_group: itemRow.item_group || "BOOK",
     interested_in_classes: Boolean(payload.interestedInClasses || payload.interested_in_classes)
   }).select("*").single();
-  if (error) throw error;
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("could not find the table") || message.includes("does not exist")) {
+      throw new Error("Online classes schema is not applied yet. Please run supabase/schema.sql in Supabase.");
+    }
+    throw error;
+  }
   const registrations = await onlineClassRegistrationsList(supabase);
   const created = registrations.find((row) => row.registrationId === data.id);
   return created || mapOnlineClassRegistration(data, { [sourceWarehouseRow.id]: sourceWarehouseRow }, { [itemRow.id]: itemRow });

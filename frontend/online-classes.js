@@ -10,7 +10,6 @@
     books: [],
     stock: [],
     selectedWarehouseId: "",
-    warehouseLocked: false,
     warehouseSource: String(params.get("warehouse") || params.get("warehouseId") || params.get("utm_source") || "").trim(),
     utmSource: String(params.get("utm_source") || "").trim(),
     utmCampaign: String(params.get("utm_campaign") || "").trim(),
@@ -201,7 +200,6 @@
       return candidates.includes(raw);
     });
     if (match) {
-      state.warehouseLocked = true;
       return match.warehouseId;
     }
     return "";
@@ -209,19 +207,23 @@
 
   function availableBooks() {
     const warehouseId = state.selectedWarehouseId;
-    if (!warehouseId) return [];
+    const activeBooks = state.books
+      .filter((book) => book && Number(book.active) !== 0 && book.active !== false)
+      .sort((a, b) => getItemName(a).localeCompare(getItemName(b)) || getItemCode(a).localeCompare(getItemCode(b)));
+    if (!warehouseId) return activeBooks;
     const query = normalizeText(state.bookSearch);
-    return state.books
+    const available = activeBooks
       .filter((book) => {
         const code = getItemCode(book);
         const name = getItemName(book);
         const stockQty = getStockQty(warehouseId, code);
-        if (!code || Number(book.active) === 0 || book.active === false) return false;
+        if (!code) return false;
         if (stockQty <= 0) return false;
         if (!query) return true;
         return normalizeText(code).includes(query) || normalizeText(name).includes(query) || normalizeText(String(book.bookType || book.itemType || "")).includes(query);
       })
       .sort((a, b) => getItemName(a).localeCompare(getItemName(b)) || getItemCode(a).localeCompare(getItemCode(b)));
+    return available.length ? available : activeBooks;
   }
 
   function selectedBook() {
@@ -352,29 +354,7 @@
   }
 
   function renderWarehouseField() {
-    const items = state.warehouses.slice().filter((row) => row.active !== false);
-    const copyText = t();
-    if (state.warehouseLocked) {
-      const warehouse = items.find((row) => row.warehouseId === state.selectedWarehouseId);
-      return `
-        <div class="field">
-          <span>${escapeHtml(copyText.warehouse)}</span>
-          <input type="text" value="${escapeAttr(getWarehouseDisplay(warehouse))}" disabled>
-          <input type="hidden" name="warehouseId" value="${escapeAttr(state.selectedWarehouseId)}">
-          <div class="hint">${escapeHtml(copyText.warehouseHint)}</div>
-        </div>
-      `;
-    }
-    return `
-      <label class="field">
-        <span>${escapeHtml(copyText.warehouse)}</span>
-        <select name="warehouseId" required onchange="window.onlineClassesApp.setWarehouse(this.value)">
-          <option value="">Select warehouse</option>
-          ${items.map((warehouse) => `<option value="${escapeAttr(warehouse.warehouseId)}" ${state.selectedWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(getWarehouseDisplay(warehouse))}</option>`).join("")}
-        </select>
-        <div class="hint">${escapeHtml(copyText.warehouseHint)}</div>
-      </label>
-    `;
+    return `<input type="hidden" name="warehouseId" value="${escapeAttr(state.selectedWarehouseId)}">`;
   }
 
   function renderBookPicker() {
@@ -504,12 +484,6 @@
             </div>
           </form>
         </section>
-
-        <section class="public-card info-card">
-          <h3>${escapeHtml(copyText.warehouse)}</h3>
-          <p>${escapeHtml(warehouse ? getWarehouseDisplay(warehouse) : copyText.selectWarehouse)}</p>
-          <p>${escapeHtml(available.length ? `${available.length} books available right now.` : "")}</p>
-        </section>
       </section>
     `;
   }
@@ -534,7 +508,7 @@
       state.warehouses = Array.isArray(warehouses) ? warehouses.filter((row) => row.active !== false) : [];
       state.books = Array.isArray(books) ? books.filter((row) => row.active !== false) : [];
       state.stock = Array.isArray(stock) ? stock.map(normalizeStockRow) : [];
-      state.selectedWarehouseId = resolveInitialWarehouse();
+      state.selectedWarehouseId = resolveInitialWarehouse() || state.warehouses[0]?.warehouseId || "";
       render();
     } catch (error) {
       root.innerHTML = `
