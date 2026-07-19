@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Volunteer Registration</title>
+    <link rel="stylesheet" href="./volunteer-registration.css">
+  </head>
+  <body>
+    <main class="vr-page">
+      <section class="vr-hero">
+        <div class="vr-brand">
+          <div class="vr-mark">HKM</div>
+          <div>
+            <div class="vr-eyebrow">Jagannatha Bahuda Ratha Yatra</div>
+            <p>24th July 2026, 4 PM onwards · Sri Vaibhava Venkateswara Swamy Temple, Madhavadhara</p>
+          </div>
+        </div>
+        <div class="vr-note">Please report at the volunteer reception desk at the venue on 24th July 2026 at 3:00 PM.</div>
+      </section>
+
+      <section class="vr-card">
+        <div class="vr-section-title">Start with your mobile number</div>
+        <div class="vr-search">
+          <label class="vr-field">
+            <span>Mobile Number</span>
+            <input id="mobileSearch" type="tel" inputmode="numeric" autocomplete="tel" placeholder="Enter mobile number">
+          </label>
+          <button id="lookupButton" class="vr-button" type="button">Search</button>
+        </div>
+        <div class="vr-message" id="statusMessage"></div>
+        <form id="registrationForm" class="vr-form hidden">
+          <div class="vr-grid">
+            <label class="vr-field">
+              <span>Name</span>
+              <input id="nameInput" name="name" type="text" placeholder="Name">
+            </label>
+            <label class="vr-field">
+              <span>Gender</span>
+              <select id="genderInput" name="gender">
+                <option value="">Select gender</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Other">Other</option>
+              </select>
+            </label>
+            <label class="vr-field">
+              <span>Age</span>
+              <input id="ageInput" name="age" type="number" min="1" step="1" placeholder="Age">
+            </label>
+            <label class="vr-field">
+              <span>College / Working</span>
+              <input id="collegeInput" name="collegeWorking" type="text" placeholder="College / Working">
+            </label>
+            <label class="vr-field vr-wide">
+              <span>Area of Stay</span>
+              <input id="areaInput" name="areaOfStay" type="text" placeholder="Area of Stay">
+            </label>
+          </div>
+          <div class="vr-actions">
+            <button id="submitButton" class="vr-button" type="submit">Submit Registration</button>
+            <button id="resetButton" class="vr-button secondary" type="button">Lookup Another</button>
+          </div>
+        </form>
+        <section id="resultCard" class="vr-result hidden"></section>
+      </section>
+    </main>
+
+    <script src="./config.js"></script>
+    <script src="./api.js"></script>
+    <script src="./volunteer-registration.js"></script>
+  </body>
+</html>

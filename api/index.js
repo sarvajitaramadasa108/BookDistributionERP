@@ -236,6 +236,173 @@ function mapOnlineClassRegistration(row, warehousesById = {}, itemsById = {}) {
   };
 }
 
+function normalizeMobileNumber(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+function volunteerMissingFields(row) {
+  const missing = [];
+  if (!String(row?.name || "").trim()) missing.push("name");
+  if (!String(row?.gender || "").trim()) missing.push("gender");
+  if (!String(row?.age ?? "").trim()) missing.push("age");
+  if (!String(row?.college_working || "").trim()) missing.push("collegeWorking");
+  if (!String(row?.area_of_stay || "").trim()) missing.push("areaOfStay");
+  return missing;
+}
+
+function mapVolunteerService(row) {
+  return {
+    serviceRowId: row.id,
+    serialNo: row.serial_no,
+    serviceName: row.service_name,
+    coordinatorName: row.coordinator_name,
+    coordinatorContactNumber: row.coordinator_contact_number,
+    reportingTime: row.reporting_time,
+    volunteersRequired: Number(row.volunteers_required || 0),
+    coordinatorPhotoLink: row.coordinator_photo_link || "",
+    active: row.active !== false
+  };
+}
+
+function mapVolunteer(row, servicesByName = {}) {
+  const service = servicesByName[String(row.allocated_service_name || "").trim()] || null;
+  const missingFields = volunteerMissingFields(row);
+  return {
+    volunteerRowId: row.id,
+    serialNo: row.serial_no,
+    mobileNumber: row.mobile_number,
+    name: row.name || "",
+    gender: row.gender || "",
+    age: row.age,
+    collegeWorking: row.college_working || "",
+    areaOfStay: row.area_of_stay || "",
+    allocatedServiceName: row.allocated_service_name || "",
+    attendance: Boolean(row.attendance),
+    tshirt: Boolean(row.tshirt),
+    registeredAt: row.registered_at,
+    updatedAt: row.updated_at,
+    complete: missingFields.length === 0,
+    missingFields,
+    service: service ? mapVolunteerService(service) : null
+  };
+}
+
+async function volunteerServicesList(supabase) {
+  const { data, error } = await supabase.from("volunteer_service_master").select("*").order("serial_no", { ascending: true });
+  if (error) throw error;
+  return (data || []).map(mapVolunteerService);
+}
+
+async function volunteerServiceSummaryList(supabase) {
+  const { data, error } = await supabase.from("volunteer_service_summary_view").select("*").order("serial_no", { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+
+async function volunteerLookup(supabase, payload) {
+  const mobileNumber = normalizeMobileNumber(payload.mobileNumber || payload.mobile || payload.whatsappNumber || "");
+  if (mobileNumber.length !== 10) {
+    throw new Error("Mobile number is required");
+  }
+  const [services, volunteerResult] = await Promise.all([
+    volunteerServicesList(supabase),
+    supabase.from("volunteers").select("*").eq("mobile_number", mobileNumber).maybeSingle()
+  ]);
+  if (volunteerResult.error) throw volunteerResult.error;
+  const servicesByName = Object.fromEntries((services || []).map((row) => [String(row.serviceName || "").trim(), row]));
+  if (!volunteerResult.data) {
+    return {
+      found: false,
+      complete: false,
+      mobileNumber,
+      missingFields: ["name", "gender", "age", "collegeWorking", "areaOfStay"],
+      volunteer: null
+    };
+  }
+  const volunteer = mapVolunteer(volunteerResult.data, servicesByName);
+  return {
+    found: true,
+    complete: volunteer.complete,
+    mobileNumber,
+    missingFields: volunteer.missingFields,
+    volunteer
+  };
+}
+
+async function nextVolunteerSerialNo(supabase) {
+  const { data, error } = await supabase.from("volunteers").select("serial_no").order("serial_no", { ascending: false }).limit(1);
+  if (error) throw error;
+  const latest = data && data[0] ? Number(data[0].serial_no || 0) : 0;
+  return latest + 1;
+}
+
+async function volunteerUpsertRegistration(supabase, payload) {
+  const mobileNumber = normalizeMobileNumber(payload.mobileNumber || payload.mobile || payload.whatsappNumber || "");
+  if (mobileNumber.length !== 10) {
+    throw new Error("Mobile number is required");
+  }
+  const incoming = {
+    name: String(payload.name || "").trim(),
+    gender: String(payload.gender || "").trim(),
+    age: payload.age === undefined || payload.age === null || payload.age === "" ? null : Number.parseInt(payload.age, 10),
+    college_working: String(payload.collegeWorking || payload.college_working || "").trim(),
+    area_of_stay: String(payload.areaOfStay || payload.area_of_stay || "").trim()
+  };
+  if (incoming.age !== null && Number.isNaN(incoming.age)) {
+    throw new Error("Age must be a number");
+  }
+
+  const { data: existing, error: existingError } = await supabase.from("volunteers").select("*").eq("mobile_number", mobileNumber).maybeSingle();
+  if (existingError) throw existingError;
+  const serialNo = existing ? Number(existing.serial_no || 0) : await nextVolunteerSerialNo(supabase);
+  const merged = {
+    serial_no: serialNo,
+    mobile_number: mobileNumber,
+    name: incoming.name || (existing ? existing.name : ""),
+    gender: incoming.gender || (existing ? existing.gender : ""),
+    age: incoming.age !== null && incoming.age !== undefined ? incoming.age : (existing ? existing.age : null),
+    college_working: incoming.college_working || (existing ? existing.college_working : ""),
+    area_of_stay: incoming.area_of_stay || (existing ? existing.area_of_stay : ""),
+    allocated_service_name: existing ? (existing.allocated_service_name || "") : "",
+    attendance: existing ? Boolean(existing.attendance) : false,
+    tshirt: existing ? Boolean(existing.tshirt) : false
+  };
+  const { data: eventData, error: eventError } = await supabase.from("volunteer_registration_events").insert({
+    source_row_no: 0,
+    mobile_number: merged.mobile_number,
+    name: merged.name,
+    gender: merged.gender,
+    age: merged.age,
+    college_working: merged.college_working,
+    area_of_stay: merged.area_of_stay,
+    allocated_service_name: merged.allocated_service_name,
+    attendance: merged.attendance,
+    tshirt: merged.tshirt,
+    event_name: "Jagannatha Bahuda Ratha Yatra 2026",
+    source: "web_form"
+  }).select("*").single();
+  if (eventError) throw eventError;
+
+  const { data, error } = existing
+    ? await supabase.from("volunteers").update(merged).eq("mobile_number", mobileNumber).select("*").single()
+    : await supabase.from("volunteers").insert(merged).select("*").single();
+  if (error) throw error;
+
+  const services = await volunteerServicesList(supabase);
+  const servicesByName = Object.fromEntries((services || []).map((row) => [String(row.serviceName || "").trim(), row]));
+  const volunteer = mapVolunteer(data, servicesByName);
+  return {
+    saved: true,
+    eventId: eventData.id,
+    mobileNumber,
+    volunteer,
+    complete: volunteer.complete,
+    missingFields: volunteer.missingFields
+  };
+}
+
 async function getSessionUser(supabase, sessionToken) {
   if (!sessionToken) return null;
   const bootstrapAccount = parseBootstrapSessionToken(sessionToken);
@@ -1865,7 +2032,7 @@ async function main(request) {
     const action = body.action;
     const payload = body.payload || {};
     const supabase = getSupabase();
-    const publicActions = new Set(["auth.login", "auth.logout", "auth.me", "warehouses.list", "books.list", "stock.current", "onlineClasses.submit", "onlineClasses.warehouseBooks"]);
+    const publicActions = new Set(["auth.login", "auth.logout", "auth.me", "warehouses.list", "books.list", "stock.current", "onlineClasses.submit", "onlineClasses.warehouseBooks", "volunteers.lookup", "volunteers.upsertRegistration", "volunteerServices.list"]);
     const currentUser = await requireCurrentUser(supabase, payload, publicActions.has(action));
 
     switch (action) {
@@ -1988,6 +2155,15 @@ async function main(request) {
       case "onlineClasses.list":
         requireAdminUser(currentUser);
         return json(200, { ok: true, data: await onlineClassRegistrationsList(supabase) });
+      case "volunteerServices.list":
+        return json(200, { ok: true, data: await volunteerServicesList(supabase) });
+      case "volunteerServices.summary":
+        requireAdminUser(currentUser);
+        return json(200, { ok: true, data: await volunteerServiceSummaryList(supabase) });
+      case "volunteers.lookup":
+        return json(200, { ok: true, data: await volunteerLookup(supabase, payload) });
+      case "volunteers.upsertRegistration":
+        return json(200, { ok: true, data: await volunteerUpsertRegistration(supabase, payload) });
       default:
         return json(400, { ok: false, error: `Unknown action: ${action}` });
     }
