@@ -18,7 +18,7 @@ create table if not exists public.volunteer_service_master (
   coordinator_contact_number text not null default '',
   reporting_time text not null default '',
   volunteers_required integer not null default 0,
-  coordinator_photo_link text,
+  coordinator_photo_link text not null default '',
   active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
