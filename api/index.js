@@ -321,7 +321,16 @@ async function volunteerLookup(supabase, payload) {
       volunteer: null
     };
   }
-  const volunteer = mapVolunteer(volunteerResult.data, servicesByName);
+  const foundVolunteer = volunteerResult.data;
+  if (!foundVolunteer.attendance) {
+    const { error: attendanceError } = await supabase
+      .from("volunteers")
+      .update({ attendance: true })
+      .eq("mobile_number", mobileNumber);
+    if (attendanceError) throw attendanceError;
+    foundVolunteer.attendance = true;
+  }
+  const volunteer = mapVolunteer(foundVolunteer, servicesByName);
   return {
     found: true,
     complete: volunteer.complete,
@@ -401,6 +410,24 @@ async function volunteerUpsertRegistration(supabase, payload) {
     complete: volunteer.complete,
     missingFields: volunteer.missingFields
   };
+}
+
+async function volunteerMarkTshirt(supabase, payload) {
+  const mobileNumber = normalizeMobileNumber(payload.mobileNumber || payload.mobile || payload.whatsappNumber || "");
+  if (mobileNumber.length !== 10) {
+    throw new Error("Mobile number is required");
+  }
+  const { data: existing, error: existingError } = await supabase.from("volunteers").select("*").eq("mobile_number", mobileNumber).maybeSingle();
+  if (existingError) throw existingError;
+  if (!existing) {
+    throw new Error("Volunteer not found");
+  }
+  const { error } = await supabase.from("volunteers").update({ tshirt: true, attendance: true }).eq("mobile_number", mobileNumber);
+  if (error) throw error;
+  const services = await volunteerServicesList(supabase);
+  const servicesByName = Object.fromEntries((services || []).map((row) => [String(row.serviceName || "").trim(), row]));
+  const volunteer = mapVolunteer({ ...existing, tshirt: true, attendance: true }, servicesByName);
+  return { saved: true, mobileNumber, volunteer };
 }
 
 async function getSessionUser(supabase, sessionToken) {
@@ -2032,7 +2059,7 @@ async function main(request) {
     const action = body.action;
     const payload = body.payload || {};
     const supabase = getSupabase();
-    const publicActions = new Set(["auth.login", "auth.logout", "auth.me", "warehouses.list", "books.list", "stock.current", "onlineClasses.submit", "onlineClasses.warehouseBooks", "volunteers.lookup", "volunteers.upsertRegistration", "volunteerServices.list"]);
+    const publicActions = new Set(["auth.login", "auth.logout", "auth.me", "warehouses.list", "books.list", "stock.current", "onlineClasses.submit", "onlineClasses.warehouseBooks", "volunteers.lookup", "volunteers.upsertRegistration", "volunteerServices.list", "volunteers.markTshirt"]);
     const currentUser = await requireCurrentUser(supabase, payload, publicActions.has(action));
 
     switch (action) {
@@ -2164,6 +2191,8 @@ async function main(request) {
         return json(200, { ok: true, data: await volunteerLookup(supabase, payload) });
       case "volunteers.upsertRegistration":
         return json(200, { ok: true, data: await volunteerUpsertRegistration(supabase, payload) });
+      case "volunteers.markTshirt":
+        return json(200, { ok: true, data: await volunteerMarkTshirt(supabase, payload) });
       default:
         return json(400, { ok: false, error: `Unknown action: ${action}` });
     }
