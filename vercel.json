@@ -9,18 +9,6 @@
       "dest": "/frontend/online-classes.html"
     },
     {
-      "src": "/volunteer-registration",
-      "dest": "/frontend/volunteer-registration.html"
-    },
-    {
-      "src": "/volunteer-registration/",
-      "dest": "/frontend/volunteer-registration.html"
-    },
-    {
-      "src": "/volunteer-registration.html",
-      "dest": "/frontend/volunteer-registration.html"
-    },
-    {
       "src": "/online-classes/",
       "dest": "/frontend/online-classes.html"
     },
