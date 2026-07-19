@@ -24,9 +24,6 @@ create table if not exists public.volunteer_service_master (
   updated_at timestamptz not null default now()
 );
 
-alter table public.volunteer_service_master
-  alter column coordinator_photo_link drop not null;
-
 create table if not exists public.volunteer_registration_events (
   id uuid primary key default gen_random_uuid(),
   source_row_no integer not null,
