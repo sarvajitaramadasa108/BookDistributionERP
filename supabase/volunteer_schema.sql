@@ -31,34 +31,50 @@ create table if not exists public.volunteer_registration_events (
   id uuid primary key default gen_random_uuid(),
   source_row_no integer not null,
   mobile_number text not null,
-  name text not null default '',
+  name text,
   gender text not null default '',
   age integer,
-  college_working text not null default '',
-  area_of_stay text not null default '',
-  allocated_service_name text not null default '',
+  college_working text,
+  area_of_stay text,
+  allocated_service_name text,
   attendance boolean not null default false,
   tshirt boolean not null default false,
-  event_name text not null default 'Jagannatha Bahuda Ratha Yatra 2026',
-  source text not null default 'sheet_import',
+  event_name text,
+  source text,
   created_at timestamptz not null default now()
 );
+
+alter table public.volunteer_registration_events
+  alter column name drop not null,
+  alter column gender drop not null,
+  alter column college_working drop not null,
+  alter column area_of_stay drop not null,
+  alter column allocated_service_name drop not null,
+  alter column event_name drop not null,
+  alter column source drop not null;
 
 create table if not exists public.volunteers (
   id uuid primary key default gen_random_uuid(),
   serial_no integer not null unique,
   mobile_number text not null unique,
-  name text not null default '',
-  gender text not null default '',
+  name text,
+  gender text,
   age integer,
-  college_working text not null default '',
-  area_of_stay text not null default '',
-  allocated_service_name text not null default '',
+  college_working text,
+  area_of_stay text,
+  allocated_service_name text,
   attendance boolean not null default false,
   tshirt boolean not null default false,
   registered_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.volunteers
+  alter column name drop not null,
+  alter column gender drop not null,
+  alter column college_working drop not null,
+  alter column area_of_stay drop not null,
+  alter column allocated_service_name drop not null;
 
 create index if not exists idx_volunteer_registration_events_mobile on public.volunteer_registration_events (mobile_number);
 create index if not exists idx_volunteer_registration_events_created_at on public.volunteer_registration_events (created_at desc);
