@@ -1315,9 +1315,12 @@ async function getActivityUnsettled(supabase) {
   for (const line of lines || []) {
     const doc = docsById[line.document_id];
     if (!doc || !doc.activity_id) continue;
+    const activity = activityById[doc.activity_id] || {};
+    if (String(activity.status || "").toLowerCase() === "completed" || activity.settled_at) {
+      continue;
+    }
     const type = doc.document_type;
     if (!["ISSUE", "RETURN", "SALE", "COMPLIMENTARY", "UNSETTLED_OPENING"].includes(type)) continue;
-    const activity = activityById[doc.activity_id] || {};
     const item = itemById[line.item_id] || {};
     const devotee = devoteeById[activity.devotee_id] || devoteeByCode[activity.devotee_id] || {};
     const key = `${doc.activity_id}|${line.item_id}`;
@@ -2042,6 +2045,51 @@ async function getWarehouseMonthlyReport(supabase, payload) {
       } else if (doc.document_type === "PURCHASE") {
         row.openingQty += qty;
         row.closingQty += qty;
+      } else if (doc.document_type === "ADJUSTMENT") {
+        const settlementEdit = parseSettlementEditNote(line.line_notes || doc.notes || "");
+        if (settlementEdit) {
+          const target = settlementEdit.target;
+          const direction = settlementEdit.direction;
+          if (target === "ISSUE") {
+            if (direction === "IN") {
+              row.issueQty -= qty;
+              row.unsettledQty -= qty;
+              row.closingQty += qty;
+            } else {
+              row.issueQty += qty;
+              row.unsettledQty += qty;
+              row.closingQty -= qty;
+            }
+          } else if (target === "RETURN") {
+            if (direction === "IN") {
+              row.returnQty += qty;
+              row.unsettledQty += qty;
+              row.closingQty += qty;
+            } else {
+              row.returnQty -= qty;
+              row.unsettledQty -= qty;
+              row.closingQty -= qty;
+            }
+          } else if (target === "SALE") {
+            if (direction === "IN") {
+              row.saleQty += qty;
+              row.daySalesMap[doc.document_date] = (row.daySalesMap[doc.document_date] || 0) + qty;
+              row.closingQty -= qty;
+            } else {
+              row.saleQty -= qty;
+              row.daySalesMap[doc.document_date] = (row.daySalesMap[doc.document_date] || 0) - qty;
+              row.closingQty += qty;
+            }
+          } else if (target === "COMPLIMENTARY") {
+            if (direction === "IN") {
+              row.complimentaryQty += qty;
+              row.closingQty -= qty;
+            } else {
+              row.complimentaryQty -= qty;
+              row.closingQty += qty;
+            }
+          }
+        }
       } else if (doc.document_type === "TRANSFER") {
         if (doc.from_warehouse_id === warehouse.id) {
           row.transferOutQty += qty;
@@ -2068,6 +2116,29 @@ async function getWarehouseMonthlyReport(supabase, payload) {
         else if (doc.document_type === "COMPLIMENTARY") bucket.complimentaryQty += qty;
         settledBuckets.set(bucketKey, bucket);
       }
+      if (activity && (String(activity.status || "").toLowerCase() === "completed" || activity.settled_at)) {
+        const settledKey = `${activity.id}|${line.item_id}`;
+        const settledBucket = settledBuckets.get(settledKey) || { itemId: line.item_id, activityId: activity.id, settledDay: settledAtDate, issueQty: 0, returnQty: 0, complimentaryQty: 0 };
+        const settlementEdit = doc.document_type === "ADJUSTMENT" ? parseSettlementEditNote(line.line_notes || doc.notes || "") : null;
+        if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") {
+          settledBucket.issueQty += qty;
+        } else if (doc.document_type === "RETURN") {
+          settledBucket.returnQty += qty;
+        } else if (doc.document_type === "COMPLIMENTARY") {
+          settledBucket.complimentaryQty += qty;
+        } else if (doc.document_type === "ADJUSTMENT" && settlementEdit) {
+          const target = settlementEdit.target;
+          const direction = settlementEdit.direction;
+          if (target === "ISSUE") {
+            settledBucket.issueQty += direction === "IN" ? -qty : qty;
+          } else if (target === "RETURN") {
+            settledBucket.returnQty += direction === "IN" ? qty : -qty;
+          } else if (target === "COMPLIMENTARY") {
+            settledBucket.complimentaryQty += direction === "IN" ? qty : -qty;
+          }
+        }
+        settledBuckets.set(settledKey, settledBucket);
+      }
       index.set(key, row);
     }
   }
@@ -2076,13 +2147,25 @@ async function getWarehouseMonthlyReport(supabase, payload) {
     const groupB = String(b.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
     return groupA - groupB || String(a.bookName).localeCompare(String(b.bookName)) || String(a.bookId).localeCompare(String(b.bookId));
   });
-  for (const bucket of settledBuckets.values()) {
-    const row = index.get(bucket.itemId);
-    if (!row) continue;
-    const settledSaleQty = Math.max(Number(bucket.issueQty || 0) - Number(bucket.returnQty || 0) - Number(bucket.complimentaryQty || 0), 0);
-    if (settledSaleQty <= 0) continue;
-    row.saleQty += settledSaleQty;
-    row.daySalesMap[bucket.date] = (row.daySalesMap[bucket.date] || 0) + settledSaleQty;
+  const settlementContext = await getSettlementContext(supabase);
+  const rowByBookId = new Map(rows.map((row) => [String(row.bookId || ""), row]));
+  for (const activity of settlementContext.activities || []) {
+    if (String(activity.warehouse_id || "") !== String(warehouse.id || "")) continue;
+    if (String(activity.status || "").toLowerCase() !== "completed" && !activity.settled_at) continue;
+    const settledDay = toDateOnly(activity.settled_at || "");
+    if (!settledDay || settledDay.slice(0, 7) !== month) continue;
+    const detail = buildSettlementSummaryForActivity(activity, settlementContext);
+    const hasSaleDocs = (detail.documents || []).some((doc) => String(doc.documentType || "").toUpperCase() === "SALE");
+    for (const book of detail.books || []) {
+      const row = rowByBookId.get(String(book.bookId || ""));
+      if (!row) continue;
+      const settledSaleQty = hasSaleDocs
+        ? Number(book.saleQty || 0)
+        : Math.max(Number(book.issueQty || 0) - Number(book.returnQty || 0) - Number(book.complimentaryQty || 0), 0);
+      if (settledSaleQty <= 0) continue;
+      row.saleQty += settledSaleQty;
+      row.daySalesMap[settledDay] = (row.daySalesMap[settledDay] || 0) + settledSaleQty;
+    }
   }
   const rowsWithArrays = rows.map((row) => {
     const transferArray = Object.entries(row.transferMap || {}).map(([name, quantity]) => ({ name, quantity }));
