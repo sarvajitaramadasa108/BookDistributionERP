@@ -1268,8 +1268,11 @@
   }
 
   function pendingSettlementBooksMarkup(detail) {
+    return pendingSettlementBooksMarkupWithMode(detail, isMainAdmin());
+  }
+
+  function pendingSettlementBooksMarkupWithMode(detail, editable) {
     const rows = detail && Array.isArray(detail.books) ? detail.books : [];
-    const editable = isMainAdmin();
     return `
       <div class="table-wrap">
         ${editable ? `<form id="pendingSettlementBooksForm" onsubmit="window.erpApp.savePendingSettlementBookAdjustments(event)">` : ""}
@@ -1404,7 +1407,7 @@
     }
     const readOnly = Boolean(options.readOnly);
     const summary = detail.summary || {};
-    const activityStatus = Number(summary.returnQty || 0) > 0 ? "Settlement Pending" : "Return Pending";
+    const activityStatus = Number(summary.pendingAmount || 0) <= 0 ? "Settled" : (Number(summary.returnQty || 0) > 0 ? "Settlement Pending" : "Return Pending");
     return `
       <div class="panel-header compact-header">
         <h2>${escapeHtml(detail.activityName || detail.activityId || "Pending Settlement")}</h2>
@@ -1467,7 +1470,7 @@
       </div>
       <div class="section-gap">
         <h3>Book Wise</h3>
-        ${pendingSettlementBooksMarkup(detail)}
+        ${pendingSettlementBooksMarkupWithMode(detail, !readOnly && isMainAdmin())}
       </div>
       <div class="section-gap">
         <h3>Payment History</h3>

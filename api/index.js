@@ -1581,6 +1581,7 @@ function buildSettlementSummaryForActivity(activity, context) {
     activityCode: activity.activity_code,
     activityType: activity.activity_type,
     activityStatus: activity.status,
+    settlementStatus: Number(summary.pendingAmount || 0) <= 0 ? "Settled" : (Number(summary.returnQty || 0) > 0 ? "Settlement Pending" : "Return Pending"),
     settledAt: activity.settled_at,
     devoteeId: devoteeById[activity.devotee_id]?.devotee_code || activity.devotee_id || "",
     devoteeName: devoteeById[activity.devotee_id]?.devotee_name || "",
@@ -1854,6 +1855,13 @@ async function getActivityMonthlyReport(supabase, payload) {
       };
     })
   }));
+  const isSettledActivity = String(activity.status || "").toLowerCase() === "completed" || Boolean(activity.settled_at);
+  if (isSettledActivity) {
+    for (const row of rowsWithDocArray) {
+      const settledSaleQty = Math.max(Number(row.issueQty || 0) - Number(row.returnQty || 0) - Number(row.complimentaryQty || 0), 0);
+      row.saleQty = settledSaleQty;
+    }
+  }
   return {
     month,
     devoteeId: selectedDevotee?.devotee_code || devoteeById[activity.devotee_id]?.devotee_code || "",
@@ -1889,17 +1897,32 @@ async function getWarehouseMonthlyReport(supabase, payload) {
   const { data: warehouse } = await supabase.from("warehouses").select("*").eq("warehouse_code", warehouseId).maybeSingle();
   if (!warehouse) throw new Error("Warehouse not found");
   const { data: allWarehouses } = await supabase.from("warehouses").select("*");
+  const { data: activities } = await supabase.from("activities").select("id, status, settled_at, warehouse_id");
   const { data: items } = await supabase.from("items").select("*");
   const { data: documents } = await supabase.from("documents").select("*").gte("document_date", `${month}-01`).lt("document_date", monthEnd(month));
   const { data: lines } = await supabase.from("document_lines").select("*");
   const itemsById = Object.fromEntries((items || []).map((row) => [row.id, row]));
   const warehousesById = Object.fromEntries((allWarehouses || []).map((row) => [row.id, row]));
+  const activityById = Object.fromEntries((activities || []).map((row) => [row.id, row]));
   const startDocs = (documents || []).filter((doc) => doc.document_date && doc.document_date.slice(0, 7) === month);
   const index = new Map();
-  const days = Array.from(new Set(startDocs.map((doc) => doc.document_date))).sort();
   const isMain = String(warehouse.warehouse_name || "").toLowerCase().startsWith("gmb");
+  const settledBuckets = new Map();
+  const daySet = new Set(startDocs.map((doc) => doc.document_date));
+  for (const activity of activities || []) {
+    if (!activity || String(activity.status || "").toLowerCase() !== "completed" && !activity.settled_at) continue;
+    const settledDay = toDateOnly(activity.settled_at || "");
+    if (settledDay && settledDay.slice(0, 7) === month) {
+      daySet.add(settledDay);
+    }
+  }
+  const days = Array.from(daySet).sort();
   for (const doc of startDocs) {
     const docLines = (lines || []).filter((line) => line.document_id === doc.id);
+    const activity = doc.activity_id ? activityById[doc.activity_id] || null : null;
+    const settledAtDate = activity && (String(activity.status || "").toLowerCase() === "completed" || activity.settled_at)
+      ? toDateOnly(activity.settled_at || doc.document_date)
+      : "";
     for (const line of docLines) {
       const item = itemsById[line.item_id] || {};
       const fromWarehouse = warehousesById[doc.from_warehouse_id || ""] || null;
@@ -1966,6 +1989,14 @@ async function getWarehouseMonthlyReport(supabase, payload) {
           }
         }
       }
+      if (settledAtDate && (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING" || doc.document_type === "RETURN" || doc.document_type === "COMPLIMENTARY")) {
+        const bucketKey = `${settledAtDate}|${line.item_id}`;
+        const bucket = settledBuckets.get(bucketKey) || { itemId: line.item_id, date: settledAtDate, issueQty: 0, returnQty: 0, complimentaryQty: 0 };
+        if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") bucket.issueQty += qty;
+        else if (doc.document_type === "RETURN") bucket.returnQty += qty;
+        else if (doc.document_type === "COMPLIMENTARY") bucket.complimentaryQty += qty;
+        settledBuckets.set(bucketKey, bucket);
+      }
       index.set(key, row);
     }
   }
@@ -1974,9 +2005,17 @@ async function getWarehouseMonthlyReport(supabase, payload) {
     const groupB = String(b.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
     return groupA - groupB || String(a.bookName).localeCompare(String(b.bookName)) || String(a.bookId).localeCompare(String(b.bookId));
   });
+  for (const bucket of settledBuckets.values()) {
+    const row = index.get(bucket.itemId);
+    if (!row) continue;
+    const settledSaleQty = Math.max(Number(bucket.issueQty || 0) - Number(bucket.returnQty || 0) - Number(bucket.complimentaryQty || 0), 0);
+    if (settledSaleQty <= 0) continue;
+    row.saleQty += settledSaleQty;
+    row.daySalesMap[bucket.date] = (row.daySalesMap[bucket.date] || 0) + settledSaleQty;
+  }
   const rowsWithArrays = rows.map((row) => {
     const transferArray = Object.entries(row.transferMap || {}).map(([name, quantity]) => ({ name, quantity }));
-    const daySalesArray = (days || []).map((day) => ({ day, quantity: Number((row.daySalesMap || {})[day] || 0) }));
+    const daySalesArray = (days || []).map((day) => ({ day, quantity: Number((row.daySalesMap || {})[day] || 0) })); 
     return {
       ...row,
       transferArray,
