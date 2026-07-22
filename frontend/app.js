@@ -6419,6 +6419,7 @@
     backToComplimentarySummary,
     setDocumentsMode,
     setDocumentSearch,
+    previewDocumentPdf,
     downloadDocumentPdf,
     showPendingSettlementDetails,
     backToPendingSettlementSummary,
