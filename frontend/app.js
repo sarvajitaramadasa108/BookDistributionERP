@@ -70,7 +70,9 @@
     sidebarCollapsed: false,
     reportWarehouseId: "",
     reportMonth: new Date().toISOString().slice(0, 7),
-    documentEntryGroup: "BOOK"
+    documentEntryGroup: "BOOK",
+    documentSearch: "",
+    documentPdfPreviewUrl: ""
   };
 
   const views = {
@@ -515,51 +517,7 @@
     state.activities = activitiesResult.status === "fulfilled" && Array.isArray(activitiesResult.value) ? activitiesResult.value.map(normalizeActivity) : [];
     state.pendingSettlements = pendingSettlementsResult.status === "fulfilled" && Array.isArray(pendingSettlementsResult.value) ? pendingSettlementsResult.value.map(normalizePendingSettlementSummary) : [];
     void ensureDocumentItemMastersLoaded().catch(() => {});
-
-    return `
-      <section class="card">
-        <div class="panel-header">
-          <h2>Stock Documents</h2>
-          <div class="row-actions">
-            <button class="button ${state.documentsMode === "entries" ? "" : "secondary"}" type="button" onclick="window.erpApp.setDocumentsMode('entries')">Stock Entries</button>
-            <button class="button ${state.documentsMode === "pending" ? "" : "secondary"}" type="button" onclick="window.erpApp.setDocumentsMode('pending')">Pending Settlements</button>
-          </div>
-        </div>
-        <div class="panel-body">
-          ${state.documentsMode === "pending" ? `
-            <div class="grid metrics">
-              ${metric("Pending Activities", state.pendingSettlements.length, "Completed activities with settlement dues")}
-              ${metric("Pending Amount", money(state.pendingSettlements.reduce((sum, row) => sum + Number(row.summary?.pendingAmount || 0), 0)), "Total amount still to be collected")}
-              ${metric("Paid So Far", money(state.pendingSettlements.reduce((sum, row) => sum + Number(row.summary?.paidTotalAmount || 0), 0)), "Cash plus online received")}
-              ${metric("Returned Qty", state.pendingSettlements.reduce((sum, row) => sum + Number(row.summary?.returnQty || 0), 0), "Returned quantity across pending activities")}
-            </div>
-            <div class="section-gap">
-              ${state.pendingSettlementActivityId ? pendingSettlementDetailMarkup(state.pendingSettlementDetails) : pendingSettlementSummaryMarkup(state.pendingSettlements)}
-            </div>
-          ` : `
-            <div class="grid metrics">
-              ${metric("Issue", "Out", "Books sent from warehouse to activity or location")}
-              ${metric("Return", "In", "Books received back from an issued activity")}
-              ${metric("Sale", "Out", "Books distributed and amount recorded")}
-              ${metric("Return", "In", "Returned books restored or marked damaged")}
-            </div>
-            <div class="section-gap">
-              <div class="row-actions" style="margin-bottom:12px;">
-                <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">Opening Stock Entry</button>
-                <button class="button secondary" type="button" onclick="window.erpApp.openUnsettledOpeningForm()">Unsettled Issue Entry</button>
-                <button class="button secondary" type="button" onclick="window.erpApp.openPurchaseForm()">Purchase Stock Entry</button>
-                <button class="button secondary" type="button" onclick="window.erpApp.openSaleForm()">Sale Entry</button>
-                <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Returns Entry</button>
-                <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Entry</button>
-                <button class="button secondary" type="button" onclick="window.erpApp.openComplimentaryForm()">Complimentary Issue Entry</button>
-                <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Entry</button>
-              </div>
-              ${state.documents.length ? documentsTable(state.documents) : '<div class="empty-state">No stock documents found.</div>'}
-            </div>
-          `}
-        </div>
-      </section>
-    `;
+    return renderDocumentsMarkup();
   }
 
   function documentsTable(rows) {
@@ -580,19 +538,19 @@
             </tr>
           </thead>
           <tbody>
-            ${rows.slice().reverse().map((row) => `
+            ${rows.map((row) => `
               <tr>
                 <td>${escapeHtml(row.documentId)}</td>
                 <td>${status(row.documentType, documentTone(row.documentType))}</td>
                 <td>${escapeHtml(toInputDate(row.documentDate) || "-")}</td>
                 <td>${escapeHtml(getWarehouseName(row.fromWarehouseId))}</td>
                 <td>${escapeHtml(getWarehouseName(row.toWarehouseId))}</td>
-                <td>${escapeHtml(getActivityName(row.activityId))}</td>
+                <td>${escapeHtml(row.activityName || getActivityName(row.activityId))}</td>
                 <td>${escapeHtml(row.status || "-")}</td>
                 <td>${escapeHtml(row.notes || "-")}</td>
                 <td>
                   <div class="row-actions">
-                    <button class="small-button" type="button" onclick="window.erpApp.downloadDocumentPdf('${escapeAttribute(row.documentId)}')">PDF</button>
+                    <button class="small-button" type="button" onclick="window.erpApp.previewDocumentPdf('${escapeAttribute(row.documentId)}')">PDF</button>
                   </div>
                 </td>
               </tr>
@@ -1099,8 +1057,7 @@
       state.pendingSettlementActivityId = "";
       state.pendingSettlementDetails = null;
     }
-    content.innerHTML = "";
-    void navigate("documents");
+    content.innerHTML = renderDocumentsMarkup();
   }
 
   async function showPendingSettlementDetails(activityId) {
@@ -1110,7 +1067,7 @@
     setLoading(true);
     try {
       state.pendingSettlementDetails = await window.erpApi.request("activity.pendingSettlementDetails", { activityId });
-      content.innerHTML = await renderDocuments();
+      content.innerHTML = renderDocumentsMarkup();
     } catch (error) {
       showToast(error.message || "Could not load settlement details");
     } finally {
@@ -1121,7 +1078,12 @@
   function backToPendingSettlementSummary() {
     state.pendingSettlementActivityId = "";
     state.pendingSettlementDetails = null;
-    content.innerHTML = renderDocuments();
+    content.innerHTML = renderDocumentsMarkup();
+  }
+
+  function setDocumentSearch(value) {
+    state.documentSearch = value;
+    rerenderContentKeepingFocus("documentSearchInput", renderDocumentsMarkup);
   }
 
   function pendingSettlementSummaryMarkup(rows) {
@@ -1811,6 +1773,10 @@
   }
 
   function closeModal() {
+    if (state.documentPdfPreviewUrl) {
+      URL.revokeObjectURL(state.documentPdfPreviewUrl);
+      state.documentPdfPreviewUrl = "";
+    }
     modalRoot.innerHTML = "";
   }
 
@@ -2249,12 +2215,108 @@
       documentId: row.documentId || row["Document ID"] || "",
       documentType: row.documentType || row["Document Type"] || "",
       documentDate: row.documentDate || row["Document Date"] || "",
+      createdAt: row.createdAt || row.created_at || "",
       fromWarehouseId: row.fromWarehouseId || row["From Warehouse ID"] || "",
       toWarehouseId: row.toWarehouseId || row["To Warehouse ID"] || "",
       activityId: row.activityId || row["Activity ID"] || "",
       status: row.status || row.Status || "",
       notes: row.notes || row.Notes || ""
     };
+  }
+
+  function getDocumentActivityMeta(activityId) {
+    const activity = state.activities.find((item) => item.activityId === activityId || item.activityRowId === activityId);
+    if (!activity) {
+      return { activityName: activityId || "-", devoteeName: "-" };
+    }
+    return {
+      activityName: activity.name || activity.activityId || activityId || "-",
+      devoteeName: activity.devoteeName || getDevoteeName(activity.devoteeId) || "-"
+    };
+  }
+
+  function enrichDocumentRow(row) {
+    const meta = getDocumentActivityMeta(row.activityId);
+    return {
+      ...row,
+      activityName: row.activityName || meta.activityName,
+      devoteeName: row.devoteeName || meta.devoteeName
+    };
+  }
+
+  function getFilteredDocumentRows() {
+    const query = String(state.documentSearch || "").trim().toLowerCase();
+    return (state.documents || [])
+      .map(enrichDocumentRow)
+      .filter((row) => {
+        if (!query) return true;
+        const haystack = [
+          row.documentId,
+          row.documentType,
+          row.activityName,
+          row.devoteeName,
+          row.status,
+          row.notes,
+          getWarehouseName(row.fromWarehouseId),
+          getWarehouseName(row.toWarehouseId)
+        ].join(" ").toLowerCase();
+        return haystack.includes(query);
+      })
+      .sort((a, b) => String(b.createdAt || b.documentDate || b.documentId || "").localeCompare(String(a.createdAt || a.documentDate || a.documentId || "")));
+  }
+
+  function renderDocumentsMarkup() {
+    const rows = getFilteredDocumentRows();
+    return `
+      <section class="card">
+        <div class="panel-header">
+          <h2>Stock Documents</h2>
+          <div class="row-actions">
+            <button class="button ${state.documentsMode === "entries" ? "" : "secondary"}" type="button" onclick="window.erpApp.setDocumentsMode('entries')">Stock Entries</button>
+            <button class="button ${state.documentsMode === "pending" ? "" : "secondary"}" type="button" onclick="window.erpApp.setDocumentsMode('pending')">Pending Settlements</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          ${state.documentsMode === "pending" ? `
+            <div class="grid metrics">
+              ${metric("Pending Activities", state.pendingSettlements.length, "Completed activities with settlement dues")}
+              ${metric("Pending Amount", money(state.pendingSettlements.reduce((sum, row) => sum + Number(row.summary?.pendingAmount || 0), 0)), "Total amount still to be collected")}
+              ${metric("Paid So Far", money(state.pendingSettlements.reduce((sum, row) => sum + Number(row.summary?.paidTotalAmount || 0), 0)), "Cash plus online received")}
+              ${metric("Returned Qty", state.pendingSettlements.reduce((sum, row) => sum + Number(row.summary?.returnQty || 0), 0), "Returned quantity across pending activities")}
+            </div>
+            <div class="section-gap">
+              ${state.pendingSettlementActivityId ? pendingSettlementDetailMarkup(state.pendingSettlementDetails) : pendingSettlementSummaryMarkup(state.pendingSettlements)}
+            </div>
+          ` : `
+            <div class="grid metrics">
+              ${metric("Issue", "Out", "Books sent from warehouse to activity or location")}
+              ${metric("Return", "In", "Books received back from an issued activity")}
+              ${metric("Sale", "Out", "Books distributed and amount recorded")}
+              ${metric("Return", "In", "Returned books restored or marked damaged")}
+            </div>
+            <div class="section-gap">
+              <div class="row-actions" style="margin-bottom:12px;">
+                <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">Opening Stock Entry</button>
+                <button class="button secondary" type="button" onclick="window.erpApp.openUnsettledOpeningForm()">Unsettled Issue Entry</button>
+                <button class="button secondary" type="button" onclick="window.erpApp.openPurchaseForm()">Purchase Stock Entry</button>
+                <button class="button secondary" type="button" onclick="window.erpApp.openSaleForm()">Sale Entry</button>
+                <button class="button secondary" type="button" onclick="window.erpApp.openReceiveForm()">Returns Entry</button>
+                <button class="button secondary" type="button" onclick="window.erpApp.openTransferForm()">Transfer Entry</button>
+                <button class="button secondary" type="button" onclick="window.erpApp.openComplimentaryForm()">Complimentary Issue Entry</button>
+                <button class="button" type="button" onclick="window.erpApp.openIssueForm()">Issue Entry</button>
+              </div>
+              <div class="toolbar" style="margin-bottom:12px;">
+                <label class="field compact-field">
+                  <span>Search</span>
+                  <input id="documentSearchInput" type="search" value="${escapeAttribute(state.documentSearch)}" placeholder="Search activity or devotee" oninput="window.erpApp.setDocumentSearch(this.value)">
+                </label>
+              </div>
+              ${rows.length ? documentsTable(rows) : '<div class="empty-state">No stock documents found.</div>'}
+            </div>
+          `}
+        </div>
+      </section>
+    `;
   }
 
   function documentTypeLabel(documentType) {
@@ -5935,7 +5997,7 @@
     return start || end || "-";
   }
 
-  async function downloadDocumentPdf(documentId) {
+  async function previewDocumentPdf(documentId) {
     if (!documentId) {
       showToast("Document not found");
       return;
@@ -6089,12 +6151,39 @@
       }
 
       const safeFileName = String(detail.documentId || "stock-document").replace(/[\\/:*?"<>|]+/g, "_");
-      pdf.save(`${safeFileName}.pdf`);
+      const blob = pdf.output("blob");
+      if (state.documentPdfPreviewUrl) {
+        URL.revokeObjectURL(state.documentPdfPreviewUrl);
+      }
+      state.documentPdfPreviewUrl = URL.createObjectURL(blob);
+      modalRoot.innerHTML = `
+        <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+        <div class="modal-card" style="width:min(1100px,96vw);height:min(92vh,96vh);display:flex;flex-direction:column;">
+          <div class="panel-header">
+            <h2>Document PDF Preview</h2>
+            <div class="row-actions">
+              <a class="button secondary" href="${escapeAttribute(state.documentPdfPreviewUrl)}" download="${escapeAttribute(safeFileName)}.pdf">Download PDF</a>
+              <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+            </div>
+          </div>
+          <div class="panel-body" style="flex:1;min-height:0;padding:0;">
+            <iframe
+              title="Stock Document PDF"
+              src="${escapeAttribute(state.documentPdfPreviewUrl)}"
+              style="width:100%;height:100%;border:0;background:#fff;"
+            ></iframe>
+          </div>
+        </div>
+      `;
     } catch (error) {
       showToast(error.message || "Could not generate PDF");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function downloadDocumentPdf(documentId) {
+    return previewDocumentPdf(documentId);
   }
 
   function metric(label, value, note) {
@@ -6329,6 +6418,7 @@
     showComplimentaryActivityDetails,
     backToComplimentarySummary,
     setDocumentsMode,
+    setDocumentSearch,
     downloadDocumentPdf,
     showPendingSettlementDetails,
     backToPendingSettlementSummary,
