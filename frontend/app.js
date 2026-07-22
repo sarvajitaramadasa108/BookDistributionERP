@@ -6010,7 +6010,12 @@
     }
 
     setLoading(true);
+    let previewWindow = null;
     try {
+      previewWindow = window.open("", "_blank");
+      if (!previewWindow) {
+        throw new Error("Popup blocked. Please allow popups for PDF preview.");
+      }
       const detail = await window.erpApi.request("documents.detail", { documentId });
       const pdf = new JsPdfCtor({ orientation: "p", unit: "mm", format: "a4" });
       if (typeof pdf.autoTable !== "function") {
@@ -6152,30 +6157,15 @@
 
       const safeFileName = String(detail.documentId || "stock-document").replace(/[\\/:*?"<>|]+/g, "_");
       const blob = pdf.output("blob");
-      if (state.documentPdfPreviewUrl) {
-        URL.revokeObjectURL(state.documentPdfPreviewUrl);
-      }
-      state.documentPdfPreviewUrl = URL.createObjectURL(blob);
-      modalRoot.innerHTML = `
-        <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
-        <div class="modal-card" style="width:min(1100px,96vw);height:min(92vh,96vh);display:flex;flex-direction:column;">
-          <div class="panel-header">
-            <h2>Document PDF Preview</h2>
-            <div class="row-actions">
-              <a class="button secondary" href="${escapeAttribute(state.documentPdfPreviewUrl)}" download="${escapeAttribute(safeFileName)}.pdf">Download PDF</a>
-              <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
-            </div>
-          </div>
-          <div class="panel-body" style="flex:1;min-height:0;padding:0;">
-            <iframe
-              title="Stock Document PDF"
-              src="${escapeAttribute(state.documentPdfPreviewUrl)}"
-              style="width:100%;height:100%;border:0;background:#fff;"
-            ></iframe>
-          </div>
-        </div>
-      `;
+      const url = URL.createObjectURL(blob);
+      previewWindow.location.href = url;
+      previewWindow.document.title = `${safeFileName}.pdf`;
+      previewWindow.focus();
+      setTimeout(() => URL.revokeObjectURL(url), 5 * 60 * 1000);
     } catch (error) {
+      if (previewWindow && !previewWindow.closed) {
+        previewWindow.close();
+      }
       showToast(error.message || "Could not generate PDF");
     } finally {
       setLoading(false);
