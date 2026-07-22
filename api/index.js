@@ -1437,7 +1437,7 @@ function buildSettlementSummaryForActivity(activity, context) {
     let issueQty = 0;
     let returnQty = 0;
     let saleQty = 0;
-    let complementaryQty = 0;
+    let complimentaryQty = 0;
     let amount = 0;
     for (const line of docLines) {
       const item = itemById[line.item_id] || {};
@@ -1452,7 +1452,7 @@ function buildSettlementSummaryForActivity(activity, context) {
       } else if (doc.document_type === "SALE") {
         saleQty += qty;
       } else if (doc.document_type === "COMPLIMENTARY") {
-        complementaryQty += qty;
+        complimentaryQty += qty;
       }
       const bookKey = item.erp_code || line.item_id;
       const existingBookRow = bookIndex.get(bookKey) || {

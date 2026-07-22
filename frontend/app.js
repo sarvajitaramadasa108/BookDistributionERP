@@ -497,18 +497,23 @@
   }
 
   async function renderDocuments() {
-    const [documents, books, warehouses, activities, pendingSettlements] = await Promise.all([
+    const results = await Promise.allSettled([
       window.erpApi.request("documents.list"),
       window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
       window.erpApi.request("warehouses.list"),
       window.erpApi.request("activities.list"),
       window.erpApi.request("activity.pendingSettlements")
     ]);
-    state.documents = documents.map(normalizeDocument);
-    state.books = books;
-    state.warehouses = warehouses.map(normalizeWarehouse);
-    state.activities = activities.map(normalizeActivity);
-    state.pendingSettlements = Array.isArray(pendingSettlements) ? pendingSettlements.map(normalizePendingSettlementSummary) : [];
+    const documentsResult = results[0];
+    const booksResult = results[1];
+    const warehousesResult = results[2];
+    const activitiesResult = results[3];
+    const pendingSettlementsResult = results[4];
+    state.documents = documentsResult.status === "fulfilled" && Array.isArray(documentsResult.value) ? documentsResult.value.map(normalizeDocument) : [];
+    state.books = booksResult.status === "fulfilled" && Array.isArray(booksResult.value) ? booksResult.value : [];
+    state.warehouses = warehousesResult.status === "fulfilled" && Array.isArray(warehousesResult.value) ? warehousesResult.value.map(normalizeWarehouse) : [];
+    state.activities = activitiesResult.status === "fulfilled" && Array.isArray(activitiesResult.value) ? activitiesResult.value.map(normalizeActivity) : [];
+    state.pendingSettlements = pendingSettlementsResult.status === "fulfilled" && Array.isArray(pendingSettlementsResult.value) ? pendingSettlementsResult.value.map(normalizePendingSettlementSummary) : [];
     void ensureDocumentItemMastersLoaded().catch(() => {});
 
     return `
