@@ -964,6 +964,11 @@ function parseSettlementEditNote(note) {
   };
 }
 
+function isCountableDocument(doc) {
+  const status = String(doc && doc.status || "").trim().toLowerCase();
+  return !["corrected", "cancelled", "void"].includes(status);
+}
+
 async function createDocument(supabase, payload, currentUser) {
   const documentType = String(payload.documentType || "").trim();
   const allowed = ["OPENING", "ISSUE", "COMPLIMENTARY", "RECEIVE", "PURCHASE", "SALE", "RETURN", "TRANSFER", "ADJUSTMENT", "UNSETTLED_OPENING"];
@@ -1421,7 +1426,7 @@ async function getSettlementContext(supabase) {
 
 function buildSettlementSummaryForActivity(activity, context) {
   const { documents, lines, items, devotees, warehouses, payments } = context;
-  const activityDocs = documents.filter((doc) => doc.activity_id === activity.id);
+  const activityDocs = documents.filter((doc) => doc.activity_id === activity.id && isCountableDocument(doc));
   const docsById = Object.fromEntries(activityDocs.map((doc) => [doc.id, doc]));
   const itemById = Object.fromEntries(items.map((row) => [row.id, row]));
   const devoteeById = Object.fromEntries(devotees.map((row) => [row.id, row]));
@@ -1766,7 +1771,7 @@ async function getActivityMonthlyReport(supabase, payload) {
   if (!activity) {
     return { month, rows: [], documents: [], totals: {} };
   }
-  const docs = (documents || []).filter((doc) => doc.activity_id === activity.id);
+  const docs = (documents || []).filter((doc) => doc.activity_id === activity.id && isCountableDocument(doc));
   const docsById = Object.fromEntries(docs.map((doc) => [doc.id, doc]));
   const itemById = Object.fromEntries((items || []).map((row) => [row.id, row]));
   const warehouseById = Object.fromEntries((warehouses || []).map((row) => [row.id, row]));
@@ -1970,7 +1975,7 @@ async function getWarehouseMonthlyReport(supabase, payload) {
   const itemsById = Object.fromEntries((items || []).map((row) => [row.id, row]));
   const warehousesById = Object.fromEntries((allWarehouses || []).map((row) => [row.id, row]));
   const activityById = Object.fromEntries((activities || []).map((row) => [row.id, row]));
-  const startDocs = (documents || []).filter((doc) => doc.document_date && doc.document_date.slice(0, 7) === month);
+  const startDocs = (documents || []).filter((doc) => isCountableDocument(doc) && doc.document_date && doc.document_date.slice(0, 7) === month);
   const index = new Map();
   const isMain = String(warehouse.warehouse_name || "").toLowerCase().startsWith("gmb");
   const settledBuckets = new Map();

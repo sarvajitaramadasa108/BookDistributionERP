@@ -1407,7 +1407,11 @@
     }
     const readOnly = Boolean(options.readOnly);
     const summary = detail.summary || {};
-    const activityStatus = Number(summary.pendingAmount || 0) <= 0 ? "Settled" : (Number(summary.returnQty || 0) > 0 ? "Settlement Pending" : "Return Pending");
+    const activityStatus = readOnly
+      ? "Settled"
+      : Number(summary.pendingAmount || 0) <= 0
+        ? "Settled"
+        : (Number(summary.returnQty || 0) > 0 ? "Settlement Pending" : "Return Pending");
     return `
       <div class="panel-header compact-header">
         <h2>${escapeHtml(detail.activityName || detail.activityId || "Pending Settlement")}</h2>
