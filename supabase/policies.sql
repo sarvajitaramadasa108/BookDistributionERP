@@ -9,6 +9,7 @@ alter table public.activities enable row level security;
 alter table public.documents enable row level security;
 alter table public.document_lines enable row level security;
 alter table public.stock_ledger enable row level security;
+alter table public.activity_settlement_payments enable row level security;
 alter table public.online_class_registrations enable row level security;
 alter table public.user_sessions enable row level security;
 
@@ -64,6 +65,13 @@ with check (true);
 drop policy if exists "stock_ledger_all_access" on public.stock_ledger;
 create policy "stock_ledger_all_access"
 on public.stock_ledger
+for all
+using (true)
+with check (true);
+
+drop policy if exists "activity_settlement_payments_all_access" on public.activity_settlement_payments;
+create policy "activity_settlement_payments_all_access"
+on public.activity_settlement_payments
 for all
 using (true)
 with check (true);
