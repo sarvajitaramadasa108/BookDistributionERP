@@ -954,6 +954,16 @@ function documentTypeRequiresActivity(documentType) {
   return ["ISSUE", "COMPLIMENTARY", "RETURN", "UNSETTLED_OPENING", "SALE", "ADJUSTMENT"].includes(documentType);
 }
 
+function parseSettlementEditNote(note) {
+  const text = String(note || "").trim();
+  const parts = text.split("|");
+  if (parts[0] !== "SETTLEMENT_EDIT") return null;
+  return {
+    target: String(parts[1] || "").trim().toUpperCase(),
+    direction: String(parts[2] || "").trim().toUpperCase()
+  };
+}
+
 async function createDocument(supabase, payload, currentUser) {
   const documentType = String(payload.documentType || "").trim();
   const allowed = ["OPENING", "ISSUE", "COMPLIMENTARY", "RECEIVE", "PURCHASE", "SALE", "RETURN", "TRANSFER", "ADJUSTMENT", "UNSETTLED_OPENING"];
@@ -1443,6 +1453,7 @@ function buildSettlementSummaryForActivity(activity, context) {
       const item = itemById[line.item_id] || {};
       const qty = Number(line.quantity || 0);
       const price = Number(item.sale_price || line.rate || 0);
+      const settlementEdit = doc.document_type === "ADJUSTMENT" ? parseSettlementEditNote(line.line_notes || doc.notes || "") : null;
       if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") {
         issueQty += qty;
         amount += qty * price;
@@ -1453,6 +1464,40 @@ function buildSettlementSummaryForActivity(activity, context) {
         saleQty += qty;
       } else if (doc.document_type === "COMPLIMENTARY") {
         complimentaryQty += qty;
+      } else if (doc.document_type === "ADJUSTMENT" && settlementEdit) {
+        const target = settlementEdit.target;
+        const direction = settlementEdit.direction;
+        if (target === "ISSUE") {
+          if (direction === "IN") {
+            issueQty -= qty;
+            amount -= qty * price;
+          } else {
+            issueQty += qty;
+            amount += qty * price;
+          }
+        } else if (target === "RETURN") {
+          if (direction === "IN") {
+            returnQty += qty;
+            amount -= qty * price;
+          } else {
+            returnQty -= qty;
+            amount += qty * price;
+          }
+        } else if (target === "SALE") {
+          if (direction === "IN") {
+            saleQty += qty;
+          } else {
+            saleQty -= qty;
+          }
+        } else if (target === "COMPLIMENTARY") {
+          if (direction === "IN") {
+            complimentaryQty += qty;
+            amount -= qty * price;
+          } else {
+            complimentaryQty -= qty;
+            amount += qty * price;
+          }
+        }
       }
       const bookKey = item.erp_code || line.item_id;
       const existingBookRow = bookIndex.get(bookKey) || {
@@ -1471,6 +1516,18 @@ function buildSettlementSummaryForActivity(activity, context) {
         existingBookRow.saleQty += qty;
       } else if (doc.document_type === "COMPLIMENTARY") {
         existingBookRow.saleQty += qty;
+      } else if (doc.document_type === "ADJUSTMENT" && settlementEdit) {
+        const target = settlementEdit.target;
+        const direction = settlementEdit.direction;
+        if (target === "ISSUE") {
+          existingBookRow.issueQty += direction === "IN" ? -qty : qty;
+        } else if (target === "RETURN") {
+          existingBookRow.returnQty += direction === "IN" ? qty : -qty;
+        } else if (target === "SALE") {
+          existingBookRow.saleQty += direction === "IN" ? qty : -qty;
+        } else if (target === "COMPLIMENTARY") {
+          existingBookRow.complimentaryQty = Number(existingBookRow.complimentaryQty || 0) + (direction === "IN" ? qty : -qty);
+        }
       }
       if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") {
         existingBookRow.amount += qty * price;
@@ -1478,6 +1535,16 @@ function buildSettlementSummaryForActivity(activity, context) {
         existingBookRow.amount -= qty * price;
       } else if (doc.document_type === "COMPLIMENTARY") {
         existingBookRow.amount -= qty * price;
+      } else if (doc.document_type === "ADJUSTMENT" && settlementEdit) {
+        const target = settlementEdit.target;
+        const direction = settlementEdit.direction;
+        if (target === "ISSUE") {
+          existingBookRow.amount += direction === "IN" ? -(qty * price) : (qty * price);
+        } else if (target === "RETURN") {
+          existingBookRow.amount += direction === "IN" ? -(qty * price) : (qty * price);
+        } else if (target === "COMPLIMENTARY") {
+          existingBookRow.amount += direction === "IN" ? -(qty * price) : (qty * price);
+        }
       }
       bookIndex.set(bookKey, existingBookRow);
     }
@@ -1583,6 +1650,70 @@ async function createSettlementPayment(supabase, payload, currentUser) {
     onlineAmount: Number(data.online_amount || 0),
     totalAmount: Number(data.cash_amount || 0) + Number(data.online_amount || 0),
     notes: data.notes || ""
+  };
+}
+
+async function savePendingSettlementAdjustments(supabase, payload, currentUser) {
+  requireAdminUser(currentUser);
+  const activityId = String(payload.activityId || "").trim();
+  if (!activityId) throw new Error("Activity is required");
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  if (!rows.length) throw new Error("No adjustment rows were provided");
+  const context = await getSettlementContext(supabase);
+  const activity = context.activities.find((row) => row.activity_code === activityId || row.id === activityId);
+  if (!activity) throw new Error("Activity not found");
+  const detail = buildSettlementSummaryForActivity(activity, context);
+  const currentByBook = Object.fromEntries((detail.books || []).map((row) => [String(row.bookId || "").trim(), row]));
+  const itemByCode = Object.fromEntries((context.items || []).map((row) => [String(row.erp_code || "").trim(), row]));
+  const documentDate = toDateOnly(payload.documentDate || nowIso());
+  const createdAdjustments = [];
+
+  for (const row of rows) {
+    const bookId = String(row.bookId || "").trim();
+    if (!bookId) continue;
+    const current = currentByBook[bookId] || { issueQty: 0, returnQty: 0, saleQty: 0, complimentaryQty: 0 };
+    const targetValues = {
+      ISSUE: Number(row.issueQty || 0),
+      RETURN: Number(row.returnQty || 0),
+      SALE: Number(row.saleQty || 0),
+      COMPLIMENTARY: Number(row.complimentaryQty || 0)
+    };
+    const item = itemByCode[bookId] || await findByCode(supabase, "items", "erp_code", bookId);
+    if (!item) throw new Error(`Book not found: ${bookId}`);
+    const itemGroup = String(item.item_group || "BOOK").trim().toUpperCase();
+    const price = Number(item.sale_price || 0);
+    for (const [target, desiredQty] of Object.entries(targetValues)) {
+      const currentQty = Number(current[(target === "ISSUE" ? "issueQty" : target === "RETURN" ? "returnQty" : target === "SALE" ? "saleQty" : "complimentaryQty")] || 0);
+      const delta = desiredQty - currentQty;
+      if (delta === 0) continue;
+      const direction = target === "RETURN" ? (delta > 0 ? "IN" : "OUT") : (delta > 0 ? "OUT" : "IN");
+      const absQty = Math.abs(delta);
+      const note = `SETTLEMENT_EDIT|${target}|${direction}|book=${bookId}|old=${currentQty}|new=${desiredQty}`;
+      await createDocument(supabase, {
+        documentType: "ADJUSTMENT",
+        documentDate,
+        fromWarehouseId: detail.warehouseId,
+        toWarehouseId: detail.warehouseId,
+        activityId,
+        itemGroup,
+        adjustmentDirection: direction,
+        status: "Posted",
+        notes: note,
+        lines: [{
+          bookId,
+          quantity: absQty,
+          rate: price,
+          notes: note
+        }]
+      }, currentUser);
+      createdAdjustments.push({ bookId, target, direction, quantity: absQty });
+    }
+  }
+
+  return {
+    activityId,
+    createdAdjustments: createdAdjustments.length,
+    adjustments: createdAdjustments
   };
 }
 
@@ -1975,6 +2106,8 @@ async function main(request) {
         return json(200, { ok: true, data: await getPendingSettlementDetails(supabase, payload) });
       case "activity.settlementPaymentCreate":
         return json(200, { ok: true, data: await createSettlementPayment(supabase, payload, currentUser) });
+      case "activity.pendingSettlementAdjustmentsSave":
+        return json(200, { ok: true, data: await savePendingSettlementAdjustments(supabase, payload, currentUser) });
       case "reports.activityLedger":
         return json(200, { ok: true, data: await getActivityLedger(supabase, payload) });
       case "reports.activityMonthly":

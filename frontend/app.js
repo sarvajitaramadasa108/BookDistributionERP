@@ -1170,8 +1170,10 @@
 
   function pendingSettlementBooksMarkup(detail) {
     const rows = detail && Array.isArray(detail.books) ? detail.books : [];
+    const editable = isMainAdmin();
     return `
       <div class="table-wrap">
+        ${editable ? `<form id="pendingSettlementBooksForm" onsubmit="window.erpApp.savePendingSettlementBookAdjustments(event)">` : ""}
         <table>
           <thead>
             <tr>
@@ -1180,22 +1182,38 @@
               <th>Issue</th>
               <th>Return</th>
               <th>Sale</th>
+              <th>Complimentary</th>
               <th>Net Amount</th>
+              ${editable ? "<th>Action</th>" : ""}
             </tr>
           </thead>
           <tbody>
-            ${rows.length ? rows.map((row) => `
-              <tr>
+            ${rows.length ? rows.map((row, index) => {
+              const issueQty = Number(row.issueQty || 0);
+              const returnQty = Number(row.returnQty || 0);
+              const saleQty = Number(row.saleQty || 0);
+              const complimentaryQty = Number(row.complimentaryQty || 0);
+              return `
+              <tr data-book-id="${escapeAttribute(row.bookId || "")}" data-row-index="${index}">
                 <td>${escapeHtml(row.bookId || "-")}</td>
                 <td>${escapeHtml(row.bookName || "-")}</td>
-                <td>${Number(row.issueQty || 0)}</td>
-                <td>${Number(row.returnQty || 0)}</td>
-                <td>${Number(row.saleQty || 0)}</td>
+                <td>${editable ? `<input class="settlement-edit-input" data-field="issue" type="number" min="0" step="1" value="${issueQty}">` : issueQty}</td>
+                <td>${editable ? `<input class="settlement-edit-input" data-field="return" type="number" min="0" step="1" value="${returnQty}">` : returnQty}</td>
+                <td>${editable ? `<input class="settlement-edit-input" data-field="sale" type="number" min="0" step="1" value="${saleQty}">` : saleQty}</td>
+                <td>${editable ? `<input class="settlement-edit-input" data-field="complimentary" type="number" min="0" step="1" value="${complimentaryQty}">` : complimentaryQty}</td>
                 <td>${money(Number(row.amount || 0))}</td>
+                ${editable ? `<td><button class="small-button" type="button" onclick="window.erpApp.savePendingSettlementBookAdjustments(event)">Save</button></td>` : ""}
               </tr>
-            `).join("") : `<tr><td colspan="6"><div class="empty-state">No book rows available.</div></td></tr>`}
+            `; }).join("") : `<tr><td colspan="${editable ? 8 : 7}"><div class="empty-state">No book rows available.</div></td></tr>`}
           </tbody>
         </table>
+        ${editable ? `
+          <div class="form-actions" style="margin-top:12px;">
+            <button class="button" type="submit">Save Admin Adjustments</button>
+          </div>
+          </form>
+          <div class="metric-note" style="margin-top:8px;">Admin edits will post stock corrections automatically.</div>
+        ` : ""}
       </div>
     `;
   }
@@ -1447,6 +1465,58 @@
       showToast(actionType === "COMPLIMENTARY" ? "Complimentary entry saved" : "Correction entry saved");
     } catch (error) {
       showToast(error.message || "Could not save adjustment");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function savePendingSettlementBookAdjustments(event) {
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
+    if (!isMainAdmin()) {
+      showToast("Admin access required");
+      return;
+    }
+    const detail = state.pendingSettlementDetails;
+    if (!detail) {
+      showToast("Select a pending settlement first");
+      return;
+    }
+    const trigger = event && event.currentTarget ? event.currentTarget : null;
+    const form = trigger && typeof trigger.closest === "function" && trigger.tagName === "BUTTON"
+      ? trigger.closest("form")
+      : trigger && trigger.tagName === "FORM"
+        ? trigger
+        : document.getElementById("pendingSettlementBooksForm");
+    if (!form) {
+      showToast("Book adjustment form not found");
+      return;
+    }
+    const rows = Array.from(form.querySelectorAll("tbody tr[data-book-id]")).map((row) => ({
+      bookId: row.dataset.bookId || "",
+      issueQty: Number(row.querySelector('[data-field="issue"]')?.value || 0),
+      returnQty: Number(row.querySelector('[data-field="return"]')?.value || 0),
+      saleQty: Number(row.querySelector('[data-field="sale"]')?.value || 0),
+      complimentaryQty: Number(row.querySelector('[data-field="complimentary"]')?.value || 0)
+    })).filter((row) => row.bookId);
+    setLoading(true);
+    try {
+      await window.erpApi.request("activity.pendingSettlementAdjustmentsSave", {
+        activityId: detail.activityId,
+        documentDate: new Date().toISOString().slice(0, 10),
+        rows
+      });
+      state.pendingSettlementDetails = await window.erpApi.request("activity.pendingSettlementDetails", { activityId: detail.activityId });
+      state.pendingSettlements = await window.erpApi.request("activity.pendingSettlements");
+      if (Number(state.pendingSettlementDetails.summary?.pendingAmount || 0) <= 0) {
+        state.pendingSettlementActivityId = "";
+        state.pendingSettlementDetails = null;
+      }
+      content.innerHTML = renderDocumentsMarkup();
+      showToast("Settlement adjustments saved");
+    } catch (error) {
+      showToast(error.message || "Could not save settlement adjustments");
     } finally {
       setLoading(false);
     }
@@ -6461,6 +6531,7 @@
     backToPendingSettlementSummary,
     savePendingSettlementPayment,
     savePendingSettlementAdjustment,
+    savePendingSettlementBookAdjustments,
     onPendingSettlementActionChange,
     settleActivity,
     openOpeningStockForm,
