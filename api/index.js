@@ -1642,6 +1642,18 @@ async function createSettlementPayment(supabase, payload, currentUser) {
     created_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null
   }).select("*").single();
   if (error) throw error;
+  const context = await getSettlementContext(supabase);
+  const activity = context.activities.find((row) => row.id === resolvedActivityId || row.activity_code === activityId);
+  if (activity) {
+    const detail = buildSettlementSummaryForActivity(activity, context);
+    if (Number(detail.summary.pendingAmount || 0) <= 0 && String(activity.status || "").toLowerCase() !== "completed") {
+      const { error: updateError } = await supabase.from("activities").update({
+        status: "Completed",
+        settled_at: nowIso()
+      }).eq("id", activity.id);
+      if (updateError) throw updateError;
+    }
+  }
   return {
     paymentId: data.id,
     activityId: data.activity_id,
@@ -1715,6 +1727,15 @@ async function savePendingSettlementAdjustments(supabase, payload, currentUser) 
     createdAdjustments: createdAdjustments.length,
     adjustments: createdAdjustments
   };
+}
+
+async function getSettledActivities(supabase) {
+  const context = await getSettlementContext(supabase);
+  return context.activities
+    .filter((activity) => activity.status === "Completed" || activity.settled_at)
+    .map((activity) => buildSettlementSummaryForActivity(activity, context))
+    .filter((row) => Number(row.summary.pendingAmount || 0) <= 0)
+    .sort((a, b) => String(b.settledAt || b.activityId || "").localeCompare(String(a.settledAt || a.activityId || "")) || String(a.activityName || "").localeCompare(String(b.activityName || "")));
 }
 
 async function getActivityLedger(supabase, payload) {
@@ -2108,6 +2129,8 @@ async function main(request) {
         return json(200, { ok: true, data: await createSettlementPayment(supabase, payload, currentUser) });
       case "activity.pendingSettlementAdjustmentsSave":
         return json(200, { ok: true, data: await savePendingSettlementAdjustments(supabase, payload, currentUser) });
+      case "activity.settledActivities":
+        return json(200, { ok: true, data: await getSettledActivities(supabase) });
       case "reports.activityLedger":
         return json(200, { ok: true, data: await getActivityLedger(supabase, payload) });
       case "reports.activityMonthly":

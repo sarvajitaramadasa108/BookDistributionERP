@@ -65,7 +65,11 @@
     activityComplimentary: [],
     documentsMode: "entries",
     pendingSettlements: [],
+    settledActivities: [],
     pendingSettlementSearch: "",
+    settledActivitySearch: "",
+    settledActivityId: "",
+    settledActivityDetails: null,
     pendingSettlementActivityId: "",
     pendingSettlementDetails: null,
     sidebarCollapsed: false,
@@ -505,18 +509,21 @@
       window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
       window.erpApi.request("warehouses.list"),
       window.erpApi.request("activities.list"),
-      window.erpApi.request("activity.pendingSettlements")
+      window.erpApi.request("activity.pendingSettlements"),
+      window.erpApi.request("activity.settledActivities")
     ]);
     const documentsResult = results[0];
     const booksResult = results[1];
     const warehousesResult = results[2];
     const activitiesResult = results[3];
     const pendingSettlementsResult = results[4];
+    const settledActivitiesResult = results[5];
     state.documents = documentsResult.status === "fulfilled" && Array.isArray(documentsResult.value) ? documentsResult.value.map(normalizeDocument) : [];
     state.books = booksResult.status === "fulfilled" && Array.isArray(booksResult.value) ? booksResult.value : [];
     state.warehouses = warehousesResult.status === "fulfilled" && Array.isArray(warehousesResult.value) ? warehousesResult.value.map(normalizeWarehouse) : [];
     state.activities = activitiesResult.status === "fulfilled" && Array.isArray(activitiesResult.value) ? activitiesResult.value.map(normalizeActivity) : [];
     state.pendingSettlements = pendingSettlementsResult.status === "fulfilled" && Array.isArray(pendingSettlementsResult.value) ? pendingSettlementsResult.value.map(normalizePendingSettlementSummary) : [];
+    state.settledActivities = settledActivitiesResult.status === "fulfilled" && Array.isArray(settledActivitiesResult.value) ? settledActivitiesResult.value.map(normalizePendingSettlementSummary) : [];
     void ensureDocumentItemMastersLoaded().catch(() => {});
     return renderDocumentsMarkup();
   }
@@ -1053,10 +1060,14 @@
   }
 
   function setDocumentsMode(mode) {
-    state.documentsMode = mode === "pending" ? "pending" : "entries";
+    state.documentsMode = mode === "pending" ? "pending" : mode === "settled" ? "settled" : "entries";
     if (state.documentsMode !== "pending") {
       state.pendingSettlementActivityId = "";
       state.pendingSettlementDetails = null;
+    }
+    if (state.documentsMode !== "settled") {
+      state.settledActivityId = "";
+      state.settledActivityDetails = null;
     }
     content.innerHTML = renderDocumentsMarkup();
   }
@@ -1082,6 +1093,27 @@
     content.innerHTML = renderDocumentsMarkup();
   }
 
+  async function showSettledActivityDetails(activityId) {
+    if (!activityId) return;
+    state.documentsMode = "settled";
+    state.settledActivityId = activityId;
+    setLoading(true);
+    try {
+      state.settledActivityDetails = await window.erpApi.request("activity.pendingSettlementDetails", { activityId });
+      content.innerHTML = renderDocumentsMarkup();
+    } catch (error) {
+      showToast(error.message || "Could not load settled activity details");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function backToSettledSummary() {
+    state.settledActivityId = "";
+    state.settledActivityDetails = null;
+    content.innerHTML = renderDocumentsMarkup();
+  }
+
   function setDocumentSearch(value) {
     state.documentSearch = value;
     rerenderContentKeepingFocus("documentSearchInput", renderDocumentsMarkup);
@@ -1090,6 +1122,11 @@
   function setPendingSettlementSearch(value) {
     state.pendingSettlementSearch = value;
     rerenderContentKeepingFocus("pendingSettlementSearchInput", renderDocumentsMarkup);
+  }
+
+  function setSettledActivitySearch(value) {
+    state.settledActivitySearch = value;
+    rerenderContentKeepingFocus("settledActivitySearchInput", renderDocumentsMarkup);
   }
 
   function getFilteredPendingSettlements() {
@@ -1109,6 +1146,29 @@
         return haystack.includes(query);
       })
       .sort((a, b) => Number(b.summary?.pendingAmount || 0) - Number(a.summary?.pendingAmount || 0) || String(a.activityName || "").localeCompare(String(b.activityName || "")));
+  }
+
+  function getFilteredSettledActivitiesRows() {
+    return getFilteredSettledActivities();
+  }
+
+  function getFilteredSettledActivities() {
+    const query = String(state.settledActivitySearch || "").trim().toLowerCase();
+    const rows = Array.isArray(state.settledActivities) ? state.settledActivities : [];
+    return rows
+      .filter((row) => {
+        if (!query) return true;
+        const haystack = [
+          row.activityId,
+          row.activityName,
+          row.devoteeId,
+          row.devoteeName,
+          row.warehouseName,
+          row.warehouseId
+        ].join(" ").toLowerCase();
+        return haystack.includes(query);
+      })
+      .sort((a, b) => String(b.settledAt || b.activityId || "").localeCompare(String(a.settledAt || a.activityId || "")) || String(a.activityName || "").localeCompare(String(b.activityName || "")));
   }
 
   function pendingSettlementSummaryMarkup(rows) {
@@ -1147,6 +1207,45 @@
               </tr>
             `;
             }).join("") : `<tr><td colspan="8"><div class="empty-state">No pending settlements found.</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function settledActivitySummaryMarkup(rows) {
+    const filteredRows = Array.isArray(rows) ? rows : [];
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>SNo</th>
+              <th>Devotee</th>
+              <th>Activity</th>
+              <th>Status</th>
+              <th>Sale Due</th>
+              <th>Paid</th>
+              <th>Pending</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredRows.length ? filteredRows.map((row, index) => `
+              <tr>
+                <td>${index + 1}</td>
+                <td>${escapeHtml(row.devoteeName || row.devoteeId || "-")}</td>
+                <td>
+                  <strong>${escapeHtml(row.activityName || row.activityId || "-")}</strong>
+                  <div class="metric-note">${escapeHtml(row.warehouseName || "")}</div>
+                </td>
+                <td>${status("Settled", "good")}</td>
+                <td>${money(Number(row.summary?.saleDueAmount || 0))}</td>
+                <td>${money(Number(row.summary?.paidTotalAmount || 0))}</td>
+                <td><strong>${money(Number(row.summary?.pendingAmount || 0))}</strong></td>
+                <td><button class="small-button" type="button" onclick="window.erpApp.showSettledActivityDetails('${escapeAttribute(row.activityId)}')">Show Details</button></td>
+              </tr>
+            `).join("") : `<tr><td colspan="8"><div class="empty-state">No settled activities found.</div></td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1299,17 +1398,18 @@
     `;
   }
 
-  function pendingSettlementDetailMarkup(detail) {
+  function pendingSettlementDetailMarkup(detail, options = {}) {
     if (!detail) {
       return '<div class="empty-state">Choose a pending activity to view the settlement details.</div>';
     }
+    const readOnly = Boolean(options.readOnly);
     const summary = detail.summary || {};
     const activityStatus = Number(summary.returnQty || 0) > 0 ? "Settlement Pending" : "Return Pending";
     return `
       <div class="panel-header compact-header">
         <h2>${escapeHtml(detail.activityName || detail.activityId || "Pending Settlement")}</h2>
         <div class="row-actions">
-          <button class="button secondary" type="button" onclick="window.erpApp.backToPendingSettlementSummary()">Back to Summary</button>
+          <button class="button secondary" type="button" onclick="window.erpApp.${readOnly ? "backToSettledSummary" : "backToPendingSettlementSummary"}()">Back to Summary</button>
         </div>
       </div>
       <div class="grid metrics">
@@ -1320,6 +1420,7 @@
         ${metric("Pending", money(Number(summary.pendingAmount || 0)), "Still to be collected")}
         ${metric("Activity", escapeHtml(detail.activityId || "-"), "Settlement record")}
       </div>
+      ${readOnly ? "" : `
       <div class="section-gap">
         <form class="form-grid" id="pendingSettlementPaymentForm" onsubmit="window.erpApp.savePendingSettlementPayment(event)">
           <label class="field">
@@ -1343,6 +1444,7 @@
           </div>
         </form>
       </div>
+      `}
       <div class="section-gap">
         <h3>Issue by Issue</h3>
         ${detail.documents && detail.documents.length ? `<div class="table-wrap">
@@ -1371,8 +1473,40 @@
         <h3>Payment History</h3>
         ${pendingSettlementPaymentsMarkup(detail)}
       </div>
-      ${pendingSettlementAdminActionsMarkup(detail)}
+      ${readOnly ? "" : pendingSettlementAdminActionsMarkup(detail)}
     `;
+  }
+
+  function settledActivityDetailMarkup(detail) {
+    return pendingSettlementDetailMarkup(detail, { readOnly: true });
+  }
+
+  async function refreshSettlementLinkedViews() {
+    state.pendingSettlements = await window.erpApi.request("activity.pendingSettlements");
+    state.settledActivities = await window.erpApi.request("activity.settledActivities");
+    if (state.view === "reports") {
+      await loadReportsData();
+      if (state.reportView === "warehouse" && state.reportWarehouseId && state.reportMonth) {
+        const report = await window.erpApi.request("reports.warehouseMonthly", {
+          warehouseId: state.reportWarehouseId,
+          month: state.reportMonth
+        });
+        state.warehouseMonthlyReport = normalizeWarehouseMonthlyReport(report);
+      }
+      if (state.reportView === "activity" && state.activityReportDevoteeId && state.activityReportActivityId && state.reportMonth) {
+        const report = await window.erpApi.request("reports.activityMonthly", {
+          devoteeId: state.activityReportDevoteeId,
+          activityId: state.activityReportActivityId,
+          month: state.reportMonth
+        });
+        state.activityMonthlyReport = normalizeActivityMonthlyReport(report);
+      }
+      content.innerHTML = renderReportsMarkup();
+      return;
+    }
+    if (state.view === "documents") {
+      content.innerHTML = await renderDocuments();
+    }
   }
 
   async function savePendingSettlementPayment(event) {
@@ -1395,12 +1529,11 @@
     try {
       await window.erpApi.request("activity.settlementPaymentCreate", payload);
       state.pendingSettlementDetails = await window.erpApi.request("activity.pendingSettlementDetails", { activityId: detail.activityId });
-      state.pendingSettlements = await window.erpApi.request("activity.pendingSettlements");
       if (Number(state.pendingSettlementDetails.summary?.pendingAmount || 0) <= 0) {
         state.pendingSettlementActivityId = "";
         state.pendingSettlementDetails = null;
       }
-      content.innerHTML = await renderDocuments();
+      await refreshSettlementLinkedViews();
       showToast("Settlement payment saved");
     } catch (error) {
       showToast(error.message || "Could not save settlement payment");
@@ -1460,8 +1593,11 @@
     try {
       await window.erpApi.request("documents.create", payload);
       state.pendingSettlementDetails = await window.erpApi.request("activity.pendingSettlementDetails", { activityId: detail.activityId });
-      state.pendingSettlements = await window.erpApi.request("activity.pendingSettlements");
-      content.innerHTML = await renderDocuments();
+      if (Number(state.pendingSettlementDetails.summary?.pendingAmount || 0) <= 0) {
+        state.pendingSettlementActivityId = "";
+        state.pendingSettlementDetails = null;
+      }
+      await refreshSettlementLinkedViews();
       showToast(actionType === "COMPLIMENTARY" ? "Complimentary entry saved" : "Correction entry saved");
     } catch (error) {
       showToast(error.message || "Could not save adjustment");
@@ -1508,12 +1644,11 @@
         rows
       });
       state.pendingSettlementDetails = await window.erpApi.request("activity.pendingSettlementDetails", { activityId: detail.activityId });
-      state.pendingSettlements = await window.erpApi.request("activity.pendingSettlements");
       if (Number(state.pendingSettlementDetails.summary?.pendingAmount || 0) <= 0) {
         state.pendingSettlementActivityId = "";
         state.pendingSettlementDetails = null;
       }
-      content.innerHTML = renderDocumentsMarkup();
+      await refreshSettlementLinkedViews();
       showToast("Settlement adjustments saved");
     } catch (error) {
       showToast(error.message || "Could not save settlement adjustments");
@@ -2374,6 +2509,7 @@
 
   function renderDocumentsMarkup() {
     const rows = getFilteredDocumentRows();
+    const settledRows = getFilteredSettledActivities();
     return `
       <section class="card">
         <div class="panel-header">
@@ -2381,6 +2517,7 @@
           <div class="row-actions">
             <button class="button ${state.documentsMode === "entries" ? "" : "secondary"}" type="button" onclick="window.erpApp.setDocumentsMode('entries')">Stock Entries</button>
             <button class="button ${state.documentsMode === "pending" ? "" : "secondary"}" type="button" onclick="window.erpApp.setDocumentsMode('pending')">Pending Settlements</button>
+            <button class="button ${state.documentsMode === "settled" ? "" : "secondary"}" type="button" onclick="window.erpApp.setDocumentsMode('settled')">Settled Activities</button>
           </div>
         </div>
         <div class="panel-body">
@@ -2400,6 +2537,24 @@
                   </label>
                 </div>
                 ${pendingSettlementSummaryMarkup(getFilteredPendingSettlements())}
+              `}
+            </div>
+          ` : state.documentsMode === "settled" ? `
+            <div class="grid metrics">
+              ${metric("Settled Activities", state.settledActivities.length, "Activities fully settled")}
+              ${metric("Settled Amount", money(state.settledActivities.reduce((sum, row) => sum + Number(row.summary?.saleDueAmount || 0), 0)), "Total settled sale value")}
+              ${metric("Paid Total", money(state.settledActivities.reduce((sum, row) => sum + Number(row.summary?.paidTotalAmount || 0), 0)), "Cash plus online received")}
+              ${metric("Complimentary Qty", state.settledActivities.reduce((sum, row) => sum + Number(row.summary?.complimentaryQty || 0), 0), "Marked complimentary across settled activities")}
+            </div>
+            <div class="section-gap">
+              ${state.settledActivityId ? settledActivityDetailMarkup(state.settledActivityDetails) : `
+                <div class="toolbar" style="margin-bottom:12px;">
+                  <label class="field compact-field">
+                    <span>Search</span>
+                    <input id="settledActivitySearchInput" type="search" value="${escapeAttribute(state.settledActivitySearch)}" placeholder="Search activity or devotee" oninput="window.erpApp.setSettledActivitySearch(this.value)">
+                  </label>
+                </div>
+                ${settledActivitySummaryMarkup(settledRows)}
               `}
             </div>
           ` : `
@@ -4010,7 +4165,7 @@
         status: "Completed"
       });
       state.activities = state.activities.map((item) => item.activityId === activityId ? { ...item, status: "Completed" } : item);
-      content.innerHTML = renderReportsMarkup();
+      await refreshSettlementLinkedViews();
       showToast("Activity settled");
     } catch (error) {
       showToast(error.message || "Could not settle activity");
@@ -6525,10 +6680,13 @@
     setDocumentsMode,
     setDocumentSearch,
     setPendingSettlementSearch,
+    setSettledActivitySearch,
     previewDocumentPdf,
     downloadDocumentPdf,
     showPendingSettlementDetails,
+    showSettledActivityDetails,
     backToPendingSettlementSummary,
+    backToSettledSummary,
     savePendingSettlementPayment,
     savePendingSettlementAdjustment,
     savePendingSettlementBookAdjustments,
