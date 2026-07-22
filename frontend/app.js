@@ -65,6 +65,7 @@
     activityComplimentary: [],
     documentsMode: "entries",
     pendingSettlements: [],
+    pendingSettlementSearch: "",
     pendingSettlementActivityId: "",
     pendingSettlementDetails: null,
     sidebarCollapsed: false,
@@ -1086,7 +1087,32 @@
     rerenderContentKeepingFocus("documentSearchInput", renderDocumentsMarkup);
   }
 
+  function setPendingSettlementSearch(value) {
+    state.pendingSettlementSearch = value;
+    rerenderContentKeepingFocus("pendingSettlementSearchInput", renderDocumentsMarkup);
+  }
+
+  function getFilteredPendingSettlements() {
+    const query = String(state.pendingSettlementSearch || "").trim().toLowerCase();
+    const rows = Array.isArray(state.pendingSettlements) ? state.pendingSettlements : [];
+    return rows
+      .filter((row) => {
+        if (!query) return true;
+        const haystack = [
+          row.activityId,
+          row.activityName,
+          row.devoteeId,
+          row.devoteeName,
+          row.warehouseName,
+          row.warehouseId
+        ].join(" ").toLowerCase();
+        return haystack.includes(query);
+      })
+      .sort((a, b) => Number(b.summary?.pendingAmount || 0) - Number(a.summary?.pendingAmount || 0) || String(a.activityName || "").localeCompare(String(b.activityName || "")));
+  }
+
   function pendingSettlementSummaryMarkup(rows) {
+    const filteredRows = Array.isArray(rows) ? rows : [];
     return `
       <div class="table-wrap">
         <table>
@@ -1095,6 +1121,7 @@
               <th>SNo</th>
               <th>Devotee</th>
               <th>Activity</th>
+              <th>Status</th>
               <th>Sale Due</th>
               <th>Paid</th>
               <th>Pending</th>
@@ -1102,7 +1129,9 @@
             </tr>
           </thead>
           <tbody>
-            ${rows.length ? rows.map((row, index) => `
+            ${filteredRows.length ? filteredRows.map((row, index) => {
+              const activityStatus = Number(row.summary?.returnQty || 0) > 0 ? "Settlement Pending" : "Return Pending";
+              return `
               <tr>
                 <td>${index + 1}</td>
                 <td>${escapeHtml(row.devoteeName || row.devoteeId || "-")}</td>
@@ -1110,12 +1139,14 @@
                   <strong>${escapeHtml(row.activityName || row.activityId || "-")}</strong>
                   <div class="metric-note">${escapeHtml(row.warehouseName || "")}</div>
                 </td>
+                <td>${status(activityStatus, activityStatus === "Settlement Pending" ? "warn" : "good")}</td>
                 <td>${money(Number(row.summary?.saleDueAmount || 0))}</td>
                 <td>${money(Number(row.summary?.paidTotalAmount || 0))}</td>
                 <td><strong>${money(Number(row.summary?.pendingAmount || 0))}</strong></td>
                 <td><button class="small-button" type="button" onclick="window.erpApp.showPendingSettlementDetails('${escapeAttribute(row.activityId)}')">Show Details</button></td>
               </tr>
-            `).join("") : `<tr><td colspan="7"><div class="empty-state">No pending settlements found.</div></td></tr>`}
+            `;
+            }).join("") : `<tr><td colspan="8"><div class="empty-state">No pending settlements found.</div></td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1130,6 +1161,8 @@
         <td>${escapeHtml(row.documentDate || "-")}</td>
         <td>${Number(row.issueQty || 0)}</td>
         <td>${Number(row.returnQty || 0)}</td>
+        <td>${Number(row.complimentaryQty || 0)}</td>
+        <td>${Number(row.saleQty || 0)}</td>
         <td>${money(Number(row.amount || 0))}</td>
       </tr>
     `).join("");
@@ -1253,6 +1286,7 @@
       return '<div class="empty-state">Choose a pending activity to view the settlement details.</div>';
     }
     const summary = detail.summary || {};
+    const activityStatus = Number(summary.returnQty || 0) > 0 ? "Settlement Pending" : "Return Pending";
     return `
       <div class="panel-header compact-header">
         <h2>${escapeHtml(detail.activityName || detail.activityId || "Pending Settlement")}</h2>
@@ -1264,6 +1298,7 @@
         ${metric("Sale Due", money(Number(summary.saleDueAmount || 0)), "Total issue less return value")}
         ${metric("Paid", money(Number(summary.paidTotalAmount || 0)), "Cash plus online already received")}
         ${metric("Complimentary", Number(summary.complimentaryQty || 0), "Marked as free issue")}
+        ${metric("Status", activityStatus, "Current settlement stage")}
         ${metric("Pending", money(Number(summary.pendingAmount || 0)), "Still to be collected")}
         ${metric("Activity", escapeHtml(detail.activityId || "-"), "Settlement record")}
       </div>
@@ -1301,6 +1336,8 @@
                 <th>Date</th>
                 <th>Issue Qty</th>
                 <th>Return Qty</th>
+                <th>Complimentary Qty</th>
+                <th>Sale Qty</th>
                 <th>Net Amount</th>
               </tr>
             </thead>
@@ -2285,7 +2322,15 @@
               ${metric("Returned Qty", state.pendingSettlements.reduce((sum, row) => sum + Number(row.summary?.returnQty || 0), 0), "Returned quantity across pending activities")}
             </div>
             <div class="section-gap">
-              ${state.pendingSettlementActivityId ? pendingSettlementDetailMarkup(state.pendingSettlementDetails) : pendingSettlementSummaryMarkup(state.pendingSettlements)}
+              ${state.pendingSettlementActivityId ? pendingSettlementDetailMarkup(state.pendingSettlementDetails) : `
+                <div class="toolbar" style="margin-bottom:12px;">
+                  <label class="field compact-field">
+                    <span>Search</span>
+                    <input id="pendingSettlementSearchInput" type="search" value="${escapeAttribute(state.pendingSettlementSearch)}" placeholder="Search activity or devotee" oninput="window.erpApp.setPendingSettlementSearch(this.value)">
+                  </label>
+                </div>
+                ${pendingSettlementSummaryMarkup(getFilteredPendingSettlements())}
+              `}
             </div>
           ` : `
             <div class="grid metrics">
@@ -6409,6 +6454,7 @@
     backToComplimentarySummary,
     setDocumentsMode,
     setDocumentSearch,
+    setPendingSettlementSearch,
     previewDocumentPdf,
     downloadDocumentPdf,
     showPendingSettlementDetails,
