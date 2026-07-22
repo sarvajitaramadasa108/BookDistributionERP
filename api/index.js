@@ -1786,6 +1786,8 @@ async function getActivityMonthlyReport(supabase, payload) {
       const item = itemById[line.item_id] || {};
       const key = line.item_id;
       const qty = Number(line.quantity || 0);
+      const price = Number(item.sale_price || line.rate || 0);
+      const settlementEdit = doc.document_type === "ADJUSTMENT" ? parseSettlementEditNote(line.line_notes || doc.notes || "") : null;
       const existing = index.get(key) || {
         bookId: item.erp_code || line.item_id,
         bookName: item.item_name || line.item_id,
@@ -1803,11 +1805,72 @@ async function getActivityMonthlyReport(supabase, payload) {
       existing.documentCount += 1;
       if (!existing.docMap[doc.document_code]) existing.docMap[doc.document_code] = { documentId: doc.document_code, issueQty: 0, returnQty: 0, saleQty: 0, unsettledQty: 0, complimentaryQty: 0 };
       const docBucket = existing.docMap[doc.document_code];
-      if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") { existing.issueQty += qty; existing.unsettledQty += qty; docBucket.issueQty += qty; docBucket.unsettledQty += qty; }
-      else if (doc.document_type === "RETURN") { existing.returnQty += qty; existing.unsettledQty -= qty; docBucket.returnQty += qty; docBucket.unsettledQty -= qty; }
-      else if (doc.document_type === "SALE") { existing.saleQty += qty; existing.unsettledQty -= qty; docBucket.saleQty += qty; docBucket.unsettledQty -= qty; }
-      else if (doc.document_type === "COMPLIMENTARY") { existing.complimentaryQty += qty; docBucket.complimentaryQty += qty; }
-      existing.worth += qty * Number(item.sale_price || 0);
+      if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") {
+        existing.issueQty += qty;
+        existing.unsettledQty += qty;
+        docBucket.issueQty += qty;
+        docBucket.unsettledQty += qty;
+      } else if (doc.document_type === "RETURN") {
+        existing.returnQty += qty;
+        existing.unsettledQty -= qty;
+        docBucket.returnQty += qty;
+        docBucket.unsettledQty -= qty;
+      } else if (doc.document_type === "SALE") {
+        existing.saleQty += qty;
+        existing.unsettledQty -= qty;
+        docBucket.saleQty += qty;
+        docBucket.unsettledQty -= qty;
+      } else if (doc.document_type === "COMPLIMENTARY") {
+        existing.complimentaryQty += qty;
+        docBucket.complimentaryQty += qty;
+      } else if (doc.document_type === "ADJUSTMENT" && settlementEdit) {
+        const target = settlementEdit.target;
+        const direction = settlementEdit.direction;
+        if (target === "ISSUE") {
+          if (direction === "IN") {
+            existing.issueQty -= qty;
+            existing.unsettledQty -= qty;
+            docBucket.issueQty -= qty;
+            docBucket.unsettledQty -= qty;
+          } else {
+            existing.issueQty += qty;
+            existing.unsettledQty += qty;
+            docBucket.issueQty += qty;
+            docBucket.unsettledQty += qty;
+          }
+        } else if (target === "RETURN") {
+          if (direction === "IN") {
+            existing.returnQty += qty;
+            existing.unsettledQty -= qty;
+            docBucket.returnQty += qty;
+            docBucket.unsettledQty -= qty;
+          } else {
+            existing.returnQty -= qty;
+            existing.unsettledQty += qty;
+            docBucket.returnQty -= qty;
+            docBucket.unsettledQty += qty;
+          }
+        } else if (target === "SALE") {
+          if (direction === "IN") {
+            existing.saleQty += qty;
+            docBucket.saleQty += qty;
+          } else {
+            existing.saleQty -= qty;
+            docBucket.saleQty -= qty;
+          }
+        } else if (target === "COMPLIMENTARY") {
+          if (direction === "IN") {
+            existing.complimentaryQty += qty;
+            docBucket.complimentaryQty += qty;
+          } else {
+            existing.complimentaryQty -= qty;
+            docBucket.complimentaryQty -= qty;
+          }
+        }
+      }
+      if (doc.document_type !== "ADJUSTMENT" || settlementEdit) {
+        existing.worth += qty * price;
+      }
       index.set(key, existing);
       summary.issueQty += existing.issueQty;
       summary.returnQty += existing.returnQty;
@@ -1860,6 +1923,9 @@ async function getActivityMonthlyReport(supabase, payload) {
     for (const row of rowsWithDocArray) {
       const settledSaleQty = Math.max(Number(row.issueQty || 0) - Number(row.returnQty || 0) - Number(row.complimentaryQty || 0), 0);
       row.saleQty = settledSaleQty;
+      const item = itemById[Object.keys(itemById).find((itemId) => (itemById[itemId].erp_code || itemId) === row.bookId)] || {};
+      const price = Number(item.sale_price || 0);
+      row.worth = settledSaleQty * price;
     }
   }
   return {

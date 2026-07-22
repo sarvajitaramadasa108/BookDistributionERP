@@ -2760,32 +2760,12 @@
     };
   }
 
-  function activityDocumentWorthTotals(report) {
-    const docs = report && report.documents ? report.documents : [];
-    const totals = docs.map(() => 0);
-    let overall = 0;
-    (report && report.rows ? report.rows : []).forEach((row) => {
-      const price = getBookSalePrice(row.bookId);
-      (row.docMapArray || []).forEach((doc, index) => {
-        const quantity = Number(doc.issueQty || 0) +
-          Number(doc.returnQty || 0) +
-          Number(doc.saleQty || 0) +
-          Number(doc.unsettledQty || 0) +
-          Number(doc.complimentaryQty || 0);
-        const value = quantity * price;
-        totals[index] += value;
-        overall += value;
-      });
-    });
-    return { totals: totals, overall: overall };
-  }
-
   function activityMonthlyMarkup(report) {
     if (!report || !report.rows) {
       return '<div class="empty-state">No activity report available.</div>';
     }
-    const docs = report.documents || [];
-    const worthTotals = activityDocumentWorthTotals(report);
+    const rows = report.rows || [];
+    const worthTotal = rows.reduce((sum, row) => sum + Number(row.worth || 0), 0);
     return `
       <div class="table-wrap activity-report-wrap">
         <table class="activity-report-table">
@@ -2794,46 +2774,31 @@
               <th rowspan="2">ERP Code</th>
               <th rowspan="2">Item</th>
               <th rowspan="2">Category</th>
-              ${docs.map((doc) => `<th colspan="5">${escapeHtml(doc.documentId)}</th>`).join("")}
               <th rowspan="2">Issue</th>
               <th rowspan="2">Return</th>
-              <th rowspan="2">Sale</th>
-              <th rowspan="2">Unsettled</th>
               <th rowspan="2">Complimentary</th>
+              <th rowspan="2">Sale</th>
               <th rowspan="2">Worth</th>
-            </tr>
-            <tr>
-              ${docs.map(() => "<th>Issue</th><th>Return</th><th>Sale</th><th>Unsettled</th><th>Complimentary</th>").join("")}
             </tr>
           </thead>
           <tbody>
             <tr class="worth-row">
               <td colspan="3"><strong>Worth</strong></td>
-              ${worthTotals.totals.map((value) => `<td colspan="5">${money(value)}</td>`).join("")}
               <td>${Number(report.totals && report.totals.issueQty || 0)}</td>
               <td>${Number(report.totals && report.totals.returnQty || 0)}</td>
-              <td>${Number(report.totals && report.totals.saleQty || 0)}</td>
-              <td>${Number(report.totals && report.totals.unsettledQty || 0)}</td>
               <td>${Number(report.totals && report.totals.complimentaryQty || 0)}</td>
-              <td>${money(worthTotals.overall || report.totals && report.totals.worth || 0)}</td>
+              <td>${Number(report.totals && report.totals.saleQty || 0)}</td>
+              <td>${money(worthTotal || report.totals && report.totals.worth || 0)}</td>
             </tr>
-            ${report.rows.map((row) => `
+            ${rows.map((row) => `
               <tr>
                 <td>${escapeHtml(row.bookId)}</td>
                 <td><strong>${escapeHtml(row.bookName)}</strong></td>
                 <td>${escapeHtml(getItemGroupLabel(row.itemGroup))}</td>
-                ${(row.docMapArray || []).map((doc) => `
-                  <td>${Number(doc.issueQty || 0)}</td>
-                  <td>${Number(doc.returnQty || 0)}</td>
-                  <td>${Number(doc.saleQty || 0)}</td>
-                  <td>${Number(doc.unsettledQty || 0)}</td>
-                  <td>${Number(doc.complimentaryQty || 0)}</td>
-                `).join("")}
                 <td>${Number(row.issueQty || 0)}</td>
                 <td>${Number(row.returnQty || 0)}</td>
-                <td>${Number(row.saleQty || 0)}</td>
-                <td><strong>${Number(row.unsettledQty || 0)}</strong></td>
                 <td>${Number(row.complimentaryQty || 0)}</td>
+                <td>${Number(row.saleQty || 0)}</td>
                 <td>${money(row.worth || 0)}</td>
               </tr>
             `).join("")}
@@ -2864,52 +2829,39 @@
   }
 
   function buildActivityMonthlyExcel(report) {
-    const docs = report.documents || [];
-    const worthTotals = activityDocumentWorthTotals(report);
+    const rows = report.rows || [];
+    const worthTotal = rows.reduce((sum, row) => sum + Number(row.worth || 0), 0);
     const headerTop = `
       <tr>
         <th rowspan="2">ERP Code</th>
         <th rowspan="2">Item</th>
         <th rowspan="2">Category</th>
-        ${docs.map((doc) => `<th colspan="5">${escapeHtml(doc.documentId)}</th>`).join("")}
         <th rowspan="2">Issue</th>
         <th rowspan="2">Return</th>
-        <th rowspan="2">Sale</th>
-        <th rowspan="2">Unsettled</th>
         <th rowspan="2">Complimentary</th>
+        <th rowspan="2">Sale</th>
         <th rowspan="2">Worth</th>
       </tr>
-      <tr>${docs.map(() => "<th>Issue</th><th>Return</th><th>Sale</th><th>Unsettled</th><th>Complimentary</th>").join("")}</tr>
     `;
     const totalsRow = `
       <tr>
-      <td colspan="3"><strong>Worth</strong></td>
-        ${worthTotals.totals.map((value) => `<td colspan="5">${escapeHtml(String(value))}</td>`).join("")}
+        <td colspan="3"><strong>Worth</strong></td>
         <td>${Number(report.totals && report.totals.issueQty || 0)}</td>
         <td>${Number(report.totals && report.totals.returnQty || 0)}</td>
-        <td>${Number(report.totals && report.totals.saleQty || 0)}</td>
-        <td>${Number(report.totals && report.totals.unsettledQty || 0)}</td>
         <td>${Number(report.totals && report.totals.complimentaryQty || 0)}</td>
-        <td>${Number(worthTotals.overall || report.totals && report.totals.worth || 0)}</td>
+        <td>${Number(report.totals && report.totals.saleQty || 0)}</td>
+        <td>${Number(worthTotal || report.totals && report.totals.worth || 0)}</td>
       </tr>
     `;
-    const rows = report.rows.map((row) => `
+    const bodyRows = rows.map((row) => `
       <tr>
-          <td>${escapeHtml(row.bookId)}</td>
-          <td>${escapeHtml(row.bookName)}</td>
-          <td>${escapeHtml(getItemGroupLabel(row.itemGroup))}</td>
-        ${(row.docMapArray || []).map((doc) => `
-          <td>${Number(doc.issueQty || 0)}</td>
-          <td>${Number(doc.returnQty || 0)}</td>
-          <td>${Number(doc.saleQty || 0)}</td>
-          <td>${Number(doc.unsettledQty || 0)}</td>
-          <td>${Number(doc.complimentaryQty || 0)}</td>
-        `).join("")}
+        <td>${escapeHtml(row.bookId)}</td>
+        <td>${escapeHtml(row.bookName)}</td>
+        <td>${escapeHtml(getItemGroupLabel(row.itemGroup))}</td>
         <td>${Number(row.issueQty || 0)}</td>
         <td>${Number(row.returnQty || 0)}</td>
-        <td>${Number(row.saleQty || 0)}</td>
-        <td>${Number(row.unsettledQty || 0)}</td>
         <td>${Number(row.complimentaryQty || 0)}</td>
+        <td>${Number(row.saleQty || 0)}</td>
         <td>${Number(row.worth || 0)}</td>
       </tr>
     `).join("");
@@ -2926,7 +2878,7 @@
         <body>
           <table>
             <thead>${headerTop}</thead>
-            <tbody>${totalsRow}${rows}</tbody>
+            <tbody>${totalsRow}${bodyRows}</tbody>
           </table>
         </body>
       </html>
