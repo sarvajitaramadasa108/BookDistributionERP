@@ -90,7 +90,9 @@ function normalizeCatalogKey(value) {
     .toLowerCase();
 }
 
-function lookupCatalogImageUrl(itemName) {
+function lookupCatalogImageUrl(erpCode, itemName) {
+  const code = String(erpCode || "").trim();
+  if (code && BOOK_IMAGE_MAP[code]) return BOOK_IMAGE_MAP[code];
   const raw = String(itemName || "").trim();
   if (!raw) return "";
   const candidates = [
@@ -199,7 +201,7 @@ function mapItem(row) {
     mrp: Number(row.sale_price || 0),
     purchasePrice: Number(row.purchase_price || 0),
     distributorPrice: Number(row.purchase_price || 0),
-    imageUrl: row.image_url || row.imageUrl || lookupCatalogImageUrl(row.item_name) || "",
+    imageUrl: row.image_url || row.imageUrl || lookupCatalogImageUrl(row.erp_code, row.item_name) || "",
     active: row.active
   };
 }
@@ -1383,7 +1385,7 @@ async function catalogRequestItems(supabase, payload) {
       bookType: row.item_type,
       salePrice: Number(row.sale_price || 0),
       purchasePrice: Number(row.purchase_price || 0),
-      imageUrl: row.image_url || lookupCatalogImageUrl(row.item_name) || "",
+      imageUrl: row.image_url || lookupCatalogImageUrl(row.erp_code, row.item_name) || "",
       active: row.active,
       availableQty: Number(stockByBook.get(String(row.erp_code || "")) || 0)
     }))
