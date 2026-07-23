@@ -1,19 +1,9 @@
 import crypto from "node:crypto";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+import { BOOK_IMAGE_MAP } from "./book-image-map.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-const BOOK_IMAGE_MAP_PATH = resolve(fileURLToPath(new URL("../data-book-image-map.json", import.meta.url)));
-
-let BOOK_IMAGE_MAP = {};
-try {
-  BOOK_IMAGE_MAP = JSON.parse(readFileSync(BOOK_IMAGE_MAP_PATH, "utf8"));
-} catch {
-  BOOK_IMAGE_MAP = {};
-}
 
 export const config = {
   runtime: "nodejs"
