@@ -1,8 +1,18 @@
 import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const BOOK_IMAGE_MAP_PATH = resolve(process.cwd(), "data-book-image-map.json");
+
+let BOOK_IMAGE_MAP = {};
+try {
+  BOOK_IMAGE_MAP = JSON.parse(readFileSync(BOOK_IMAGE_MAP_PATH, "utf8"));
+} catch {
+  BOOK_IMAGE_MAP = {};
+}
 
 export const config = {
   runtime: "nodejs"
@@ -71,6 +81,28 @@ function toDateOnly(value) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return String(value).slice(0, 10);
   return d.toISOString().slice(0, 10);
+}
+
+function normalizeCatalogKey(value) {
+  return String(value || "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function lookupCatalogImageUrl(itemName) {
+  const raw = String(itemName || "").trim();
+  if (!raw) return "";
+  const candidates = [
+    raw,
+    raw.replace(/^[^-]+-\s*/u, ""),
+    raw.replace(/\s*\(.*$/u, "")
+  ];
+  for (const candidate of candidates) {
+    const key = normalizeCatalogKey(candidate);
+    if (key && BOOK_IMAGE_MAP[key]) return BOOK_IMAGE_MAP[key];
+  }
+  return "";
 }
 
 async function readBody(request) {
@@ -167,7 +199,7 @@ function mapItem(row) {
     mrp: Number(row.sale_price || 0),
     purchasePrice: Number(row.purchase_price || 0),
     distributorPrice: Number(row.purchase_price || 0),
-    imageUrl: row.image_url || row.imageUrl || "",
+    imageUrl: row.image_url || row.imageUrl || lookupCatalogImageUrl(row.item_name) || "",
     active: row.active
   };
 }
@@ -1351,7 +1383,7 @@ async function catalogRequestItems(supabase, payload) {
       bookType: row.item_type,
       salePrice: Number(row.sale_price || 0),
       purchasePrice: Number(row.purchase_price || 0),
-      imageUrl: row.image_url || "",
+      imageUrl: row.image_url || lookupCatalogImageUrl(row.item_name) || "",
       active: row.active,
       availableQty: Number(stockByBook.get(String(row.erp_code || "")) || 0)
     }))
