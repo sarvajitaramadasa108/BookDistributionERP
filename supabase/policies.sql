@@ -11,6 +11,8 @@ alter table public.document_lines enable row level security;
 alter table public.stock_ledger enable row level security;
 alter table public.activity_settlement_payments enable row level security;
 alter table public.online_class_registrations enable row level security;
+alter table public.catalog_requests enable row level security;
+alter table public.catalog_request_lines enable row level security;
 alter table public.user_sessions enable row level security;
 
 drop policy if exists "users_all_access" on public.users;
@@ -79,6 +81,20 @@ with check (true);
 drop policy if exists "online_class_registrations_all_access" on public.online_class_registrations;
 create policy "online_class_registrations_all_access"
 on public.online_class_registrations
+for all
+using (true)
+with check (true);
+
+drop policy if exists "catalog_requests_all_access" on public.catalog_requests;
+create policy "catalog_requests_all_access"
+on public.catalog_requests
+for all
+using (true)
+with check (true);
+
+drop policy if exists "catalog_request_lines_all_access" on public.catalog_request_lines;
+create policy "catalog_request_lines_all_access"
+on public.catalog_request_lines
 for all
 using (true)
 with check (true);

@@ -17,6 +17,18 @@
       "dest": "/frontend/online-classes.html"
     },
     {
+      "src": "/request",
+      "dest": "/frontend/request.html"
+    },
+    {
+      "src": "/request/",
+      "dest": "/frontend/request.html"
+    },
+    {
+      "src": "/request.html",
+      "dest": "/frontend/request.html"
+    },
+    {
       "src": "/assets/(.*)",
       "dest": "/frontend/assets/$1"
     },

@@ -56,10 +56,14 @@ create table if not exists public.items (
   unit text not null default 'pcs',
   purchase_price numeric(14,2) not null default 0,
   sale_price numeric(14,2) not null default 0,
+  image_url text not null default '',
   active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.items
+  add column if not exists image_url text not null default '';
 
 create table if not exists public.activities (
   id uuid primary key default gen_random_uuid(),
@@ -183,6 +187,38 @@ create table if not exists public.online_class_registrations (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.catalog_requests (
+  id uuid primary key default gen_random_uuid(),
+  request_code text not null unique,
+  source_warehouse_id uuid references public.warehouses(id) on update cascade on delete set null,
+  source_warehouse_code text not null default '',
+  source_warehouse_name text not null default '',
+  item_group text not null default 'BOOK' check (item_group in ('BOOK', 'PARAPHERNALIA')),
+  requester_name text not null default '',
+  requester_mobile text not null default '',
+  notes text not null default '',
+  status text not null default 'New' check (status in ('New', 'Viewed', 'Approved', 'Rejected', 'Fulfilled')),
+  created_by_user_id uuid references public.users(id) on update cascade on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.catalog_request_lines (
+  id uuid primary key default gen_random_uuid(),
+  request_id uuid not null references public.catalog_requests(id) on update cascade on delete cascade,
+  line_no integer not null,
+  item_erp_code text not null,
+  item_name text not null,
+  item_group text not null default 'BOOK',
+  image_url text not null default '',
+  sale_price numeric(14,2) not null default 0,
+  available_qty numeric(14,3) not null default 0,
+  requested_qty numeric(14,3) not null default 0,
+  line_total numeric(14,2) not null default 0,
+  created_at timestamptz not null default now(),
+  unique (request_id, line_no)
+);
+
 create table if not exists public.audit_log (
   id uuid primary key default gen_random_uuid(),
   timestamp timestamptz not null default now(),
@@ -216,6 +252,9 @@ create index if not exists idx_activity_settlement_payments_created_at on public
 create index if not exists idx_online_class_registrations_created_at on public.online_class_registrations (created_at desc);
 create index if not exists idx_online_class_registrations_warehouse on public.online_class_registrations (source_warehouse_id, created_at desc);
 create index if not exists idx_online_class_registrations_item on public.online_class_registrations (item_id);
+create index if not exists idx_catalog_requests_created_at on public.catalog_requests (created_at desc);
+create index if not exists idx_catalog_requests_warehouse on public.catalog_requests (source_warehouse_id, created_at desc);
+create index if not exists idx_catalog_request_lines_request on public.catalog_request_lines (request_id, line_no);
 
 drop trigger if exists trg_users_updated_at on public.users;
 create trigger trg_users_updated_at
@@ -250,6 +289,11 @@ for each row execute function public.set_updated_at();
 drop trigger if exists trg_online_class_registrations_updated_at on public.online_class_registrations;
 create trigger trg_online_class_registrations_updated_at
 before update on public.online_class_registrations
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_catalog_requests_updated_at on public.catalog_requests;
+create trigger trg_catalog_requests_updated_at
+before update on public.catalog_requests
 for each row execute function public.set_updated_at();
 
 create or replace view public.books as

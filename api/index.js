@@ -166,6 +166,7 @@ function mapItem(row) {
     mrp: Number(row.sale_price || 0),
     purchasePrice: Number(row.purchase_price || 0),
     distributorPrice: Number(row.purchase_price || 0),
+    imageUrl: row.image_url || row.imageUrl || "",
     active: row.active
   };
 }
@@ -310,6 +311,7 @@ async function createItem(supabase, payload) {
     unit: payload.unit || "pcs",
     purchase_price: Number(payload.purchasePrice || payload.distributorPrice || 0),
     sale_price: Number(payload.salePrice || payload.mrp || 0),
+    image_url: String(payload.imageUrl || payload.image_url || "").trim(),
     active: payload.active !== false
   }).select("*").single();
   if (error) throw error;
@@ -328,6 +330,7 @@ async function updateItem(supabase, payload) {
   if (payload.bookType !== undefined || payload.category !== undefined) updates.item_type = String(payload.bookType || payload.category || "").trim();
   if (payload.purchasePrice !== undefined || payload.distributorPrice !== undefined) updates.purchase_price = Number(payload.purchasePrice || payload.distributorPrice || 0);
   if (payload.salePrice !== undefined || payload.mrp !== undefined) updates.sale_price = Number(payload.salePrice || payload.mrp || 0);
+  if (payload.imageUrl !== undefined || payload.image_url !== undefined) updates.image_url = String(payload.imageUrl || payload.image_url || "").trim();
   if (payload.active !== undefined) updates.active = Boolean(payload.active);
   const { data, error } = await supabase.from("items").update(updates).eq("erp_code", erpCode).select("*").single();
   if (error) throw error;
@@ -385,6 +388,7 @@ async function itemsBulkUpsert(supabase, payload) {
       unit: "pcs",
       purchase_price: Number(item.purchasePrice || item["Purchase Price"] || item.distributorPrice || 0),
       sale_price: Number(item.salePrice || item["Sale Price"] || item.mrp || 0),
+      image_url: String(item.imageUrl || item.image_url || item["Image URL"] || item["Image Link"] || "").trim(),
       active: item.active !== false
     };
   }).filter((row) => row.erp_code && row.item_name);
@@ -422,6 +426,7 @@ async function upsertItemIfMissing(supabase, line) {
     bookType: line.bookType || line.category || "General",
     purchasePrice: line.purchasePrice || line.rate || 0,
     salePrice: line.salePrice || line.mrp || 0,
+    imageUrl: line.imageUrl || line.image_url || "",
     itemGroup,
     active: true
   });
@@ -1310,6 +1315,152 @@ async function onlineClassWarehouseBooks(supabase, payload) {
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")) || String(a.erpCode || "").localeCompare(String(b.erpCode || "")));
 }
 
+async function catalogRequestItems(supabase, payload) {
+  const itemGroup = String(payload.itemGroup || "BOOK").trim().toUpperCase();
+  const sourceWarehouseRow = await resolveWarehouseRow(supabase, payload.sourceWarehouseId || payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
+  if (!sourceWarehouseRow) throw new Error("Warehouse is required");
+  const [itemsResult, stockRows] = await Promise.all([
+    supabase.from("items").select("*").eq("item_group", itemGroup).eq("active", true),
+    stockCurrent(supabase)
+  ]);
+  if (itemsResult.error) throw itemsResult.error;
+  const stockByBook = new Map();
+  for (const row of stockRows || []) {
+    if (String(row.warehouseId || "") !== String(sourceWarehouseRow.id || "")) continue;
+    stockByBook.set(String(row.bookId || ""), Number(row.quantity || 0));
+  }
+  return (itemsResult.data || [])
+    .map((row) => ({
+      warehouseId: sourceWarehouseRow.id,
+      warehouseCode: sourceWarehouseRow.warehouse_code || "",
+      warehouseName: sourceWarehouseRow.warehouse_name || "",
+      itemGroup,
+      bookId: row.erp_code,
+      erpCode: row.erp_code,
+      name: row.item_name,
+      bookName: row.item_name,
+      bookType: row.item_type,
+      salePrice: Number(row.sale_price || 0),
+      purchasePrice: Number(row.purchase_price || 0),
+      imageUrl: row.image_url || "",
+      active: row.active,
+      availableQty: Number(stockByBook.get(String(row.erp_code || "")) || 0)
+    }))
+    .filter((row) => row.active !== false)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")) || String(a.erpCode || "").localeCompare(String(b.erpCode || "")));
+}
+
+async function createCatalogRequest(supabase, payload, currentUser) {
+  const itemGroup = String(payload.itemGroup || "BOOK").trim().toUpperCase();
+  if (!["BOOK", "PARAPHERNALIA"].includes(itemGroup)) throw new Error("Item category is required");
+  const sourceWarehouseRow = await resolveWarehouseRow(supabase, payload.sourceWarehouseId || payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
+  if (!sourceWarehouseRow) throw new Error("Warehouse is required");
+  const requesterName = String(payload.requesterName || payload.name || "").trim();
+  const requesterMobile = String(payload.requesterMobile || payload.mobile || "").replace(/\D/g, "").trim();
+  if (!requesterName) throw new Error("Name is required");
+  if (requesterMobile.length !== 10) throw new Error("Mobile number is required");
+  const lines = Array.isArray(payload.lines) ? payload.lines : [];
+  const cleanLines = lines
+    .map((line) => ({
+      erpCode: String(line.erpCode || line.bookId || "").trim(),
+      itemName: String(line.itemName || line.name || "").trim(),
+      itemGroup: String(line.itemGroup || itemGroup).trim().toUpperCase(),
+      imageUrl: String(line.imageUrl || line.image_url || "").trim(),
+      salePrice: Number(line.salePrice || 0),
+      availableQty: Number(line.availableQty || 0),
+      quantity: Number(line.quantity || 0)
+    }))
+    .filter((line) => line.erpCode && line.itemName && line.quantity > 0);
+  if (!cleanLines.length) throw new Error("Add at least one item");
+
+  const requestCode = await nextCode(supabase, "catalog_requests", "request_code", "REQ");
+  const { data: request, error: requestError } = await supabase.from("catalog_requests").insert({
+    request_code: requestCode,
+    source_warehouse_id: sourceWarehouseRow.id,
+    source_warehouse_code: sourceWarehouseRow.warehouse_code || "",
+    source_warehouse_name: sourceWarehouseRow.warehouse_name || "",
+    item_group: itemGroup,
+    requester_name: requesterName,
+    requester_mobile: requesterMobile,
+    notes: String(payload.notes || "").trim(),
+    status: "New",
+    created_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null
+  }).select("*").single();
+  if (requestError) throw requestError;
+
+  const linePayload = cleanLines.map((line, index) => ({
+    request_id: request.id,
+    line_no: index + 1,
+    item_erp_code: line.erpCode,
+    item_name: line.itemName,
+    item_group: line.itemGroup,
+    image_url: line.imageUrl || "",
+    sale_price: Number(line.salePrice || 0),
+    available_qty: Number(line.availableQty || 0),
+    requested_qty: Number(line.quantity || 0),
+    line_total: Number(line.quantity || 0) * Number(line.salePrice || 0)
+  }));
+  const { error: lineError } = await supabase.from("catalog_request_lines").insert(linePayload);
+  if (lineError) throw lineError;
+  return {
+    requestId: request.id,
+    requestCode: request.request_code,
+    sourceWarehouseName: request.source_warehouse_name,
+    itemGroup: request.item_group,
+    requesterName: request.requester_name,
+    requesterMobile: request.requester_mobile,
+    createdAt: request.created_at
+  };
+}
+
+async function catalogRequestsList(supabase) {
+  const [{ data: requests, error: requestError }, { data: lines, error: lineError }] = await Promise.all([
+    supabase.from("catalog_requests").select("*").order("created_at", { ascending: false }),
+    supabase.from("catalog_request_lines").select("*").order("request_id", { ascending: true }).order("line_no", { ascending: true })
+  ]);
+  if (requestError) throw requestError;
+  if (lineError) throw lineError;
+  const linesByRequest = new Map();
+  for (const line of lines || []) {
+    const requestId = line.request_id;
+    if (!linesByRequest.has(requestId)) linesByRequest.set(requestId, []);
+    linesByRequest.get(requestId).push({
+      lineId: line.id,
+      lineNo: line.line_no,
+      erpCode: line.item_erp_code || "",
+      itemName: line.item_name || "",
+      itemGroup: line.item_group || "BOOK",
+      imageUrl: line.image_url || "",
+      salePrice: Number(line.sale_price || 0),
+      availableQty: Number(line.available_qty || 0),
+      requestedQty: Number(line.requested_qty || 0),
+      lineTotal: Number(line.line_total || 0)
+    });
+  }
+  return (requests || []).map((row) => {
+    const requestLines = linesByRequest.get(row.id) || [];
+    const totalQty = requestLines.reduce((sum, line) => sum + Number(line.requestedQty || 0), 0);
+    const totalAmount = requestLines.reduce((sum, line) => sum + Number(line.lineTotal || 0), 0);
+    return {
+      requestId: row.id,
+      requestCode: row.request_code,
+      sourceWarehouseId: row.source_warehouse_id || "",
+      sourceWarehouseCode: row.source_warehouse_code || "",
+      sourceWarehouseName: row.source_warehouse_name || "",
+      itemGroup: row.item_group || "BOOK",
+      requesterName: row.requester_name || "",
+      requesterMobile: row.requester_mobile || "",
+      notes: row.notes || "",
+      status: row.status || "New",
+      totalQty,
+      totalAmount,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      lines: requestLines
+    };
+  });
+}
+
 async function getActivityUnsettled(supabase) {
   const { data: documents } = await supabase.from("documents").select("*");
   const { data: lines } = await supabase.from("document_lines").select("*");
@@ -2191,7 +2342,7 @@ async function main(request) {
     const action = body.action;
     const payload = body.payload || {};
     const supabase = getSupabase();
-    const publicActions = new Set(["auth.login", "auth.logout", "auth.me", "warehouses.list", "books.list", "stock.current", "onlineClasses.submit", "onlineClasses.warehouseBooks"]);
+    const publicActions = new Set(["auth.login", "auth.logout", "auth.me", "warehouses.list", "books.list", "stock.current", "onlineClasses.submit", "onlineClasses.warehouseBooks", "catalog.items", "catalog.submit"]);
     const currentUser = await requireCurrentUser(supabase, payload, publicActions.has(action));
 
     switch (action) {
@@ -2305,6 +2456,12 @@ async function main(request) {
         return json(200, { ok: true, data: await savePendingSettlementAdjustments(supabase, payload, currentUser) });
       case "activity.settledActivities":
         return json(200, { ok: true, data: await getSettledActivities(supabase) });
+      case "catalog.items":
+        return json(200, { ok: true, data: await catalogRequestItems(supabase, payload) });
+      case "catalog.submit":
+        return json(200, { ok: true, data: await createCatalogRequest(supabase, payload, currentUser) });
+      case "requests.list":
+        return json(200, { ok: true, data: await catalogRequestsList(supabase) });
       case "reports.activityLedger":
         return json(200, { ok: true, data: await getActivityLedger(supabase, payload) });
       case "reports.activityMonthly":

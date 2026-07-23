@@ -28,6 +28,10 @@
     purchaseLines: [],
     purchaseImportName: "",
     documents: [],
+    requests: [],
+    requestSearch: "",
+    requestGroupFilter: "all",
+    requestDetailId: "",
     onlineClasses: [],
     onlineClassSearch: "",
     issueDraft: {},
@@ -87,6 +91,7 @@
     warehouses: ["Warehouses", "Main and event stock locations.", renderWarehouses],
     activities: ["Activities", "Daily stalls, marathons, events, and closing workflow.", renderActivities],
     documents: ["Stock Documents", "Issue, receive, sale, return, transfer, and adjustment entries.", renderDocuments],
+    requests: ["Requests", "Public book and devotional item requests.", renderRequests],
     "online-classes": ["Online Classes", "Public volunteer registrations for online Bhagavad Gita classes.", renderOnlineClasses],
     reports: ["Reports", "Current stock, activity summary, book-wise sales, and ledger.", renderReports],
     settings: ["Settings", "System configuration and backend connection.", renderSettings]
@@ -947,6 +952,20 @@
     return renderOnlineClassesMarkup();
   }
 
+  async function renderRequests() {
+    try {
+      state.requests = await window.erpApi.request("requests.list");
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error || "");
+      if (!message.includes("catalog_requests") && !message.includes("catalog_request_lines") && !message.includes("does not exist") && !message.includes("schema cache")) {
+        throw error;
+      }
+      state.requests = [];
+      return '<div class="empty-state">Requests table is not available yet. Apply the Supabase schema to enable this section.</div>';
+    }
+    return renderRequestsMarkup();
+  }
+
   function filteredOnlineClasses() {
     const query = String(state.onlineClassSearch || "").trim().toLowerCase();
     if (!query) {
@@ -1031,6 +1050,162 @@
             `).join("")}
           </tbody>
         </table>
+      </div>
+    `;
+  }
+
+  function filteredRequests() {
+    const query = String(state.requestSearch || "").trim().toLowerCase();
+    const groupFilter = String(state.requestGroupFilter || "all").toUpperCase();
+    return (state.requests || []).filter((row) => {
+      if (groupFilter !== "ALL" && String(row.itemGroup || "").toUpperCase() !== groupFilter) {
+        return false;
+      }
+      if (!query) return true;
+      const haystack = [
+        row.requestCode,
+        row.sourceWarehouseCode,
+        row.sourceWarehouseName,
+        row.itemGroup,
+        row.requesterName,
+        row.requesterMobile,
+        row.status,
+        row.notes,
+        ...(row.lines || []).flatMap((line) => [line.erpCode, line.itemName, line.itemGroup])
+      ].join(" ").toLowerCase();
+      return haystack.includes(query);
+    });
+  }
+
+  function requestGroupLabel(group) {
+    return String(group || "BOOK").toUpperCase() === "PARAPHERNALIA" ? "Devotional Items" : "Books";
+  }
+
+  function renderRequestsMarkup() {
+    const rows = filteredRequests();
+    const detail = state.requests.find((row) => row.requestId === state.requestDetailId) || null;
+    return `
+      <section class="card">
+        <div class="panel-header">
+          <h2>Requests</h2>
+          <div class="row-actions">
+            <button class="small-button" type="button" onclick="window.erpApp.downloadRequestsExcel()">Download Excel</button>
+            ${detail ? `<button class="small-button" type="button" onclick="window.erpApp.backToRequestsSummary()">Back to Summary</button>` : ""}
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="toolbar">
+            <label class="field compact-field">
+              <span>Search</span>
+              <input id="requestSearchInput" type="search" value="${escapeAttribute(state.requestSearch)}" placeholder="Search request, name, mobile, item..." oninput="window.erpApp.setRequestSearch(this.value)">
+            </label>
+            <label class="field compact-field">
+              <span>Category</span>
+              <select onchange="window.erpApp.setRequestGroupFilter(this.value)">
+                <option value="all" ${String(state.requestGroupFilter || "all") === "all" ? "selected" : ""}>All</option>
+                <option value="BOOK" ${String(state.requestGroupFilter || "") === "BOOK" ? "selected" : ""}>Books</option>
+                <option value="PARAPHERNALIA" ${String(state.requestGroupFilter || "") === "PARAPHERNALIA" ? "selected" : ""}>Devotional Items</option>
+              </select>
+            </label>
+          </div>
+          ${detail ? requestDetailMarkup(detail) : (rows.length ? requestsTable(rows) : '<div class="empty-state">No requests found.</div>')}
+        </div>
+      </section>
+    `;
+  }
+
+  function requestsTable(rows) {
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Request ID</th>
+              <th>Category</th>
+              <th>Warehouse</th>
+              <th>Name</th>
+              <th>Mobile</th>
+              <th>Items</th>
+              <th>Qty</th>
+              <th>Worth</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(formatDateTime(row.createdAt))}</td>
+                <td>${escapeHtml(row.requestCode || "-")}</td>
+                <td>${escapeHtml(requestGroupLabel(row.itemGroup))}</td>
+                <td>${escapeHtml(row.sourceWarehouseName || row.sourceWarehouseCode || "-")}</td>
+                <td>${escapeHtml(row.requesterName || "-")}</td>
+                <td>${escapeHtml(row.requesterMobile || "-")}</td>
+                <td>${escapeHtml((row.lines || []).length ? row.lines.map((line) => line.itemName).join(", ") : "-")}</td>
+                <td>${Number(row.totalQty || 0)}</td>
+                <td>${money(Number(row.totalAmount || 0))}</td>
+                <td>${status(row.status || "New", "warn")}</td>
+                <td><button class="small-button" type="button" onclick="window.erpApp.showRequestDetails('${escapeAttribute(row.requestId)}')">Show Details</button></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function requestDetailMarkup(detail) {
+    return `
+      <div class="section-gap">
+        <div class="grid two-col">
+          <section class="card">
+            <div class="panel-header"><h3>Request Details</h3></div>
+            <div class="panel-body">
+              <div class="grid two-col compact-grid">
+                ${metric("Request", detail.requestCode || "-", detail.status || "New")}
+                ${metric("Category", requestGroupLabel(detail.itemGroup), detail.sourceWarehouseName || detail.sourceWarehouseCode || "-")}
+                ${metric("Requested Qty", Number(detail.totalQty || 0), "Total quantity")}
+                ${metric("Worth", money(Number(detail.totalAmount || 0)), "Estimated value")}
+              </div>
+              <div class="detail-meta">
+                <div><strong>Name:</strong> ${escapeHtml(detail.requesterName || "-")}</div>
+                <div><strong>Mobile:</strong> ${escapeHtml(detail.requesterMobile || "-")}</div>
+                <div><strong>Warehouse:</strong> ${escapeHtml(detail.sourceWarehouseName || detail.sourceWarehouseCode || "-")}</div>
+                <div><strong>Notes:</strong> ${escapeHtml(detail.notes || "-")}</div>
+              </div>
+            </div>
+          </section>
+          <section class="card">
+            <div class="panel-header"><h3>Requested Items</h3></div>
+            <div class="panel-body">
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ERP Code</th>
+                      <th>Item</th>
+                      <th>Qty</th>
+                      <th>Price</th>
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${(detail.lines || []).map((line) => `
+                      <tr>
+                        <td>${escapeHtml(line.erpCode || "-")}</td>
+                        <td>${escapeHtml(line.itemName || "-")}</td>
+                        <td>${Number(line.requestedQty || 0)}</td>
+                        <td>${money(Number(line.salePrice || 0))}</td>
+                        <td>${money(Number(line.lineTotal || 0))}</td>
+                      </tr>
+                    `).join("")}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
     `;
   }
@@ -3883,6 +4058,60 @@
     window.XLSX.writeFile(workbook, "online-classes.xlsx");
   }
 
+  function downloadRequestsExcel() {
+    const rows = filteredRequests();
+    if (!rows.length) {
+      showToast("No requests to export");
+      return;
+    }
+    if (!window.XLSX || !window.XLSX.utils) {
+      showToast("Excel library is not loaded");
+      return;
+    }
+    const exportRows = [];
+    rows.forEach((row) => {
+      if (!row.lines || !row.lines.length) {
+        exportRows.push({
+          Timestamp: formatDateTime(row.createdAt),
+          "Request ID": row.requestCode || "",
+          Category: requestGroupLabel(row.itemGroup),
+          Warehouse: row.sourceWarehouseName || row.sourceWarehouseCode || "",
+          Name: row.requesterName || "",
+          Mobile: row.requesterMobile || "",
+          Item: "",
+          ERP_Code: "",
+          Quantity: 0,
+          Price: 0,
+          Worth: 0,
+          Status: row.status || "",
+          Notes: row.notes || ""
+        });
+        return;
+      }
+      row.lines.forEach((line) => {
+        exportRows.push({
+          Timestamp: formatDateTime(row.createdAt),
+          "Request ID": row.requestCode || "",
+          Category: requestGroupLabel(row.itemGroup),
+          Warehouse: row.sourceWarehouseName || row.sourceWarehouseCode || "",
+          Name: row.requesterName || "",
+          Mobile: row.requesterMobile || "",
+          Item: line.itemName || "",
+          ERP_Code: line.erpCode || "",
+          Quantity: Number(line.requestedQty || 0),
+          Price: Number(line.salePrice || 0),
+          Worth: Number(line.lineTotal || 0),
+          Status: row.status || "",
+          Notes: row.notes || ""
+        });
+      });
+    });
+    const sheet = window.XLSX.utils.json_to_sheet(exportRows);
+    const workbook = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(workbook, sheet, "Requests");
+    window.XLSX.writeFile(workbook, "requests.xlsx");
+  }
+
   function activityComplimentaryTable(rows) {
     return complimentaryActivitySummaryMarkup(rows);
   }
@@ -3972,6 +4201,35 @@
   async function setOnlineClassSearch(value) {
     state.onlineClassSearch = value;
     content.innerHTML = renderOnlineClassesMarkup();
+  }
+
+  async function setRequestSearch(value) {
+    state.requestSearch = value;
+    const currentValue = String(value || "");
+    content.innerHTML = renderRequestsMarkup();
+    const input = document.getElementById("requestSearchInput");
+    if (input) {
+      input.value = currentValue;
+      input.focus();
+      if (typeof input.setSelectionRange === "function") {
+        input.setSelectionRange(currentValue.length, currentValue.length);
+      }
+    }
+  }
+
+  async function setRequestGroupFilter(value) {
+    state.requestGroupFilter = value || "all";
+    content.innerHTML = renderRequestsMarkup();
+  }
+
+  async function showRequestDetails(requestId) {
+    state.requestDetailId = requestId;
+    content.innerHTML = renderRequestsMarkup();
+  }
+
+  async function backToRequestsSummary() {
+    state.requestDetailId = "";
+    content.innerHTML = renderRequestsMarkup();
   }
 
   async function setActivityReportDevoteeSearch(value) {
@@ -6605,10 +6863,15 @@
     setReportWarehouse,
     setReportMonth,
     setOnlineClassSearch,
+    setRequestSearch,
+    setRequestGroupFilter,
+    showRequestDetails,
+    backToRequestsSummary,
     loadWarehouseReport,
     loadWarehouseDayWiseSales,
     downloadWarehouseReport,
     downloadOnlineClassesExcel,
+    downloadRequestsExcel,
     downloadUnsettledIssuesReport,
     downloadComplimentaryIssuesReport,
     showUnsettledActivityDetails,

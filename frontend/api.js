@@ -56,6 +56,7 @@
       { activityId: "ACT-002", name: "Annavaram Daily Stall", type: "Daily", devoteeId: "DEV-0010", devoteeName: "ADKP", warehouse: "Annavaram", status: "Running" }
     ],
     documents: [],
+    requests: [],
     onlineClasses: [],
     users: [
       { userId: "USR-0001", name: "Admin", username: "admin", password: "admin123", role: "mainAdmin", active: true },
@@ -123,6 +124,9 @@
       "activities.delete": () => deleteMockActivity(payload),
       "documents.list": mockData.documents,
       "documents.create": () => createMockDocument(payload),
+      "catalog.items": () => getMockCatalogItems(payload),
+      "catalog.submit": () => createMockCatalogRequest(payload),
+      "requests.list": () => mockData.requests.slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))),
       "onlineClasses.warehouseBooks": () => getMockOnlineClassWarehouseBooks(payload),
       "onlineClasses.list": mockData.onlineClasses.slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))),
       "onlineClasses.submit": () => createMockOnlineClassRegistration(payload),
@@ -161,6 +165,7 @@
         }))
       : clone.activities;
     clone.documents = Array.isArray(source.documents) ? source.documents : clone.documents;
+    clone.requests = Array.isArray(source.requests) ? source.requests : clone.requests;
     clone.onlineClasses = Array.isArray(source.onlineClasses) ? source.onlineClasses : clone.onlineClasses;
     clone.users = Array.isArray(source.users) && source.users.length ? source.users : clone.users;
     clone.sessions = source.sessions || clone.sessions;
@@ -442,6 +447,68 @@
     mockData.documents.push(document);
     saveMockData();
     return { documentId };
+  }
+
+  function getMockCatalogItems(payload) {
+    const itemGroup = String(payload.itemGroup || "BOOK").trim().toUpperCase();
+    if (itemGroup !== "BOOK") {
+      return [];
+    }
+    const warehouse = mockData.warehouses[0];
+    return mockData.books
+      .filter((book) => book.active !== false)
+      .map((book) => ({
+        warehouseId: warehouse ? warehouse.warehouseId : "WH-001",
+        warehouseCode: warehouse ? warehouse.warehouseId : "WH-001",
+        warehouseName: warehouse ? warehouse.name : "GMB Main",
+        itemGroup,
+        bookId: book.erpCode,
+        erpCode: book.erpCode,
+        name: book.name,
+        bookName: book.name,
+        bookType: book.bookType || "",
+        salePrice: Number(book.salePrice || 0),
+        purchasePrice: Number(book.purchasePrice || 0),
+        imageUrl: book.imageUrl || "",
+        active: true,
+        availableQty: 25
+      }));
+  }
+
+  function createMockCatalogRequest(payload) {
+    const lines = Array.isArray(payload.lines) ? payload.lines : [];
+    const requestId = nextMockId("REQ", mockData.requests, "requestId");
+    const request = {
+      requestId,
+      requestCode: requestId,
+      sourceWarehouseId: payload.sourceWarehouseId || "WH-001",
+      sourceWarehouseCode: payload.sourceWarehouseId || "WH-001",
+      sourceWarehouseName: payload.sourceWarehouseName || "GMB Main",
+      itemGroup: String(payload.itemGroup || "BOOK").trim().toUpperCase(),
+      requesterName: String(payload.requesterName || payload.name || "").trim(),
+      requesterMobile: String(payload.requesterMobile || payload.mobile || "").trim(),
+      notes: String(payload.notes || "").trim(),
+      status: "New",
+      totalQty: lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0),
+      totalAmount: lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.salePrice || 0), 0),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lines: lines.map((line, index) => ({
+        lineId: `${String(index + 1).padStart(2, "0")}`,
+        lineNo: index + 1,
+        erpCode: String(line.erpCode || "").trim(),
+        itemName: String(line.itemName || "").trim(),
+        itemGroup: String(line.itemGroup || "BOOK").trim().toUpperCase(),
+        imageUrl: String(line.imageUrl || "").trim(),
+        salePrice: Number(line.salePrice || 0),
+        availableQty: Number(line.availableQty || 0),
+        requestedQty: Number(line.quantity || 0),
+        lineTotal: Number(line.quantity || 0) * Number(line.salePrice || 0)
+      }))
+    };
+    mockData.requests.unshift(request);
+    saveMockData();
+    return request;
   }
 
   function createMockOnlineClassRegistration(payload) {
