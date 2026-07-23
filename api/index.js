@@ -157,6 +157,7 @@ function mapWarehouse(row) {
 
 function mapItem(row) {
   return {
+    itemRowId: row.id,
     bookId: row.erp_code,
     erpCode: row.erp_code,
     name: row.item_name,
@@ -1275,10 +1276,18 @@ async function stockCurrent(supabase) {
     index.set(key, prev);
   }
   const items = await listTable(supabase, "items", mapItem);
-  const itemsById = Object.fromEntries(items.map((item) => [item.bookId, item]));
+  const itemsById = Object.fromEntries(
+    items.flatMap((item) => {
+      const pairs = [];
+      if (item.itemRowId) pairs.push([String(item.itemRowId), item]);
+      if (item.bookId) pairs.push([String(item.bookId), item]);
+      if (item.erpCode) pairs.push([String(item.erpCode), item]);
+      return pairs;
+    })
+  );
   return Array.from(index.values()).map((row) => ({
     warehouseId: row.warehouseId,
-    bookId: itemsById[row.bookId]?.erpCode || row.bookId,
+    bookId: itemsById[String(row.bookId || "")]?.erpCode || row.bookId,
     quantity: row.quantity
   }));
 }
