@@ -58,7 +58,7 @@
     if (!raw) return "";
     const fileMatch = raw.match(/\/file\/d\/([^/]+)/i) || raw.match(/[?&]id=([^&]+)/i);
     if (raw.includes("drive.google.com") && fileMatch) {
-      return `https://drive.google.com/uc?export=view&id=${fileMatch[1]}`;
+      return `/api/image?url=${encodeURIComponent(raw)}`;
     }
     return raw;
   }
