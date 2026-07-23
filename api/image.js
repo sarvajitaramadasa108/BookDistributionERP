@@ -1,12 +1,13 @@
+import { Buffer } from "node:buffer";
+
 export const config = {
   runtime: "nodejs"
 };
 
-function json(statusCode, data) {
-  return new Response(JSON.stringify(data), {
-    status: statusCode,
-    headers: { "Content-Type": "application/json; charset=utf-8" }
-  });
+function sendJson(res, statusCode, data) {
+  res.statusCode = statusCode;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.end(JSON.stringify(data));
 }
 
 function decodeUrl(value) {
@@ -34,43 +35,47 @@ function normalizeDriveCandidates(raw) {
   return [...new Set(candidates)];
 }
 
-async function tryFetchImage(url) {
-  const response = await fetch(url, {
+async function fetchImage(candidate) {
+  const response = await fetch(candidate, {
     headers: {
-      "User-Agent": "Mozilla/5.0"
+      "User-Agent": "Mozilla/5.0",
+      "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
     }
   });
   if (!response.ok) return null;
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.startsWith("image/")) return null;
-  return response;
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return { buffer, contentType };
 }
 
-export default async function handler(req) {
-  const requestUrl = new URL(req.url);
-  const raw = decodeUrl(requestUrl.searchParams.get("url"));
-  if (!raw) {
-    return json(400, { ok: false, error: "Missing url" });
-  }
-
-  const allowed = /drive\.google\.com|googleusercontent\.com/i.test(raw);
-  if (!allowed) {
-    return json(400, { ok: false, error: "Only Google Drive image URLs are allowed" });
-  }
-
-  for (const candidate of normalizeDriveCandidates(raw)) {
-    try {
-      const response = await tryFetchImage(candidate);
-      if (!response) continue;
-      const headers = new Headers();
-      headers.set("Content-Type", response.headers.get("content-type") || "image/jpeg");
-      headers.set("Cache-Control", "public, max-age=86400, s-maxage=86400");
-      const buffer = await response.arrayBuffer();
-      return new Response(buffer, { status: 200, headers });
-    } catch {
-      // Try the next candidate.
+export default async function handler(req, res) {
+  try {
+    const url = new URL(req.url, `https://${req.headers.host || "localhost"}`);
+    const raw = decodeUrl(url.searchParams.get("url"));
+    if (!raw) {
+      return sendJson(res, 400, { ok: false, error: "Missing url" });
     }
-  }
+    if (!/drive\.google\.com|googleusercontent\.com/i.test(raw)) {
+      return sendJson(res, 400, { ok: false, error: "Only Google Drive image URLs are allowed" });
+    }
 
-  return json(404, { ok: false, error: "Image not found" });
+    for (const candidate of normalizeDriveCandidates(raw)) {
+      try {
+        const image = await fetchImage(candidate);
+        if (!image) continue;
+        res.statusCode = 200;
+        res.setHeader("Content-Type", image.contentType);
+        res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=86400");
+        res.end(image.buffer);
+        return;
+      } catch {
+        // Try the next candidate.
+      }
+    }
+
+    return sendJson(res, 404, { ok: false, error: "Image not found" });
+  } catch (error) {
+    return sendJson(res, 500, { ok: false, error: error.message || "Server error" });
+  }
 }
