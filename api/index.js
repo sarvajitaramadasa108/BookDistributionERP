@@ -969,6 +969,16 @@ function isCountableDocument(doc) {
   return !["corrected", "cancelled", "void"].includes(status);
 }
 
+function documentTouchesWarehouse(doc, warehouseId) {
+  const target = String(warehouseId || "").trim();
+  if (!target || !doc) return false;
+  return [
+    doc.warehouse_id,
+    doc.from_warehouse_id,
+    doc.to_warehouse_id
+  ].some((value) => String(value || "").trim() === target);
+}
+
 async function createDocument(supabase, payload, currentUser) {
   const documentType = String(payload.documentType || "").trim();
   const allowed = ["OPENING", "ISSUE", "COMPLIMENTARY", "RECEIVE", "PURCHASE", "SALE", "RETURN", "TRANSFER", "ADJUSTMENT", "UNSETTLED_OPENING"];
@@ -1978,10 +1988,15 @@ async function getWarehouseMonthlyReport(supabase, payload) {
   const itemsById = Object.fromEntries((items || []).map((row) => [row.id, row]));
   const warehousesById = Object.fromEntries((allWarehouses || []).map((row) => [row.id, row]));
   const activityById = Object.fromEntries((activities || []).map((row) => [row.id, row]));
-  const startDocs = (documents || []).filter((doc) => isCountableDocument(doc) && doc.document_date && doc.document_date.slice(0, 7) === month);
+  const startDocs = (documents || []).filter((doc) =>
+    isCountableDocument(doc) &&
+    doc.document_date &&
+    doc.document_date.slice(0, 7) === month &&
+    documentTouchesWarehouse(doc, warehouse.id)
+  );
   const index = new Map();
-  const isMain = String(warehouse.warehouse_name || "").toLowerCase().startsWith("gmb");
-  const settledBuckets = new Map();
+  const warehouseNameLower = String(warehouse.warehouse_name || "").toLowerCase();
+  const isMain = warehouseNameLower.includes("gmb") || warehouseNameLower.includes("gambhiram");
   const daySet = new Set(startDocs.map((doc) => doc.document_date));
   for (const activity of activities || []) {
     if (!activity || String(activity.status || "").toLowerCase() !== "completed" && !activity.settled_at) continue;
@@ -2010,12 +2025,12 @@ async function getWarehouseMonthlyReport(supabase, payload) {
         bookType: item.item_type || "",
         itemGroup: item.item_group || "BOOK",
         openingQty: 0,
+        purchaseInQty: 0,
         issueQty: 0,
         returnQty: 0,
         transferInQty: 0,
         transferOutQty: 0,
         saleQty: 0,
-        complimentaryQty: 0,
         unsettledQty: 0,
         closingQty: 0,
         transferMap: {},
@@ -2026,6 +2041,9 @@ async function getWarehouseMonthlyReport(supabase, payload) {
       const qty = Number(line.quantity || 0);
       if (doc.document_type === "OPENING") {
         row.openingQty += qty;
+        row.closingQty += qty;
+      } else if (doc.document_type === "PURCHASE") {
+        row.purchaseInQty += qty;
         row.closingQty += qty;
       } else if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") {
         row.issueQty += qty;
@@ -2040,11 +2058,7 @@ async function getWarehouseMonthlyReport(supabase, payload) {
         row.daySalesMap[doc.document_date] = (row.daySalesMap[doc.document_date] || 0) + qty;
         row.closingQty -= qty;
       } else if (doc.document_type === "COMPLIMENTARY") {
-        row.complimentaryQty += qty;
         row.closingQty -= qty;
-      } else if (doc.document_type === "PURCHASE") {
-        row.openingQty += qty;
-        row.closingQty += qty;
       } else if (doc.document_type === "ADJUSTMENT") {
         const settlementEdit = parseSettlementEditNote(line.line_notes || doc.notes || "");
         if (settlementEdit) {
@@ -2082,10 +2096,8 @@ async function getWarehouseMonthlyReport(supabase, payload) {
             }
           } else if (target === "COMPLIMENTARY") {
             if (direction === "IN") {
-              row.complimentaryQty += qty;
               row.closingQty -= qty;
             } else {
-              row.complimentaryQty -= qty;
               row.closingQty += qty;
             }
           }
@@ -2107,37 +2119,6 @@ async function getWarehouseMonthlyReport(supabase, payload) {
             row.transferMap[transferName] = (row.transferMap[transferName] || 0) + qty;
           }
         }
-      }
-      if (settledAtDate && (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING" || doc.document_type === "RETURN" || doc.document_type === "COMPLIMENTARY")) {
-        const bucketKey = `${settledAtDate}|${line.item_id}`;
-        const bucket = settledBuckets.get(bucketKey) || { itemId: line.item_id, date: settledAtDate, issueQty: 0, returnQty: 0, complimentaryQty: 0 };
-        if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") bucket.issueQty += qty;
-        else if (doc.document_type === "RETURN") bucket.returnQty += qty;
-        else if (doc.document_type === "COMPLIMENTARY") bucket.complimentaryQty += qty;
-        settledBuckets.set(bucketKey, bucket);
-      }
-      if (activity && (String(activity.status || "").toLowerCase() === "completed" || activity.settled_at)) {
-        const settledKey = `${activity.id}|${line.item_id}`;
-        const settledBucket = settledBuckets.get(settledKey) || { itemId: line.item_id, activityId: activity.id, settledDay: settledAtDate, issueQty: 0, returnQty: 0, complimentaryQty: 0 };
-        const settlementEdit = doc.document_type === "ADJUSTMENT" ? parseSettlementEditNote(line.line_notes || doc.notes || "") : null;
-        if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") {
-          settledBucket.issueQty += qty;
-        } else if (doc.document_type === "RETURN") {
-          settledBucket.returnQty += qty;
-        } else if (doc.document_type === "COMPLIMENTARY") {
-          settledBucket.complimentaryQty += qty;
-        } else if (doc.document_type === "ADJUSTMENT" && settlementEdit) {
-          const target = settlementEdit.target;
-          const direction = settlementEdit.direction;
-          if (target === "ISSUE") {
-            settledBucket.issueQty += direction === "IN" ? -qty : qty;
-          } else if (target === "RETURN") {
-            settledBucket.returnQty += direction === "IN" ? qty : -qty;
-          } else if (target === "COMPLIMENTARY") {
-            settledBucket.complimentaryQty += direction === "IN" ? qty : -qty;
-          }
-        }
-        settledBuckets.set(settledKey, settledBucket);
       }
       index.set(key, row);
     }
@@ -2180,7 +2161,7 @@ async function getWarehouseMonthlyReport(supabase, payload) {
     warehouseId: warehouse.warehouse_code,
     warehouseName: warehouse.warehouse_name,
     month,
-    reportMode: String(warehouse.warehouse_name || "").toLowerCase().startsWith("gmb") ? "main" : "branch",
+    reportMode: isMain ? "main" : "branch",
     dayColumns: days,
     rows: rowsWithArrays
   };

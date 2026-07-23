@@ -626,7 +626,7 @@
     state.reportErrors = reportErrors;
 
     if (!state.reportWarehouseId) {
-      state.reportWarehouseId = state.warehouses.find((warehouse) => (warehouse.name || "").toLowerCase().indexOf("gmb") === 0)?.warehouseId || state.warehouses[0]?.warehouseId || "";
+      state.reportWarehouseId = state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || state.warehouses[0]?.warehouseId || "";
     }
     if (!state.reportMonth) {
       state.reportMonth = new Date().toISOString().slice(0, 7);
@@ -2894,14 +2894,7 @@
       return '<div class="empty-state">No warehouse report available.</div>';
     }
     const isMain = report.reportMode === "main";
-    const transferTargets = isMain
-      ? state.warehouses.filter((warehouse) =>
-          warehouse.warehouseId !== report.warehouseId &&
-          warehouse.active &&
-          String(warehouse.type || "").toLowerCase() !== "temporary" &&
-          (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0)
-      : [];
-    const worthTotals = buildWarehouseWorthTotals(report, transferTargets);
+    const worthTotals = buildWarehouseWorthTotals(report);
     return `
       <div class="table-wrap warehouse-report-wrap">
         <table class="warehouse-report-table">
@@ -2912,29 +2905,22 @@
               <th>Category</th>
               <th>Opening</th>
               ${isMain
-                ? `${transferTargets.map((warehouse) => `<th>To ${escapeHtml(warehouse.name)}</th>`).join("")}<th>Sales</th><th>Complimentary</th><th>Unsettled</th><th>Closing</th>`
+                ? `<th>Purchase-In</th><th>Transfer-Out</th><th>Unsettled</th><th>Sales</th><th>Closing</th>`
                 : `<th>Transfer In</th><th>Sales</th><th>Closing</th>`}
             </tr>
           </thead>
           <tbody>
-            ${buildWarehouseWorthRow(report, transferTargets, worthTotals)}
+            ${buildWarehouseWorthRow(report, worthTotals)}
           </tbody>
           <tbody>
-            ${report.rows.map((row) => renderWarehouseReportRow(row, report, transferTargets)).join("")}
+            ${report.rows.map((row) => renderWarehouseReportRow(row, report)).join("")}
           </tbody>
         </table>
       </div>
     `;
   }
 
-  function renderTransferBreakdown(transfers) {
-    if (!transfers || !transfers.length) {
-      return "0";
-    }
-    return transfers.map((item) => `${escapeHtml(item.name)}: ${Number(item.quantity || 0)}`).join("<br>");
-  }
-
-  function renderWarehouseReportRow(row, report, transferTargets) {
+  function renderWarehouseReportRow(row, report) {
     const isMain = report.reportMode === "main";
     return `
       <tr>
@@ -2943,7 +2929,7 @@
         <td>${escapeHtml(getItemGroupLabel(row.itemGroup))}</td>
         <td>${Number(row.openingQty || 0)}</td>
         ${isMain
-          ? `${transferTargets.map((warehouse) => `<td>${Number(((row.transferMap || {})[warehouse.name]) || 0)}</td>`).join("")}<td>${Number(row.saleQty || 0)}</td><td>${Number(row.complimentaryQty || 0)}</td><td>${Number(row.unsettledQty || 0)}</td><td><strong>${Number(row.closingQty || 0)}</strong></td>`
+          ? `<td>${Number(row.purchaseInQty || 0)}</td><td>${Number(row.transferOutQty || 0)}</td><td>${Number(row.unsettledQty || 0)}</td><td>${Number(row.saleQty || 0)}</td><td><strong>${Number(row.closingQty || 0)}</strong></td>`
           : `<td>${Number(row.transferInQty || 0)}</td><td>${Number(row.saleQty || 0)}</td><td><strong>${Number(row.closingQty || 0)}</strong></td>`}
       </tr>
     `;
@@ -3021,38 +3007,32 @@
 
   function buildWarehouseReportExcel(report) {
     const isMain = report.reportMode === "main";
-    const transferTargets = isMain
-      ? state.warehouses.filter((warehouse) =>
-          warehouse.warehouseId !== report.warehouseId &&
-          warehouse.active &&
-          String(warehouse.type || "").toLowerCase() !== "temporary" &&
-          (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0)
-      : [];
-    const headerCells = ["ERP Code", "Item", "Opening"];
+    const headerCells = ["ERP Code", "Item", "Category", "Opening"];
     const sortedRows = report.rows.slice().sort((a, b) => {
       const groupA = String(a.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
       const groupB = String(b.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
       return groupA - groupB || String(a.bookName || "").localeCompare(String(b.bookName || "")) || String(a.bookId || "").localeCompare(String(b.bookId || ""));
     });
-    headerCells.splice(2, 0, "Category");
     if (isMain) {
-      transferTargets.forEach((warehouse) => headerCells.push(`To ${warehouse.name}`));
-      headerCells.push("Sales", "Complimentary", "Unsettled", "Closing");
+      headerCells.push("Purchase-In", "Transfer-Out", "Unsettled", "Sales", "Closing");
     } else {
       headerCells.push("Transfer In", "Sales", "Closing");
-      report.dayColumns.forEach((day) => headerCells.push(day));
     }
-    const worthTotals = buildWarehouseWorthTotals(report, transferTargets);
-    const worthRow = buildWarehouseWorthExcelRow(report, transferTargets, worthTotals);
+    const worthTotals = buildWarehouseWorthTotals(report);
+    const worthRow = buildWarehouseWorthExcelRow(report, worthTotals);
 
     const rows = sortedRows.map((row) => {
       const cells = [row.bookId || "", row.bookName || "", getItemGroupLabel(row.itemGroup), Number(row.openingQty || 0)];
       if (isMain) {
-        transferTargets.forEach((warehouse) => cells.push(Number(((row.transferMap || {})[warehouse.name]) || 0)));
-        cells.push(Number(row.saleQty || 0), Number(row.complimentaryQty || 0), Number(row.unsettledQty || 0), Number(row.closingQty || 0));
+        cells.push(
+          Number(row.purchaseInQty || 0),
+          Number(row.transferOutQty || 0),
+          Number(row.unsettledQty || 0),
+          Number(row.saleQty || 0),
+          Number(row.closingQty || 0)
+        );
       } else {
         cells.push(Number(row.transferInQty || 0), Number(row.saleQty || 0), Number(row.closingQty || 0));
-        report.dayColumns.forEach((day) => cells.push(Number((row.daySalesMap && row.daySalesMap[day]) || 0)));
       }
       return `<tr>${cells.map((cell) => `<td>${escapeHtml(String(cell))}</td>`).join("")}</tr>`;
     }).join("");
@@ -3199,12 +3179,12 @@
         bookType: item.bookType || item["Book Type"] || "",
         itemGroup: item.itemGroup || item["Item Group"] || "BOOK",
         openingQty: Number(item.openingQty || item["Opening Qty"] || 0),
+        purchaseInQty: Number(item.purchaseInQty || item["Purchase In Qty"] || 0),
         issueQty: Number(item.issueQty || item["Issue Qty"] || 0),
         returnQty: Number(item.returnQty || item["Return Qty"] || 0),
         transferInQty: Number(item.transferInQty || item["Transfer In Qty"] || 0),
         transferOutQty: Number(item.transferOutQty || item["Transfer Out Qty"] || 0),
         saleQty: Number(item.saleQty || item["Sale Qty"] || 0),
-        complimentaryQty: Number(item.complimentaryQty || item["Complimentary Qty"] || 0),
         unsettledQty: Number(item.unsettledQty || item["Unsettled Qty"] || 0),
         closingQty: Number(item.closingQty || item["Closing Qty"] || 0),
         transferArray: (item.transferArray || item["Transfer Array"] || []).map((transfer) => ({
@@ -3232,6 +3212,11 @@
   function getWarehouseName(warehouseId) {
     const warehouse = state.warehouses.find((item) => item.warehouseId === warehouseId || item.rowId === warehouseId);
     return warehouse ? warehouse.name : warehouseId || "-";
+  }
+
+  function isMainWarehouseName(name) {
+    const value = String(name || "").toLowerCase();
+    return value.includes("gmb") || value.includes("gambhiram");
   }
 
   function getDevoteeName(devoteeId) {
@@ -4149,15 +4134,15 @@
     return toneByType[documentType] || "warn";
   }
 
-  function buildWarehouseWorthTotals(report, transferTargets) {
+  function buildWarehouseWorthTotals(report) {
     const totals = {
       opening: 0,
+      purchaseIn: 0,
+      transferOut: 0,
       sales: 0,
-      complimentary: 0,
       unsettled: 0,
       closing: 0,
       transferIn: 0,
-      transferMap: {},
       dayMap: {}
     };
 
@@ -4168,15 +4153,12 @@
     report.rows.forEach((row) => {
       const price = getBookSalePrice(row.bookId);
       totals.opening += Number(row.openingQty || 0) * price;
+      totals.purchaseIn += Number(row.purchaseInQty || 0) * price;
+      totals.transferOut += Number(row.transferOutQty || 0) * price;
       totals.sales += Number(row.saleQty || 0) * price;
-      totals.complimentary += Number(row.complimentaryQty || 0) * price;
       totals.unsettled += Number(row.unsettledQty || 0) * price;
       totals.closing += Number(row.closingQty || 0) * price;
-      if (report.reportMode === "main") {
-        transferTargets.forEach((warehouse) => {
-          totals.transferMap[warehouse.name] = (totals.transferMap[warehouse.name] || 0) + Number(((row.transferMap || {})[warehouse.name]) || 0) * price;
-        });
-      } else {
+      if (report.reportMode !== "main") {
         totals.transferIn += Number(row.transferInQty || 0) * price;
       }
       report.dayColumns.forEach((day) => {
@@ -4187,22 +4169,19 @@
     return totals;
   }
 
-  function buildWarehouseWorthRow(report, transferTargets, totals) {
+  function buildWarehouseWorthRow(report, totals) {
     const isMain = report.reportMode === "main";
     const cells = isMain
-      ? `${transferTargets.map((warehouse) => `<td>${money(totals.transferMap[warehouse.name] || 0)}</td>`).join("")}<td>${money(totals.sales)}</td><td>${money(totals.complimentary)}</td><td>${money(totals.unsettled)}</td><td><strong>${money(totals.closing)}</strong></td>`
+      ? `<td>${money(totals.purchaseIn)}</td><td>${money(totals.transferOut)}</td><td>${money(totals.unsettled)}</td><td>${money(totals.sales)}</td><td><strong>${money(totals.closing)}</strong></td>`
       : `<td>${money(totals.transferIn)}</td><td>${money(totals.sales)}</td><td><strong>${money(totals.closing)}</strong></td>`;
     return `<tr class="worth-row"><td colspan="3"><strong>Worth</strong></td><td>${money(totals.opening)}</td>${cells}</tr>`;
   }
 
-  function buildWarehouseWorthExcelRow(report, transferTargets, totals) {
+  function buildWarehouseWorthExcelRow(report, totals) {
     const isMain = report.reportMode === "main";
-    const dayCells = !isMain
-      ? report.dayColumns.map((day) => `<td>${escapeHtml(String((totals.dayMap || {})[day] || 0))}</td>`).join("")
-      : "";
     const cells = isMain
-      ? `${transferTargets.map((warehouse) => `<td>${escapeHtml(String(totals.transferMap[warehouse.name] || 0))}</td>`).join("")}<td>${escapeHtml(String(totals.sales || 0))}</td><td>${escapeHtml(String(totals.complimentary || 0))}</td><td>${escapeHtml(String(totals.unsettled || 0))}</td><td>${escapeHtml(String(totals.closing || 0))}</td>`
-      : `<td>${escapeHtml(String(totals.transferIn || 0))}</td><td>${escapeHtml(String(totals.sales || 0))}</td><td>${escapeHtml(String(totals.closing || 0))}</td>${dayCells}`;
+      ? `<td>${escapeHtml(String(totals.purchaseIn || 0))}</td><td>${escapeHtml(String(totals.transferOut || 0))}</td><td>${escapeHtml(String(totals.unsettled || 0))}</td><td>${escapeHtml(String(totals.sales || 0))}</td><td>${escapeHtml(String(totals.closing || 0))}</td>`
+      : `<td>${escapeHtml(String(totals.transferIn || 0))}</td><td>${escapeHtml(String(totals.sales || 0))}</td><td>${escapeHtml(String(totals.closing || 0))}</td>`;
     return `<tr><td colspan="3"><strong>Worth</strong></td><td>${escapeHtml(String(totals.opening || 0))}</td>${cells}</tr>`;
   }
 
@@ -4244,7 +4223,7 @@
 
   function openSaleForm() {
     void ensureDocumentItemMastersLoaded().catch(() => {});
-    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0);
+    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && !isMainWarehouseName(warehouse.name));
     state.saleDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
       warehouseId: activeWarehouses[0]?.warehouseId || "",
@@ -4265,7 +4244,7 @@
     void ensureDocumentItemMastersLoaded().catch(() => {});
     state.openingDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
-      toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
+      toWarehouseId: state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || "",
       notes: "Opening stock as on date",
       itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
@@ -4282,7 +4261,7 @@
     void ensureDocumentItemMastersLoaded().catch(() => {});
     state.purchaseDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
-      toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || state.warehouses[0]?.warehouseId || "",
+      toWarehouseId: state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || state.warehouses[0]?.warehouseId || "",
       notes: "",
       itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
@@ -5087,7 +5066,7 @@
       state.openingBookQueries = bookRows.map(() => "");
       state.openingDraft = {
         documentDate: state.openingDraft.documentDate || new Date().toISOString().slice(0, 10),
-        toWarehouseId: state.openingDraft.toWarehouseId || state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
+        toWarehouseId: state.openingDraft.toWarehouseId || state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || "",
         notes: state.openingDraft.notes || "Opening stock as on date"
       };
       renderOpeningStockModal();
@@ -5182,7 +5161,7 @@
 
       const payload = {
         documentDate: (formData && formData.get("documentDate")) || state.unsettledDraft.documentDate || new Date().toISOString().slice(0, 10),
-        fromWarehouseId: (formData && (formData.get("fromWarehouseId") || formData.get("toWarehouseId"))) || state.unsettledDraft.fromWarehouseId || state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
+        fromWarehouseId: (formData && (formData.get("fromWarehouseId") || formData.get("toWarehouseId"))) || state.unsettledDraft.fromWarehouseId || state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || "",
         notes: (formData && formData.get("notes")) || state.unsettledDraft.notes || "Legacy unsettled issue opening",
         entries
       };
@@ -5211,7 +5190,7 @@
     void ensureDocumentItemMastersLoaded().catch(() => {});
     state.unsettledDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
-      fromWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
+      fromWarehouseId: state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || "",
       activityId: "",
       notes: "Legacy unsettled issue opening",
       itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
@@ -5397,7 +5376,7 @@
   function renderSaleModal() {
     const itemGroup = normalizeItemGroup(state.saleDraft.itemGroup || "BOOK");
     const activeBooks = getDocumentItemsForGroup(itemGroup);
-    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && (warehouse.name || "").toLowerCase().indexOf("gmb") !== 0);
+    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && !isMainWarehouseName(warehouse.name));
     const draft = state.saleDraft;
     const warehouseId = draft.warehouseId || "";
     const booksWithStock = warehouseId
@@ -5709,7 +5688,7 @@
     const activityId = getIssuedActivityOptions()[0]?.activityId || "";
     state.receiveDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
-      toWarehouseId: state.warehouses.find((warehouse) => warehouse.name === "GMB Main")?.warehouseId || "",
+      toWarehouseId: state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || "",
       activityId,
       notes: "",
       returnSettlement: "Settled",
