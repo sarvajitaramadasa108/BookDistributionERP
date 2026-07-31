@@ -106,8 +106,7 @@ function resolveItemImageUrl(row, itemGroupOverride = "") {
   const group = String(itemGroupOverride || row.item_group || "BOOK").trim().toUpperCase();
   const mapped = lookupCatalogImageUrl(group, row.erp_code, row.item_name);
   if (mapped) return mapped;
-  if (group === "PARAPHERNALIA") return "";
-  return row.image_url || row.imageUrl || "";
+  return "";
 }
 
 async function readBody(request) {
