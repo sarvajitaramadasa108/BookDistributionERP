@@ -12,6 +12,7 @@
     itemGroup: "BOOK",
     catalog: [],
     search: "",
+    devotionalCategory: "ALL",
     cart: [],
     name: "",
     mobile: "",
@@ -80,10 +81,15 @@
   function getItems() {
     const query = normalizeText(state.search);
     return (state.catalog || []).filter((item) => {
+      if (state.itemGroup === "PARAPHERNALIA" && state.devotionalCategory !== "ALL") {
+        const itemCategory = String(item.category || item.bookType || "").trim();
+        if (itemCategory !== state.devotionalCategory) return false;
+      }
       if (!query) return true;
       const haystack = [
         item.erpCode,
         item.name,
+        item.category,
         item.bookType,
         item.salePrice,
         item.availableQty
@@ -108,6 +114,7 @@
   function setCategory(group) {
     state.itemGroup = group === "PARAPHERNALIA" ? "PARAPHERNALIA" : "BOOK";
     state.search = "";
+    state.devotionalCategory = "ALL";
     state.catalog = [];
     state.cart = [];
     state.submitted = false;
@@ -244,9 +251,20 @@
     `;
   }
 
+  function getDevotionalCategories() {
+    return [...new Set(
+      (state.catalog || [])
+        .map((item) => String(item.category || item.bookType || "").trim())
+        .filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b));
+  }
+
   function renderCatalogCard(item) {
     const imageUrl = normalizeDriveImageUrl(item.imageUrl);
     const qty = Number(item.availableQty || 0);
+    const metaParts = [];
+    if (item.erpCode) metaParts.push(item.erpCode);
+    if (item.category || item.bookType) metaParts.push(item.category || item.bookType);
     return `
       <article class="catalog-card ${qty > 0 ? "" : "sold-out"}">
         <div class="catalog-image">
@@ -257,7 +275,7 @@
         </div>
         <div class="catalog-body">
           <div class="catalog-name">${escapeHtml(item.name || "-")}</div>
-          <div class="catalog-meta">${escapeHtml(item.erpCode || "-")} &middot; ${escapeHtml(String(item.bookType || ""))}</div>
+          <div class="catalog-meta">${escapeHtml(metaParts.join(" · "))}</div>
           <div class="catalog-stats">
             <span>${money(Number(item.salePrice || 0))}</span>
             <span>${qty} in stock</span>
@@ -315,6 +333,10 @@
     }
 
     const items = getItems();
+    const devotionalCategories = getDevotionalCategories();
+    const searchPlaceholder = state.itemGroup === "PARAPHERNALIA"
+      ? "Search item name or category"
+      : "Search code, name, or type";
     return `
       ${renderHeader()}
       <section class="request-layout">
@@ -326,8 +348,17 @@
           <div class="toolbar">
             <label class="field compact-field">
               <span>Search</span>
-              <input type="search" value="${escapeAttr(state.search)}" placeholder="Search code, name, or type" oninput="window.requestApp.setField('search', this.value)">
+              <input type="search" value="${escapeAttr(state.search)}" placeholder="${escapeAttr(searchPlaceholder)}" oninput="window.requestApp.setField('search', this.value)">
             </label>
+            ${state.itemGroup === "PARAPHERNALIA" ? `
+              <label class="field compact-field">
+                <span>Category</span>
+                <select onchange="window.requestApp.setField('devotionalCategory', this.value)">
+                  <option value="ALL"${state.devotionalCategory === "ALL" ? " selected" : ""}>All categories</option>
+                  ${devotionalCategories.map((category) => `<option value="${escapeAttr(category)}"${state.devotionalCategory === category ? " selected" : ""}>${escapeHtml(category)}</option>`).join("")}
+                </select>
+              </label>
+            ` : ""}
           </div>
           ${renderCatalogList(items)}
         </section>

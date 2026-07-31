@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { BOOK_IMAGE_MAP } from "./book-image-map.js";
+import { DEVOTIONAL_IMAGE_MAP } from "./devotional-image-map.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -81,9 +82,11 @@ function normalizeCatalogKey(value) {
     .toLowerCase();
 }
 
-function lookupCatalogImageUrl(erpCode, itemName) {
+function lookupCatalogImageUrl(itemGroup, erpCode, itemName) {
+  const group = String(itemGroup || "BOOK").trim().toUpperCase();
+  const map = group === "PARAPHERNALIA" ? DEVOTIONAL_IMAGE_MAP : BOOK_IMAGE_MAP;
   const code = String(erpCode || "").trim();
-  if (code && BOOK_IMAGE_MAP[code]) return BOOK_IMAGE_MAP[code];
+  if (code && map[code]) return map[code];
   const raw = String(itemName || "").trim();
   if (!raw) return "";
   const candidates = [
@@ -93,7 +96,8 @@ function lookupCatalogImageUrl(erpCode, itemName) {
   ];
   for (const candidate of candidates) {
     const key = normalizeCatalogKey(candidate);
-    if (key && BOOK_IMAGE_MAP[key]) return BOOK_IMAGE_MAP[key];
+    if (candidate && map[candidate]) return map[candidate];
+    if (key && map[key]) return map[key];
   }
   return "";
 }
@@ -192,7 +196,7 @@ function mapItem(row) {
     mrp: Number(row.sale_price || 0),
     purchasePrice: Number(row.purchase_price || 0),
     distributorPrice: Number(row.purchase_price || 0),
-    imageUrl: lookupCatalogImageUrl(row.erp_code, row.item_name) || row.image_url || row.imageUrl || "",
+    imageUrl: lookupCatalogImageUrl(row.item_group, row.erp_code, row.item_name) || row.image_url || row.imageUrl || "",
     active: row.active
   };
 }
@@ -1374,9 +1378,10 @@ async function catalogRequestItems(supabase, payload) {
       name: row.item_name,
       bookName: row.item_name,
       bookType: row.item_type,
+      category: row.item_type,
       salePrice: Number(row.sale_price || 0),
       purchasePrice: Number(row.purchase_price || 0),
-      imageUrl: lookupCatalogImageUrl(row.erp_code, row.item_name) || row.image_url || "",
+      imageUrl: lookupCatalogImageUrl(itemGroup, row.erp_code, row.item_name) || row.image_url || "",
       active: row.active,
       availableQty: Number(stockByBook.get(String(row.erp_code || "")) || 0)
     }))
