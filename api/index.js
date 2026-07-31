@@ -102,6 +102,14 @@ function lookupCatalogImageUrl(itemGroup, erpCode, itemName) {
   return "";
 }
 
+function resolveItemImageUrl(row, itemGroupOverride = "") {
+  const group = String(itemGroupOverride || row.item_group || "BOOK").trim().toUpperCase();
+  const mapped = lookupCatalogImageUrl(group, row.erp_code, row.item_name);
+  if (mapped) return mapped;
+  if (group === "PARAPHERNALIA") return "";
+  return row.image_url || row.imageUrl || "";
+}
+
 async function readBody(request) {
   try {
     return await request.json();
@@ -196,7 +204,7 @@ function mapItem(row) {
     mrp: Number(row.sale_price || 0),
     purchasePrice: Number(row.purchase_price || 0),
     distributorPrice: Number(row.purchase_price || 0),
-    imageUrl: lookupCatalogImageUrl(row.item_group, row.erp_code, row.item_name) || row.image_url || row.imageUrl || "",
+    imageUrl: resolveItemImageUrl(row),
     active: row.active
   };
 }
@@ -1381,7 +1389,7 @@ async function catalogRequestItems(supabase, payload) {
       category: row.item_type,
       salePrice: Number(row.sale_price || 0),
       purchasePrice: Number(row.purchase_price || 0),
-      imageUrl: lookupCatalogImageUrl(itemGroup, row.erp_code, row.item_name) || row.image_url || "",
+      imageUrl: resolveItemImageUrl(row, itemGroup),
       active: row.active,
       availableQty: Number(stockByBook.get(String(row.erp_code || "")) || 0)
     }))
