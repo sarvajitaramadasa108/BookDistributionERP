@@ -25,6 +25,26 @@
       "dest": "/frontend/request.html"
     },
     {
+      "src": "/request/books",
+      "dest": "/frontend/request.html"
+    },
+    {
+      "src": "/request/books/",
+      "dest": "/frontend/request.html"
+    },
+    {
+      "src": "/request/devotional",
+      "dest": "/frontend/request.html"
+    },
+    {
+      "src": "/request/devotional/",
+      "dest": "/frontend/request.html"
+    },
+    {
+      "src": "/request/devotional/(.*)",
+      "dest": "/frontend/request.html"
+    },
+    {
       "src": "/request.html",
       "dest": "/frontend/request.html"
     },

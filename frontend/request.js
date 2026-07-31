@@ -3,16 +3,39 @@
   const overlay = document.getElementById("loadingOverlay");
   const toastStack = document.getElementById("toastStack");
   const params = new URLSearchParams(window.location.search);
+  const pathSegments = window.location.pathname.split("/").filter(Boolean);
+  const requestPathIndex = pathSegments.findIndex((segment) => segment === "request");
+  const requestPathGroup = requestPathIndex >= 0 ? String(pathSegments[requestPathIndex + 1] || "").trim().toLowerCase() : "";
+  const requestPathCategory = requestPathIndex >= 0 ? String(pathSegments[requestPathIndex + 2] || "").trim() : "";
+
+  function slugify(value) {
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  function resolveInitialGroup() {
+    const queryGroup = String(params.get("group") || "").trim().toUpperCase();
+    if (queryGroup === "PARAPHERNALIA" || requestPathGroup === "devotional") return "PARAPHERNALIA";
+    if (queryGroup === "BOOK" || requestPathGroup === "books") return "BOOK";
+    return "BOOK";
+  }
+
+  function resolveInitialCategory() {
+    return decodeURIComponent(String(params.get("category") || requestPathCategory || "").trim());
+  }
 
   const state = {
     language: "English",
     warehouseSource: String(params.get("warehouse") || params.get("warehouseId") || params.get("utm_source") || "").trim(),
     warehouseId: "",
     warehouseName: "",
-    itemGroup: "BOOK",
+    itemGroup: resolveInitialGroup(),
     catalog: [],
     search: "",
-    devotionalCategory: "ALL",
+    devotionalCategory: resolveInitialCategory() || "ALL",
     cart: [],
     name: "",
     mobile: "",
@@ -21,6 +44,19 @@
     submitted: false,
     successMessage: ""
   };
+
+  function syncRequestUrl() {
+    const nextQuery = new URLSearchParams();
+    if (state.warehouseSource) nextQuery.set("warehouse", state.warehouseSource);
+    else if (state.warehouseId) nextQuery.set("warehouse", state.warehouseId);
+    const path = state.itemGroup === "PARAPHERNALIA"
+      ? `/request/devotional${state.devotionalCategory !== "ALL" ? `/${slugify(state.devotionalCategory)}` : ""}`
+      : "/request/books";
+    const nextUrl = `${path}${nextQuery.toString() ? `?${nextQuery.toString()}` : ""}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+      window.history.replaceState({}, "", nextUrl);
+    }
+  }
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -259,6 +295,16 @@
     )].sort((a, b) => a.localeCompare(b));
   }
 
+  function normalizeCategorySelection(categories, value) {
+    const raw = String(value || "").trim();
+    if (!raw || raw.toUpperCase() === "ALL") return "ALL";
+    const direct = categories.find((category) => category === raw);
+    if (direct) return direct;
+    const slug = slugify(raw);
+    const matched = categories.find((category) => slugify(category) === slug);
+    return matched || "ALL";
+  }
+
   function renderCatalogCard(item) {
     const imageUrl = normalizeDriveImageUrl(item.imageUrl);
     const qty = Number(item.availableQty || 0);
@@ -398,6 +444,7 @@
   }
 
   function render() {
+    syncRequestUrl();
     root.innerHTML = renderPage();
     const form = document.getElementById("requestForm");
     if (form) {
@@ -423,6 +470,11 @@
         itemGroup: state.itemGroup
       });
       state.catalog = Array.isArray(catalog) ? catalog : [];
+      if (state.itemGroup === "PARAPHERNALIA") {
+        state.devotionalCategory = normalizeCategorySelection(getDevotionalCategories(), state.devotionalCategory);
+      } else {
+        state.devotionalCategory = "ALL";
+      }
       render();
     } catch (error) {
       root.innerHTML = `
