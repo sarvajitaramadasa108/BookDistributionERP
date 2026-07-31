@@ -1,5 +1,6 @@
 (function () {
   const root = document.getElementById("requestRoot");
+  const modalRoot = document.getElementById("modalRoot");
   const overlay = document.getElementById("loadingOverlay");
   const toastStack = document.getElementById("toastStack");
   const params = new URLSearchParams(window.location.search);
@@ -42,7 +43,8 @@
     notes: "",
     submitting: false,
     submitted: false,
-    successMessage: ""
+    successMessage: "",
+    imageViewer: null
   };
 
   function syncRequestUrl() {
@@ -73,6 +75,44 @@
 
   function setLoading(value) {
     overlay.classList.toggle("hidden", !value);
+  }
+
+  function openImageViewer(imageUrl, itemName) {
+    const url = normalizeDriveImageUrl(imageUrl);
+    if (!url) return;
+    state.imageViewer = {
+      imageUrl: url,
+      itemName: String(itemName || "Catalog image").trim()
+    };
+    renderImageViewer();
+  }
+
+  function openImageViewerByCode(erpCode) {
+    const item = (state.catalog || []).find((row) => String(row.erpCode || "") === String(erpCode || ""));
+    if (!item) return;
+    openImageViewer(item.imageUrl, item.name);
+  }
+
+  function closeImageViewer() {
+    state.imageViewer = null;
+    renderImageViewer();
+  }
+
+  function renderImageViewer() {
+    if (!modalRoot) return;
+    if (!state.imageViewer || !state.imageViewer.imageUrl) {
+      modalRoot.innerHTML = "";
+      return;
+    }
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop image-viewer-backdrop" onclick="window.requestApp.closeImageViewer()"></div>
+      <section class="image-viewer-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(state.imageViewer.itemName)}">
+        <button class="image-viewer-close" type="button" onclick="window.requestApp.closeImageViewer()" aria-label="Close image">Close</button>
+        <div class="image-viewer-frame">
+          <img src="${escapeAttr(state.imageViewer.imageUrl)}" alt="${escapeAttr(state.imageViewer.itemName)}">
+        </div>
+      </section>
+    `;
   }
 
   function showToast(message) {
@@ -314,7 +354,11 @@
     return `
       <article class="catalog-card ${qty > 0 ? "" : "sold-out"}">
         <div class="catalog-image">
-          ${imageUrl ? `<img src="${escapeAttr(imageUrl)}" alt="${escapeAttr(item.name)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling?.classList.remove('hidden')">` : ""}
+          ${imageUrl ? `
+            <button class="catalog-image-button" type="button" onclick="window.requestApp.openImageViewerByCode('${escapeAttr(item.erpCode)}')" aria-label="View ${escapeAttr(item.name)} image">
+              <img src="${escapeAttr(imageUrl)}" alt="${escapeAttr(item.name)}" loading="lazy" onerror="this.style.display='none';this.parentElement.nextElementSibling?.classList.remove('hidden')">
+            </button>
+          ` : ""}
           <div class="catalog-fallback ${imageUrl ? "hidden" : ""}">
             ${escapeHtml((item.name || "Item").split(" ").slice(0, 2).map((part) => part[0] || "").join("").toUpperCase())}
           </div>
@@ -446,6 +490,7 @@
   function render() {
     syncRequestUrl();
     root.innerHTML = renderPage();
+    renderImageViewer();
     const form = document.getElementById("requestForm");
     if (form) {
       form.addEventListener("submit", submitRequest);
@@ -539,6 +584,9 @@
     },
     updateCartQty,
     removeCartLine,
+    openImageViewer,
+    openImageViewerByCode,
+    closeImageViewer,
     resetForm() {
       state.search = "";
       state.cart = [];
@@ -550,6 +598,12 @@
       render();
     }
   };
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.imageViewer) {
+      closeImageViewer();
+    }
+  });
 
   loadCatalog();
 })();
