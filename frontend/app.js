@@ -77,6 +77,7 @@
     pendingSettlementActivityId: "",
     pendingSettlementDetails: null,
     documentEditDetail: null,
+    stockEditWarehouseId: "",
     sidebarCollapsed: false,
     reportWarehouseId: "",
     reportMonth: new Date().toISOString().slice(0, 7),
@@ -692,6 +693,7 @@
                     <span>Month</span>
                     <input type="month" value="${escapeAttribute(state.reportMonth)}" onchange="window.erpApp.setReportMonth(this.value)">
                   </label>
+                  ${isMainAdmin() ? `<button class="button secondary" type="button" onclick="window.erpApp.openCurrentStockEditForm()">Edit Current Stock</button>` : ""}
                   <button class="button" type="button" onclick="window.erpApp.loadWarehouseReport()">Get Report</button>
                   <button class="button secondary" type="button" onclick="window.erpApp.loadWarehouseDayWiseSales()">Get Day Wise Sales</button>
                   <button class="button secondary" type="button" onclick="window.erpApp.downloadWarehouseReport()">Download Excel</button>
@@ -1769,6 +1771,159 @@
     }
   }
 
+  async function openCurrentStockEditForm() {
+    if (!isMainAdmin()) {
+      showToast("Only admin can edit current stock");
+      return;
+    }
+    const warehouseId = String(state.reportWarehouseId || "").trim();
+    if (!warehouseId) {
+      showToast("Select a warehouse first");
+      return;
+    }
+    setLoading(true, "Loading current stock...");
+    try {
+      await ensureCurrentStockLoaded();
+      state.stockEditWarehouseId = warehouseId;
+      renderCurrentStockEditModal();
+    } catch (error) {
+      showToast(error.message || "Could not load current stock");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function renderCurrentStockEditModal() {
+    const warehouseId = String(state.stockEditWarehouseId || state.reportWarehouseId || "").trim();
+    const rows = state.currentStock
+      .filter((row) => String(row.warehouseId || "").trim() === warehouseId)
+      .sort((a, b) => getBookName(a.bookId).localeCompare(getBookName(b.bookId)) || String(a.bookId || "").localeCompare(String(b.bookId || "")));
+    const modalRows = rows.length ? rows : [{ warehouseId, bookId: "", quantity: "" }];
+
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+      <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="currentStockEditTitle">
+        <div class="modal-header">
+          <h2 id="currentStockEditTitle">Edit Current Stock - ${escapeHtml(getWarehouseName(warehouseId))}</h2>
+          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+        </div>
+        <form class="form-grid" id="currentStockEditForm">
+          <input type="hidden" name="warehouseId" value="${escapeAttribute(warehouseId)}">
+          <div class="wide-field metric-note">Only admin can change ERP code or quantity here. Set quantity to 0 if you want to clear a stock line.</div>
+          <div class="wide-field row-actions" style="margin-bottom:12px;">
+            <button class="small-button" type="button" onclick="window.erpApp.addCurrentStockEditLine()">Add Line</button>
+          </div>
+          <div class="wide-field table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ERP Code</th>
+                  <th>Item Name</th>
+                  <th>Category</th>
+                  <th>Qty</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="currentStockEditRows">
+                ${modalRows.map((row, index) => currentStockEditRowMarkup(row, index)).join("")}
+              </tbody>
+            </table>
+          </div>
+          <div class="form-actions wide-field">
+            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+            <button class="button" type="submit">Save Current Stock</button>
+          </div>
+        </form>
+      </section>
+    `;
+
+    document.getElementById("currentStockEditForm").addEventListener("submit", saveCurrentStockEdits);
+  }
+
+  function currentStockEditRowMarkup(row, index) {
+    const item = getBook(row.bookId);
+    return `
+      <tr data-stock-edit-row="${index}">
+        <td>
+          <input type="hidden" data-field="originalBookId" value="${escapeAttribute(row.bookId || "")}">
+          <input data-field="bookId" type="text" value="${escapeAttribute(row.bookId || "")}" placeholder="ERP code">
+        </td>
+        <td>${escapeHtml(getBookName(row.bookId) || "-")}</td>
+        <td>${escapeHtml(getItemGroupLabel(item.itemGroup || item["Item Group"] || "BOOK"))}</td>
+        <td><input data-field="quantity" type="number" min="0" step="1" value="${escapeAttribute(row.quantity === "" ? "" : Number(row.quantity || 0))}" placeholder="Qty"></td>
+        <td><button class="small-button danger" type="button" onclick="window.erpApp.removeCurrentStockEditLine(${index})">Remove</button></td>
+      </tr>
+    `;
+  }
+
+  function addCurrentStockEditLine() {
+    const tbody = document.getElementById("currentStockEditRows");
+    if (!tbody) return;
+    const index = tbody.querySelectorAll("tr").length;
+    tbody.insertAdjacentHTML("beforeend", currentStockEditRowMarkup({ bookId: "", quantity: "" }, index));
+  }
+
+  function removeCurrentStockEditLine(index) {
+    const row = document.querySelector('[data-stock-edit-row="' + index + '"]');
+    if (!row) return;
+    const originalInput = row.querySelector('[data-field="originalBookId"]');
+    if (originalInput && originalInput.value) {
+      const erpInput = row.querySelector('[data-field="bookId"]');
+      const qtyInput = row.querySelector('[data-field="quantity"]');
+      if (erpInput) erpInput.value = "";
+      if (qtyInput) qtyInput.value = "0";
+      row.style.display = "none";
+      return;
+    }
+    row.remove();
+  }
+
+  async function saveCurrentStockEdits(event) {
+    event.preventDefault();
+    if (!isMainAdmin()) {
+      showToast("Only admin can edit current stock");
+      return;
+    }
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const warehouseId = String(data.get("warehouseId") || "").trim();
+    const rows = Array.from(form.querySelectorAll("#currentStockEditRows tr")).map((row) => {
+      const originalBookId = String(row.querySelector('[data-field="originalBookId"]')?.value || "").trim();
+      const bookId = String(row.querySelector('[data-field="bookId"]')?.value || "").trim();
+      const quantityRaw = row.querySelector('[data-field="quantity"]')?.value;
+      return {
+        originalBookId,
+        bookId,
+        quantity: quantityRaw === "" ? 0 : Number(quantityRaw || 0)
+      };
+    }).filter((row) => row.originalBookId || row.bookId);
+
+    if (!rows.length) {
+      showToast("Add at least one stock row");
+      return;
+    }
+
+    setLoading(true, "Saving current stock...");
+    try {
+      await window.erpApi.request("stock.adminUpdate", {
+        warehouseId,
+        rows,
+        notes: "Admin current stock update"
+      });
+      invalidateCurrentStockCache();
+      await ensureCurrentStockLoaded();
+      if (state.view === "reports") {
+        await refreshReportsData();
+      }
+      closeModal();
+      showToast("Current stock updated");
+    } catch (error) {
+      showToast(error.message || "Could not save current stock");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function renderDocumentEditModal() {
     const detail = state.documentEditDetail;
     if (!detail) return;
@@ -2282,6 +2437,7 @@
       state.documentPdfPreviewUrl = "";
     }
     state.documentEditDetail = null;
+    state.stockEditWarehouseId = "";
     modalRoot.innerHTML = "";
   }
 
@@ -6988,7 +7144,11 @@
     savePendingSettlementAdjustment,
     savePendingSettlementBookAdjustments,
     openDocumentEditForm,
+    openCurrentStockEditForm,
+    addCurrentStockEditLine,
+    removeCurrentStockEditLine,
     saveDocumentEdits,
+    saveCurrentStockEdits,
     settleActivity,
     openOpeningStockForm,
     openPurchaseForm,

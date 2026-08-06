@@ -1416,7 +1416,10 @@ async function stockCurrent(supabase) {
     prev.quantity += Number(row.quantity_in || 0) - Number(row.quantity_out || 0);
     index.set(key, prev);
   }
-  const items = await listTable(supabase, "items", mapItem);
+  const [items, warehouses] = await Promise.all([
+    listTable(supabase, "items", mapItem),
+    listTable(supabase, "warehouses", mapWarehouse)
+  ]);
   const itemsById = Object.fromEntries(
     items.flatMap((item) => {
       const pairs = [];
@@ -1426,11 +1429,111 @@ async function stockCurrent(supabase) {
       return pairs;
     })
   );
+  const warehousesById = Object.fromEntries(
+    warehouses.flatMap((warehouse) => {
+      const pairs = [];
+      if (warehouse.rowId) pairs.push([String(warehouse.rowId), warehouse]);
+      if (warehouse.warehouseId) pairs.push([String(warehouse.warehouseId), warehouse]);
+      return pairs;
+    })
+  );
   return Array.from(index.values()).map((row) => ({
-    warehouseId: row.warehouseId,
+    warehouseId: warehousesById[String(row.warehouseId || "")]?.warehouseId || row.warehouseId,
     bookId: itemsById[String(row.bookId || "")]?.erpCode || row.bookId,
     quantity: row.quantity
   }));
+}
+
+async function adminUpdateCurrentStock(supabase, payload, currentUser) {
+  requireAdminUser(currentUser);
+  const warehouseRow = await resolveWarehouseRow(supabase, payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
+  if (!warehouseRow) throw new Error("Warehouse is required");
+  const inputRows = Array.isArray(payload.rows) ? payload.rows : [];
+  if (!inputRows.length) throw new Error("At least one stock row is required");
+
+  const currentRows = await stockCurrent(supabase);
+  const currentMap = new Map(
+    currentRows
+      .filter((row) => String(row.warehouseId || "") === String(warehouseRow.warehouse_code || ""))
+      .map((row) => [String(row.bookId || "").trim(), Number(row.quantity || 0)])
+  );
+
+  const desiredMap = new Map();
+  const addDesired = (erpCode, quantityDelta) => {
+    const code = String(erpCode || "").trim();
+    if (!code) return;
+    desiredMap.set(code, Number(desiredMap.get(code) || 0) + Number(quantityDelta || 0));
+  };
+
+  for (const row of inputRows) {
+    const originalCode = String(row.originalBookId || row.originalErpCode || "").trim();
+    const nextCode = String(row.bookId || row.erpCode || "").trim();
+    const nextQty = Number(row.quantity || 0);
+    if (!nextCode && !originalCode) continue;
+    if (nextCode && nextQty < 0) throw new Error(`Quantity cannot be negative for ${nextCode}`);
+    if (originalCode && !nextCode) {
+      addDesired(originalCode, 0);
+      continue;
+    }
+    addDesired(nextCode, nextQty);
+    if (originalCode && originalCode !== nextCode && !desiredMap.has(originalCode)) {
+      addDesired(originalCode, 0);
+    }
+  }
+
+  const outLines = [];
+  const inLines = [];
+  for (const [erpCode, desiredQtyRaw] of desiredMap.entries()) {
+    const desiredQty = Number(desiredQtyRaw || 0);
+    const currentQty = Number(currentMap.get(erpCode) || 0);
+    const delta = desiredQty - currentQty;
+    if (!delta) continue;
+    const item = await findByCode(supabase, "items", "erp_code", erpCode);
+    if (!item) throw new Error(`Item not found: ${erpCode}`);
+    const baseLine = {
+      bookId: erpCode,
+      quantity: Math.abs(delta),
+      rate: Number(item.sale_price || 0),
+      notes: "Admin current stock update"
+    };
+    if (delta > 0) {
+      inLines.push(baseLine);
+    } else {
+      outLines.push(baseLine);
+    }
+  }
+
+  const documentIds = [];
+  const documentDate = toDateOnly(payload.documentDate || nowIso());
+  const notes = String(payload.notes || "Admin current stock update").trim() || "Admin current stock update";
+  if (outLines.length) {
+    const outDoc = await createDocument(supabase, {
+      documentType: "ADJUSTMENT",
+      documentDate,
+      toWarehouseId: warehouseRow.warehouse_code,
+      adjustmentDirection: "OUT",
+      notes,
+      lines: outLines
+    }, currentUser);
+    documentIds.push(outDoc.documentId);
+  }
+  if (inLines.length) {
+    const inDoc = await createDocument(supabase, {
+      documentType: "ADJUSTMENT",
+      documentDate,
+      toWarehouseId: warehouseRow.warehouse_code,
+      adjustmentDirection: "IN",
+      notes,
+      lines: inLines
+    }, currentUser);
+    documentIds.push(inDoc.documentId);
+  }
+
+  return {
+    warehouseId: warehouseRow.warehouse_code,
+    documentIds,
+    updatedRows: inLines.length + outLines.length
+  };
 }
 
 async function onlineClassWarehouseBooks(supabase, payload) {
@@ -2428,6 +2531,15 @@ async function getWarehouseMonthlyReport(supabase, payload) {
               row.closingQty += qty;
             }
           }
+        } else {
+          const qtyIn = Number(doc.to_warehouse_id === warehouse.id ? qty : 0);
+          const qtyOut = Number(doc.from_warehouse_id === warehouse.id ? qty : 0);
+          if (qtyIn > 0) {
+            row.closingQty += qtyIn;
+          }
+          if (qtyOut > 0) {
+            row.closingQty -= qtyOut;
+          }
         }
       } else if (doc.document_type === "TRANSFER") {
         if (doc.from_warehouse_id === warehouse.id) {
@@ -2621,6 +2733,9 @@ async function main(request) {
         return json(200, { ok: true, data: await halveWarehouseOpeningStock(supabase, payload) });
       case "stock.current":
         return json(200, { ok: true, data: await stockCurrent(supabase) });
+      case "stock.adminUpdate":
+        requireAdminUser(currentUser);
+        return json(200, { ok: true, data: await adminUpdateCurrentStock(supabase, payload, currentUser) });
       case "activity.unsettled":
         return json(200, { ok: true, data: await getActivityUnsettled(supabase) });
       case "activity.complimentary":
