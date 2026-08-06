@@ -717,6 +717,11 @@ tbody tr:hover td {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 10px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px 0 10px;
+  background: #ffffff;
 }
 
 .line-editor-header h3 {
@@ -727,6 +732,12 @@ tbody tr:hover td {
 .line-table {
   display: grid;
   gap: 10px;
+}
+
+.line-table.scroll-lines {
+  max-height: 50vh;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .line-row {
@@ -747,6 +758,10 @@ tbody tr:hover td {
 .book-picker {
   display: grid;
   gap: 8px;
+}
+
+.compact-line-group {
+  min-width: min(180px, 100%);
 }
 
 .book-picker-results {

@@ -3450,6 +3450,22 @@
     return state.books.filter((item) => item.active !== false);
   }
 
+  function getLineItemGroup(line, fallbackItemGroup = "BOOK") {
+    return normalizeItemGroup(line && line.itemGroup ? line.itemGroup : fallbackItemGroup);
+  }
+
+  function renderLineItemGroupField(kind, index, line, fallbackItemGroup = "BOOK") {
+    const current = getLineItemGroup(line, fallbackItemGroup);
+    return `
+      <label class="field compact-line-group">
+        <span>Category</span>
+        <select onchange="window.erpApp.updateDocumentLineItemGroup('${kind}', ${index}, this.value)">
+          ${getDocumentItemGroupOptions().map((option) => `<option value="${escapeAttribute(option.value)}" ${current === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
+        </select>
+      </label>
+    `;
+  }
+
   function renderDocumentItemGroupField(kind, draft) {
     const current = normalizeItemGroup(draft && draft.itemGroup ? draft.itemGroup : "BOOK");
     return `
@@ -3546,13 +3562,15 @@
     const bookId = line.bookId || "";
     const selectedBook = bookId ? getBook(bookId) : null;
     const activeQuery = String(query || "");
+    const effectiveItemGroup = getLineItemGroup(line, itemGroup);
     const filteredBooks = filterBooksForPicker(activeBooks, activeQuery, warehouseId);
-    const singular = getItemGroupSingularLabel(itemGroup);
+    const singular = getItemGroupSingularLabel(effectiveItemGroup);
     const availabilityHint = warehouseId
       ? (state.currentStockLoaded ? `Stock at ${getWarehouseName(warehouseId)}` : `Loading stock for ${getWarehouseName(warehouseId)}...`)
       : "Type to search";
     return `
       <div class="book-picker">
+        ${renderLineItemGroupField(kind, index, line, itemGroup)}
         <label class="field">
           <span>Search ${singular}</span>
           <input
@@ -4132,6 +4150,17 @@
     return null;
   }
 
+  function updateDocumentLineItemGroup(kind, index, itemGroup) {
+    const line = getDocumentLineByKind(kind, index);
+    if (!line) return;
+    line.itemGroup = normalizeItemGroup(itemGroup);
+    line.bookId = "";
+    line.rate = 0;
+    const bucket = ensureBookPickerState(kind, index);
+    bucket[index] = "";
+    rerenderDocumentModal(kind, index, "");
+  }
+
   function rerenderDocumentModal(kind, index, value) {
     if (kind === "issue") {
       renderIssueModal();
@@ -4482,7 +4511,7 @@
   }
 
   function blankIssueLine() {
-    return { bookId: "", quantity: 1, rate: 0 };
+    return { bookId: "", quantity: 1, rate: 0, itemGroup: normalizeItemGroup(state.issueDraft.itemGroup || "BOOK") };
   }
 
   function openSaleForm() {
@@ -4501,7 +4530,7 @@
   }
 
   function blankSaleLine() {
-    return { bookId: "", quantity: 1, rate: 0 };
+    return { bookId: "", quantity: 1, rate: 0, itemGroup: normalizeItemGroup(state.saleDraft.itemGroup || "BOOK") };
   }
 
   function openOpeningStockForm() {
@@ -4518,7 +4547,7 @@
   }
 
   function blankOpeningLine() {
-    return { bookId: "", quantity: 1, rate: 0 };
+    return { bookId: "", quantity: 1, rate: 0, itemGroup: normalizeItemGroup(state.openingDraft.itemGroup || "BOOK") };
   }
 
   function openPurchaseForm() {
@@ -5036,7 +5065,7 @@
 
   function renderOpeningStockModal() {
     const itemGroup = normalizeItemGroup(state.openingDraft.itemGroup || "BOOK");
-    const activeBooks = getDocumentItemsForGroup(itemGroup);
+    const hasAnyItems = state.books.some((item) => item.active !== false) || state.devotionalItems.some((item) => item.active !== false);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const draft = state.openingDraft;
 
@@ -5076,11 +5105,11 @@
               </div>
             </div>
             <input id="openingImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importOpeningFile(this.files[0])">
-            ${activeBooks.length ? openingLinesMarkup(activeBooks, itemGroup) : `<div class="empty-state">Add active ${getItemGroupLabel(itemGroup).toLowerCase()} before posting opening stock.</div>`}
+            ${hasAnyItems ? openingLinesMarkup([], itemGroup) : `<div class="empty-state">Add active books or devotional items before posting opening stock.</div>`}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit" ${activeBooks.length ? "" : "disabled"}>Post Opening Stock</button>
+            <button class="button" type="submit" ${hasAnyItems ? "" : "disabled"}>Post Opening Stock</button>
           </div>
         </form>
       </section>
@@ -5091,10 +5120,10 @@
 
   function openingLinesMarkup(activeBooks, itemGroup) {
     return `
-      <div class="line-table">
+      <div class="line-table scroll-lines">
         ${state.openingLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("opening", index, activeBooks, line, state.openingBookQueries[index] || "", "", itemGroup)}
+            ${bookPickerMarkup("opening", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.openingBookQueries[index] || "", "", itemGroup)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="0" step="0.5" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateOpeningLine(${index}, 'quantity', this.value)" required>
@@ -5195,7 +5224,7 @@
       }));
 
     if (!lines.length) {
-      showToast("Add at least one book line");
+      showToast("Add at least one line");
       return;
     }
 
@@ -5465,12 +5494,12 @@
   }
 
   function blankUnsettledLine() {
-    return { bookId: "", quantity: 1, rate: 0 };
+    return { bookId: "", quantity: 1, rate: 0, itemGroup: normalizeItemGroup(state.unsettledDraft.itemGroup || "BOOK") };
   }
 
   function renderUnsettledOpeningModal() {
     const itemGroup = normalizeItemGroup(state.unsettledDraft.itemGroup || "BOOK");
-    const activeBooks = getDocumentItemsForGroup(itemGroup);
+    const hasAnyItems = state.books.some((item) => item.active !== false) || state.devotionalItems.some((item) => item.active !== false);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const openActivities = state.activities.filter((activity) => activity.status !== "Completed" && activity.status !== "Cancelled");
     const draft = state.unsettledDraft;
@@ -5518,11 +5547,11 @@
               </div>
             </div>
             <input id="unsettledOpeningImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importUnsettledOpeningFile(this.files[0])">
-            ${activeBooks.length ? unsettledLinesMarkup(activeBooks, itemGroup) : `<div class="empty-state">Add active ${getItemGroupLabel(itemGroup).toLowerCase()} before posting unsettled opening stock.</div>`}
+            ${hasAnyItems ? unsettledLinesMarkup([], itemGroup) : `<div class="empty-state">Add active books or devotional items before posting unsettled opening stock.</div>`}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit" ${(activeBooks.length && openActivities.length) ? "" : "disabled"}>Post Unsettled Opening</button>
+            <button class="button" type="submit" ${(hasAnyItems && openActivities.length) ? "" : "disabled"}>Post Unsettled Opening</button>
           </div>
         </form>
       </section>
@@ -5540,10 +5569,10 @@
 
   function unsettledLinesMarkup(activeBooks, itemGroup) {
     return `
-      <div class="line-table">
+      <div class="line-table scroll-lines">
         ${state.unsettledLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("unsettled", index, activeBooks, line, state.unsettledBookQueries[index] || "", "", itemGroup)}
+            ${bookPickerMarkup("unsettled", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.unsettledBookQueries[index] || "", "", itemGroup)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateUnsettledLine(${index}, 'quantity', this.value)" required>
@@ -5608,7 +5637,7 @@
       }));
 
     if (!lines.length) {
-      showToast("Add at least one book line");
+      showToast("Add at least one line");
       return;
     }
 
@@ -5639,13 +5668,10 @@
 
   function renderSaleModal() {
     const itemGroup = normalizeItemGroup(state.saleDraft.itemGroup || "BOOK");
-    const activeBooks = getDocumentItemsForGroup(itemGroup);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && !isMainWarehouseName(warehouse.name));
     const draft = state.saleDraft;
     const warehouseId = draft.warehouseId || "";
-    const booksWithStock = warehouseId
-      ? (state.currentStockLoaded ? activeBooks.filter((book) => getAvailableStock(warehouseId, book.erpCode || book.bookId) > 0) : activeBooks)
-      : [];
+    const hasAnyItems = state.books.some((item) => item.active !== false) || state.devotionalItems.some((item) => item.active !== false);
 
     modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
@@ -5676,11 +5702,11 @@
               <h3>${getItemGroupLabel(itemGroup)}${warehouseId ? ` (Stock at ${getWarehouseName(warehouseId)})` : ""}</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addSaleLine()">Add Line</button>
             </div>
-            ${warehouseId ? (booksWithStock.length ? saleLinesMarkup(booksWithStock, warehouseId, itemGroup) : `<div class="empty-state">No active ${getItemGroupLabel(itemGroup).toLowerCase()} with stock at the selected warehouse.</div>`) : `<div class="empty-state">Select a warehouse to see available ${getItemGroupLabel(itemGroup).toLowerCase()}.</div>`}
+            ${warehouseId ? (hasAnyItems ? saleLinesMarkup([], warehouseId, itemGroup) : `<div class="empty-state">Add active books or devotional items before posting sale.</div>`) : `<div class="empty-state">Select a warehouse to see available books or devotional items.</div>`}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit" ${warehouseId && booksWithStock.length ? "" : "disabled"}>Post Sale</button>
+            <button class="button" type="submit" ${warehouseId && hasAnyItems ? "" : "disabled"}>Post Sale</button>
           </div>
         </form>
       </section>
@@ -5691,10 +5717,10 @@
 
   function saleLinesMarkup(activeBooks, warehouseId, itemGroup) {
     return `
-      <div class="line-table">
+      <div class="line-table scroll-lines">
         ${state.saleLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("sale", index, activeBooks, line, state.saleBookQueries[index] || "", warehouseId, itemGroup)}
+            ${bookPickerMarkup("sale", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.saleBookQueries[index] || "", warehouseId, itemGroup)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateSaleLine(${index}, 'quantity', this.value)" required>
@@ -5758,7 +5784,7 @@
       }));
 
     if (!lines.length) {
-      showToast("Add at least one book line");
+      showToast("Add at least one line");
       return;
     }
 
@@ -5788,15 +5814,12 @@
 
   function renderIssueModal() {
     const itemGroup = normalizeItemGroup(state.issueDraft.itemGroup || "BOOK");
-    const activeBooks = getDocumentItemsForGroup(itemGroup);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const openActivities = state.activities.filter((activity) => activity.status !== "Completed" && activity.status !== "Cancelled");
     const draft = state.issueDraft;
     const isComplimentary = state.issueDocumentType === "COMPLIMENTARY";
     const fromWarehouseId = draft.fromWarehouseId || "";
-    const booksWithStock = fromWarehouseId
-      ? (state.currentStockLoaded ? activeBooks.filter((book) => getAvailableStock(fromWarehouseId, book.erpCode || book.bookId) > 0) : activeBooks)
-      : [];
+    const hasAnyItems = state.books.some((item) => item.active !== false) || state.devotionalItems.some((item) => item.active !== false);
 
     modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
@@ -5834,11 +5857,11 @@
               <h3>${isComplimentary ? `${getItemGroupLabel(itemGroup)} for Complimentary Issue` : `${getItemGroupLabel(itemGroup)}${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}`}</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addIssueLine()">Add Line</button>
             </div>
-            ${booksWithStock.length ? issueLinesMarkup(booksWithStock, fromWarehouseId, itemGroup) : '<div class="empty-state">' + (fromWarehouseId ? `No ${getItemGroupLabel(itemGroup).toLowerCase()} with available stock at ${getWarehouseName(fromWarehouseId)}.` : `Select a warehouse to see available ${getItemGroupLabel(itemGroup).toLowerCase()}.`) + '</div>'}
+            ${hasAnyItems ? issueLinesMarkup([], fromWarehouseId, itemGroup) : '<div class="empty-state">Add active books or devotional items before posting issue.</div>'}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit" ${booksWithStock.length ? "" : "disabled"}>${isComplimentary ? "Post Complimentary" : "Post Issue"}</button>
+            <button class="button" type="submit" ${(hasAnyItems && fromWarehouseId && openActivities.length) ? "" : "disabled"}>${isComplimentary ? "Post Complimentary" : "Post Issue"}</button>
           </div>
         </form>
       </section>
@@ -5849,10 +5872,10 @@
 
   function issueLinesMarkup(activeBooks, fromWarehouseId, itemGroup) {
     return `
-      <div class="line-table">
+      <div class="line-table scroll-lines">
         ${state.issueLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("issue", index, activeBooks, line, state.issueBookQueries[index] || "", fromWarehouseId, itemGroup)}
+            ${bookPickerMarkup("issue", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.issueBookQueries[index] || "", fromWarehouseId, itemGroup)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateIssueLine(${index}, 'quantity', this.value)" required>
@@ -5918,7 +5941,7 @@
       }));
 
     if (!lines.length) {
-      showToast("Add at least one book line");
+      showToast("Add at least one line");
       return;
     }
 
@@ -5964,12 +5987,12 @@
   }
 
   function blankReceiveLine() {
-    return { bookId: "", quantity: 1, rate: 0 };
+    return { bookId: "", quantity: 1, rate: 0, itemGroup: normalizeItemGroup(state.receiveDraft.itemGroup || "BOOK") };
   }
 
   function renderReceiveModal() {
     const itemGroup = normalizeItemGroup(state.receiveDraft.itemGroup || "BOOK");
-    const activeBooks = getDocumentItemsForGroup(itemGroup);
+    const hasAnyItems = state.books.some((item) => item.active !== false) || state.devotionalItems.some((item) => item.active !== false);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const issuedActivities = getIssuedActivityOptions();
     const draft = state.receiveDraft;
@@ -6019,11 +6042,11 @@
               <h3>${getItemGroupLabel(itemGroup)}</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addReceiveLine()">Add Line</button>
             </div>
-            ${activeBooks.length ? receiveLinesMarkup(activeBooks, itemGroup) : `<div class="empty-state">Add active ${getItemGroupLabel(itemGroup).toLowerCase()} before posting returns.</div>`}
+            ${hasAnyItems ? receiveLinesMarkup([], itemGroup) : `<div class="empty-state">Add active books or devotional items before posting returns.</div>`}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit" ${(activeBooks.length && issuedActivities.length) ? "" : "disabled"}>Post Return</button>
+            <button class="button" type="submit" ${(hasAnyItems && issuedActivities.length) ? "" : "disabled"}>Post Return</button>
           </div>
         </form>
       </section>
@@ -6034,10 +6057,10 @@
 
   function receiveLinesMarkup(activeBooks, itemGroup) {
     return `
-      <div class="line-table">
+      <div class="line-table scroll-lines">
         ${state.receiveLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("receive", index, activeBooks, line, state.receiveBookQueries[index] || "", "", itemGroup)}
+            ${bookPickerMarkup("receive", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.receiveBookQueries[index] || "", "", itemGroup)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateReceiveLine(${index}, 'quantity', this.value)" required>
@@ -6103,7 +6126,7 @@
       }));
 
     if (!lines.length) {
-      showToast("Add at least one book line");
+      showToast("Add at least one line");
       return;
     }
 
@@ -6148,18 +6171,15 @@
   }
 
   function blankTransferLine() {
-    return { bookId: "", quantity: 1, rate: 0 };
+    return { bookId: "", quantity: 1, rate: 0, itemGroup: normalizeItemGroup(state.transferDraft.itemGroup || "BOOK") };
   }
 
   function renderTransferModal() {
     const itemGroup = normalizeItemGroup(state.transferDraft.itemGroup || "BOOK");
-    const activeBooks = getDocumentItemsForGroup(itemGroup);
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const draft = state.transferDraft;
     const fromWarehouseId = draft.fromWarehouseId || "";
-    const booksWithStock = fromWarehouseId
-      ? (state.currentStockLoaded ? activeBooks.filter((book) => getAvailableStock(fromWarehouseId, book.erpCode || book.bookId) > 0) : activeBooks)
-      : [];
+    const hasAnyItems = state.books.some((item) => item.active !== false) || state.devotionalItems.some((item) => item.active !== false);
 
     modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
@@ -6197,11 +6217,11 @@
               <h3>${getItemGroupLabel(itemGroup)}${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addTransferLine()">Add Line</button>
             </div>
-            ${booksWithStock.length ? transferLinesMarkup(booksWithStock, fromWarehouseId, itemGroup) : '<div class="empty-state">' + (fromWarehouseId ? `No ${getItemGroupLabel(itemGroup).toLowerCase()} with available stock at ${getWarehouseName(fromWarehouseId)}.` : `Select a source warehouse to see available ${getItemGroupLabel(itemGroup).toLowerCase()}.`) + '</div>'}
+            ${fromWarehouseId ? (hasAnyItems ? transferLinesMarkup([], fromWarehouseId, itemGroup) : '<div class="empty-state">Add active books or devotional items before posting transfer.</div>') : '<div class="empty-state">Select a source warehouse to see available books or devotional items.</div>'}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit" ${booksWithStock.length ? "" : "disabled"}>Post Transfer</button>
+            <button class="button" type="submit" ${fromWarehouseId && hasAnyItems ? "" : "disabled"}>Post Transfer</button>
           </div>
         </form>
       </section>
@@ -6212,10 +6232,10 @@
 
   function transferLinesMarkup(activeBooks, fromWarehouseId, itemGroup) {
     return `
-      <div class="line-table">
+      <div class="line-table scroll-lines">
         ${state.transferLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("transfer", index, activeBooks, line, state.transferBookQueries[index] || "", fromWarehouseId, itemGroup)}
+            ${bookPickerMarkup("transfer", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.transferBookQueries[index] || "", fromWarehouseId, itemGroup)}
             <label class="field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateTransferLine(${index}, 'quantity', this.value)" required>
@@ -6303,24 +6323,18 @@
     if (kind === "opening") {
       syncOpeningDraft();
       state.openingDraft.itemGroup = normalized;
-      state.openingLines = [blankOpeningLine()];
-      state.openingBookQueries = [""];
       renderOpeningStockModal();
       return;
     }
     if (kind === "unsettled") {
       syncUnsettledDraft();
       state.unsettledDraft.itemGroup = normalized;
-      state.unsettledLines = [blankUnsettledLine()];
-      state.unsettledBookQueries = [""];
       renderUnsettledOpeningModal();
       return;
     }
     if (kind === "issue") {
       syncIssueDraft();
       state.issueDraft.itemGroup = normalized;
-      state.issueLines = [blankIssueLine()];
-      state.issueBookQueries = [""];
       renderIssueModal();
       refreshCurrentStockForOpenDocumentModal();
       return;
@@ -6328,8 +6342,6 @@
     if (kind === "sale") {
       syncSaleDraft();
       state.saleDraft.itemGroup = normalized;
-      state.saleLines = [blankSaleLine()];
-      state.saleBookQueries = [""];
       renderSaleModal();
       refreshCurrentStockForOpenDocumentModal();
       return;
@@ -6337,16 +6349,12 @@
     if (kind === "receive") {
       syncReceiveDraft();
       state.receiveDraft.itemGroup = normalized;
-      state.receiveLines = [blankReceiveLine()];
-      state.receiveBookQueries = [""];
       renderReceiveModal();
       return;
     }
     if (kind === "transfer") {
       syncTransferDraft();
       state.transferDraft.itemGroup = normalized;
-      state.transferLines = [blankTransferLine()];
-      state.transferBookQueries = [""];
       renderTransferModal();
       refreshCurrentStockForOpenDocumentModal();
     }
@@ -6413,7 +6421,7 @@
       }));
 
     if (!lines.length) {
-      showToast("Add at least one book line");
+      showToast("Add at least one line");
       return;
     }
 
@@ -6922,6 +6930,7 @@
     updateUnsettledLine,
     setBookPickerQuery,
     pickBookFromPicker,
+    updateDocumentLineItemGroup,
     openIssueForm,
     openComplimentaryForm,
     openSaleForm,
