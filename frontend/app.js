@@ -76,6 +76,7 @@
     settledActivityDetails: null,
     pendingSettlementActivityId: "",
     pendingSettlementDetails: null,
+    documentEditDetail: null,
     sidebarCollapsed: false,
     reportWarehouseId: "",
     reportMonth: new Date().toISOString().slice(0, 7),
@@ -564,6 +565,7 @@
                 <td>${escapeHtml(row.notes || "-")}</td>
                 <td>
                   <div class="row-actions">
+                    ${isMainAdmin() ? `<button class="small-button" type="button" onclick="window.erpApp.openDocumentEditForm('${escapeAttribute(row.documentId)}')">Edit</button>` : ""}
                     <button class="small-button" type="button" onclick="window.erpApp.previewDocumentPdf('${escapeAttribute(row.documentId)}')">PDF</button>
                   </div>
                 </td>
@@ -1428,7 +1430,7 @@
     `;
   }
 
-  function pendingSettlementDocumentRows(detail) {
+  function pendingSettlementDocumentRows(detail, editable) {
     return (detail && Array.isArray(detail.documents) ? detail.documents : []).map((row) => `
       <tr>
         <td>${escapeHtml(row.documentId || "-")}</td>
@@ -1439,6 +1441,7 @@
         <td>${Number(row.complimentaryQty || 0)}</td>
         <td>${Number(row.saleQty || 0)}</td>
         <td>${money(Number(row.amount || 0))}</td>
+        ${editable ? `<td><button class="small-button" type="button" onclick="window.erpApp.openDocumentEditForm('${escapeAttribute(row.documentId || "")}')">Edit</button></td>` : ""}
       </tr>
     `).join("");
   }
@@ -1451,7 +1454,6 @@
     const rows = detail && Array.isArray(detail.books) ? detail.books : [];
     return `
       <div class="table-wrap">
-        ${editable ? `<form id="pendingSettlementBooksForm" onsubmit="window.erpApp.savePendingSettlementBookAdjustments(event)">` : ""}
         <table>
           <thead>
             <tr>
@@ -1462,7 +1464,6 @@
               <th>Sale</th>
               <th>Complimentary</th>
               <th>Net Amount</th>
-              ${editable ? "<th>Action</th>" : ""}
             </tr>
           </thead>
           <tbody>
@@ -1475,23 +1476,16 @@
               <tr data-book-id="${escapeAttribute(row.bookId || "")}" data-row-index="${index}">
                 <td>${escapeHtml(row.bookId || "-")}</td>
                 <td>${escapeHtml(row.bookName || "-")}</td>
-                <td>${editable ? `<input class="settlement-edit-input" data-field="issue" type="number" min="0" step="1" value="${issueQty}">` : issueQty}</td>
-                <td>${editable ? `<input class="settlement-edit-input" data-field="return" type="number" min="0" step="1" value="${returnQty}">` : returnQty}</td>
-                <td>${editable ? `<input class="settlement-edit-input" data-field="sale" type="number" min="0" step="1" value="${saleQty}">` : saleQty}</td>
-                <td>${editable ? `<input class="settlement-edit-input" data-field="complimentary" type="number" min="0" step="1" value="${complimentaryQty}">` : complimentaryQty}</td>
+                <td>${issueQty}</td>
+                <td>${returnQty}</td>
+                <td>${saleQty}</td>
+                <td>${complimentaryQty}</td>
                 <td>${money(Number(row.amount || 0))}</td>
-                ${editable ? `<td><button class="small-button" type="button" onclick="window.erpApp.savePendingSettlementBookAdjustments(event)">Save</button></td>` : ""}
               </tr>
-            `; }).join("") : `<tr><td colspan="${editable ? 8 : 7}"><div class="empty-state">No book rows available.</div></td></tr>`}
+            `; }).join("") : `<tr><td colspan="7"><div class="empty-state">No book rows available.</div></td></tr>`}
           </tbody>
         </table>
-        ${editable ? `
-          <div class="form-actions" style="margin-top:12px;">
-            <button class="button" type="submit">Save Admin Adjustments</button>
-          </div>
-          </form>
-          <div class="metric-note" style="margin-top:8px;">Admin edits will post stock corrections automatically.</div>
-        ` : ""}
+        ${editable ? `<div class="metric-note" style="margin-top:8px;">Use Edit on the original document row to correct qty or item in place.</div>` : ""}
       </div>
     `;
   }
@@ -1536,13 +1530,6 @@
         <h3>Admin Actions</h3>
         <form class="form-grid" id="pendingSettlementActionForm" onsubmit="window.erpApp.savePendingSettlementAdjustment(event)">
           <label class="field">
-            <span>Action Type</span>
-            <select name="actionType" onchange="window.erpApp.onPendingSettlementActionChange(this.value)">
-              <option value="COMPLIMENTARY">Complimentary</option>
-              <option value="ADJUSTMENT">Correction</option>
-            </select>
-          </label>
-          <label class="field">
             <span>Document Date</span>
             <input name="documentDate" type="date" value="${escapeAttribute(new Date().toISOString().slice(0, 10))}" required>
           </label>
@@ -1557,20 +1544,12 @@
             <span>Quantity</span>
             <input name="quantity" type="number" min="1" step="1" value="1" required>
           </label>
-          <label class="field">
-            <span>Direction</span>
-            <select name="adjustmentDirection" style="display:none">
-              <option value="OUT">Reduce stock</option>
-              <option value="IN">Add stock</option>
-            </select>
-          </label>
           <label class="field wide-field">
             <span>Notes</span>
             <input name="notes" placeholder="Optional note">
           </label>
           <div class="form-actions wide-field">
-            <button class="button secondary" type="button" onclick="window.erpApp.onPendingSettlementActionChange('COMPLIMENTARY')">Complimentary</button>
-            <button class="button" type="submit">Post Action</button>
+            <button class="button" type="submit">Post Complimentary</button>
           </div>
         </form>
       </div>
@@ -1642,9 +1621,10 @@
                 <th>Complimentary Qty</th>
                 <th>Sale Qty</th>
                 <th>Net Amount</th>
+                ${!readOnly && isMainAdmin() ? "<th>Action</th>" : ""}
               </tr>
             </thead>
-            <tbody>${pendingSettlementDocumentRows(detail)}</tbody>
+            <tbody>${pendingSettlementDocumentRows(detail, !readOnly && isMainAdmin())}</tbody>
           </table>
         </div>` : '<div class="empty-state">No issue or return documents found for this activity.</div>'}
       </div>
@@ -1725,20 +1705,6 @@
     }
   }
 
-  function onPendingSettlementActionChange(value) {
-    const form = document.getElementById("pendingSettlementActionForm");
-    if (!form) return;
-    const actionField = form.querySelector('select[name="actionType"]');
-    const directionField = form.querySelector('select[name="adjustmentDirection"]');
-    const actionType = String(value || "COMPLIMENTARY");
-    if (actionField) {
-      actionField.value = actionType;
-    }
-    if (directionField) {
-      directionField.style.display = actionType === "ADJUSTMENT" ? "" : "none";
-    }
-  }
-
   async function savePendingSettlementAdjustment(event) {
     event.preventDefault();
     const detail = state.pendingSettlementDetails;
@@ -1748,19 +1714,17 @@
     }
     const form = event.currentTarget;
     const data = new FormData(form);
-    const actionType = String(data.get("actionType") || "COMPLIMENTARY");
     const quantity = Number(data.get("quantity") || 0);
     if (quantity <= 0) {
       showToast("Quantity must be greater than zero");
       return;
     }
     const payload = {
-      documentType: actionType,
+      documentType: "COMPLIMENTARY",
       documentDate: data.get("documentDate"),
       activityId: detail.activityId,
       fromWarehouseId: detail.warehouseId,
       toWarehouseId: detail.warehouseId,
-      adjustmentDirection: actionType === "ADJUSTMENT" ? String(data.get("adjustmentDirection") || "OUT") : "OUT",
       notes: String(data.get("notes") || "").trim(),
       lines: [{
         bookId: String(data.get("bookId") || "").trim(),
@@ -1781,9 +1745,124 @@
         state.pendingSettlementDetails = null;
       }
       await refreshSettlementLinkedViews();
-      showToast(actionType === "COMPLIMENTARY" ? "Complimentary entry saved" : "Correction entry saved");
+      showToast("Complimentary entry saved");
     } catch (error) {
-      showToast(error.message || "Could not save adjustment");
+      showToast(error.message || "Could not save complimentary entry");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function openDocumentEditForm(documentId) {
+    if (!isMainAdmin()) {
+      showToast("Admin access required");
+      return;
+    }
+    setLoading(true);
+    try {
+      state.documentEditDetail = await window.erpApi.request("documents.detail", { documentId });
+      renderDocumentEditModal();
+    } catch (error) {
+      showToast(error.message || "Could not load document details");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function renderDocumentEditModal() {
+    const detail = state.documentEditDetail;
+    if (!detail) return;
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+      <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="documentEditTitle">
+        <div class="modal-header">
+          <h2 id="documentEditTitle">Edit ${escapeHtml(detail.documentId || "Document")}</h2>
+          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+        </div>
+        <form class="form-grid" id="documentEditForm" onsubmit="window.erpApp.saveDocumentEdits(event)">
+          <label class="field">
+            <span>Document Date</span>
+            <input name="documentDate" type="date" value="${escapeAttribute(toInputDate(detail.documentDate) || "")}" required>
+          </label>
+          <label class="field wide-field">
+            <span>Notes</span>
+            <input name="notes" value="${escapeAttribute(detail.notes || "")}" placeholder="Document note">
+          </label>
+          <input type="hidden" name="documentId" value="${escapeAttribute(detail.documentId || "")}">
+          <div class="wide-field table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Line</th>
+                  <th>ERP Code</th>
+                  <th>Item</th>
+                  <th>Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(detail.lines || []).map((line, index) => `
+                  <tr data-line-no="${escapeAttribute(line.lineNo)}" data-line-id="${escapeAttribute(line.lineId || "")}">
+                    <td>${Number(index + 1)}</td>
+                    <td><input type="text" data-field="bookId" value="${escapeAttribute(line.erpCode || "")}" placeholder="ERP Code"></td>
+                    <td>${escapeHtml(line.bookName || "-")}</td>
+                    <td><input type="number" data-field="quantity" min="0" step="1" value="${escapeAttribute(line.quantity)}"></td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+            <div class="metric-note" style="margin-top:8px;">Edit the original document here. Change ERP code if the wrong item was entered, or set quantity to 0 to nullify that line.</div>
+          </div>
+          <div class="form-actions wide-field">
+            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+            <button class="button" type="submit">Save Document</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  async function saveDocumentEdits(event) {
+    event.preventDefault();
+    if (!isMainAdmin()) {
+      showToast("Admin access required");
+      return;
+    }
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const lines = Array.from(form.querySelectorAll("tbody tr[data-line-no]")).map((row) => ({
+      lineId: row.dataset.lineId || "",
+      lineNo: Number(row.dataset.lineNo || 0),
+      bookId: String(row.querySelector('[data-field="bookId"]')?.value || "").trim(),
+      quantity: Number(row.querySelector('[data-field="quantity"]')?.value || 0)
+    }));
+    if (!lines.length || lines.every((line) => !line.bookId)) {
+      showToast("At least one valid line is required");
+      return;
+    }
+    setLoading(true);
+    try {
+      await window.erpApi.request("documents.update", {
+        documentId: data.get("documentId"),
+        documentDate: data.get("documentDate"),
+        notes: String(data.get("notes") || "").trim(),
+        lines
+      });
+      closeModal();
+      await bootstrapData();
+      if (state.pendingSettlementActivityId) {
+        state.pendingSettlementDetails = await window.erpApi.request("activity.pendingSettlementDetails", { activityId: state.pendingSettlementActivityId });
+      }
+      if (state.settledActivityId) {
+        state.settledActivityDetails = await window.erpApi.request("activity.pendingSettlementDetails", { activityId: state.settledActivityId });
+      }
+      if (state.view === "documents") {
+        content.innerHTML = await renderDocuments();
+      } else if (state.view === "reports") {
+        await refreshSettlementLinkedViews();
+      }
+      showToast("Document updated");
+    } catch (error) {
+      showToast(error.message || "Could not update document");
     } finally {
       setLoading(false);
     }
@@ -2202,6 +2281,7 @@
       URL.revokeObjectURL(state.documentPdfPreviewUrl);
       state.documentPdfPreviewUrl = "";
     }
+    state.documentEditDetail = null;
     modalRoot.innerHTML = "";
   }
 
@@ -6907,7 +6987,8 @@
     savePendingSettlementPayment,
     savePendingSettlementAdjustment,
     savePendingSettlementBookAdjustments,
-    onPendingSettlementActionChange,
+    openDocumentEditForm,
+    saveDocumentEdits,
     settleActivity,
     openOpeningStockForm,
     openPurchaseForm,

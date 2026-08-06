@@ -964,6 +964,7 @@ async function documentDetail(supabase, payload) {
   const lines = (linesResult.data || []).map((line, index) => {
     const item = itemById[line.item_id] || {};
     return {
+      lineId: line.id,
       lineNo: Number(line.line_no || index + 1),
       erpCode: item.erp_code || line.item_id || "",
       bookName: item.item_name || "",
@@ -1004,6 +1005,106 @@ function parseSettlementEditNote(note) {
     target: String(parts[1] || "").trim().toUpperCase(),
     direction: String(parts[2] || "").trim().toUpperCase()
   };
+}
+
+function computeLedgerQuantitiesForRow(ledgerRow, quantity) {
+  const movementType = String(ledgerRow.movement_type || "").trim().toUpperCase();
+  const qty = Number(quantity || 0);
+  if (movementType === "TRANSFER_IN") {
+    return { quantityIn: qty, quantityOut: 0 };
+  }
+  if (movementType === "TRANSFER_OUT") {
+    return { quantityIn: 0, quantityOut: qty };
+  }
+  if (movementType === "UNSETTLED_OPENING") {
+    return { quantityIn: 0, quantityOut: 0 };
+  }
+  if (Number(ledgerRow.quantity_in || 0) > 0 && Number(ledgerRow.quantity_out || 0) <= 0) {
+    return { quantityIn: qty, quantityOut: 0 };
+  }
+  if (Number(ledgerRow.quantity_out || 0) > 0 && Number(ledgerRow.quantity_in || 0) <= 0) {
+    return { quantityIn: 0, quantityOut: qty };
+  }
+  return { quantityIn: 0, quantityOut: 0 };
+}
+
+async function updateDocumentInPlace(supabase, payload, currentUser) {
+  requireAdminUser(currentUser);
+  const documentRef = String(payload.documentId || payload.documentCode || "").trim();
+  if (!documentRef) throw new Error("Document is required");
+  const { data: doc, error: docError } = await supabase
+    .from("documents")
+    .select("*")
+    .or(`document_code.eq.${documentRef},id.eq.${documentRef}`)
+    .maybeSingle();
+  if (docError) throw docError;
+  if (!doc) throw new Error("Document not found");
+  if (!isCountableDocument(doc)) throw new Error("This document cannot be edited");
+  const { data: existingLines, error: linesError } = await supabase
+    .from("document_lines")
+    .select("*")
+    .eq("document_id", doc.id)
+    .order("line_no", { ascending: true });
+  if (linesError) throw linesError;
+  const payloadLines = Array.isArray(payload.lines) ? payload.lines : [];
+  if (!payloadLines.length) throw new Error("At least one document line is required");
+  const lineById = Object.fromEntries((existingLines || []).map((line) => [String(line.id), line]));
+  const lineByNo = Object.fromEntries((existingLines || []).map((line) => [String(line.line_no), line]));
+  for (const rawLine of payloadLines) {
+    const existingLine = lineById[String(rawLine.lineId || "").trim()] || lineByNo[String(rawLine.lineNo || "").trim()];
+    if (!existingLine) {
+      throw new Error(`Document line not found: ${rawLine.lineNo || rawLine.lineId || "-"}`);
+    }
+    const item = await resolveItemRow(supabase, rawLine.bookId || rawLine.erpCode || existingLine.item_id);
+    const quantity = Number(rawLine.quantity || 0);
+    const rate = Number(rawLine.rate !== undefined ? rawLine.rate : existingLine.rate || 0);
+    const amount = quantity * rate;
+    const { error: updateLineError } = await supabase
+      .from("document_lines")
+      .update({
+        item_id: item.id,
+        quantity,
+        rate,
+        amount,
+        line_notes: rawLine.notes !== undefined ? String(rawLine.notes || "") : (existingLine.line_notes || "")
+      })
+      .eq("id", existingLine.id);
+    if (updateLineError) throw updateLineError;
+    const { data: ledgerRows, error: ledgerLoadError } = await supabase
+      .from("stock_ledger")
+      .select("*")
+      .eq("document_line_id", existingLine.id);
+    if (ledgerLoadError) throw ledgerLoadError;
+    for (const ledgerRow of ledgerRows || []) {
+      const nextQty = computeLedgerQuantitiesForRow(ledgerRow, quantity);
+      const { error: ledgerUpdateError } = await supabase
+        .from("stock_ledger")
+        .update({
+          item_id: item.id,
+          ledger_date: toDateOnly(payload.documentDate || doc.document_date),
+          quantity_in: nextQty.quantityIn,
+          quantity_out: nextQty.quantityOut,
+          rate,
+          amount,
+          updated_at: nowIso()
+        })
+        .eq("id", ledgerRow.id);
+      if (ledgerUpdateError) throw ledgerUpdateError;
+    }
+  }
+  const { error: updateDocError } = await supabase
+    .from("documents")
+    .update({
+      document_date: toDateOnly(payload.documentDate || doc.document_date),
+      notes: payload.notes !== undefined ? String(payload.notes || "") : (doc.notes || ""),
+      updated_at: nowIso()
+    })
+    .eq("id", doc.id);
+  if (updateDocError) throw updateDocError;
+  if (doc.activity_id) {
+    await syncActivitySettlementStatus(supabase, doc.activity_id);
+  }
+  return { documentId: doc.document_code };
 }
 
 function isCountableDocument(doc) {
@@ -2507,6 +2608,9 @@ async function main(request) {
         return json(200, { ok: true, data: await documentDetail(supabase, payload) });
       case "documents.create":
         return json(200, { ok: true, data: await createDocument(supabase, payload, currentUser) });
+      case "documents.update":
+        requireAdminUser(currentUser);
+        return json(200, { ok: true, data: await updateDocumentInPlace(supabase, payload, currentUser) });
       case "documents.correct":
         requireAdminUser(currentUser);
         return json(200, { ok: true, data: await correctDocument(supabase, payload, currentUser) });
