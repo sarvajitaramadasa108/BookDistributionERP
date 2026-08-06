@@ -3531,11 +3531,9 @@
     const line = getDocumentLineByKind(kind, index);
     if (!line) return;
     line.bookId = bookId;
-    line.quantity = Number(line.quantity || 1);
     line.rate = kind === "sale" ? getBookSalePrice(bookId) : Number(line.rate || 0);
-    const book = getBook(bookId);
     const bucket = ensureBookPickerState(kind, index);
-    bucket[index] = getBookPickerDisplayLabel(book);
+    bucket[index] = "";
     rerenderDocumentModal(kind, index, bucket[index]);
   }
 
@@ -3568,6 +3566,7 @@
     const availabilityHint = warehouseId
       ? (state.currentStockLoaded ? `Stock at ${getWarehouseName(warehouseId)}` : `Loading stock for ${getWarehouseName(warehouseId)}...`)
       : "Type to search";
+    const showResults = Boolean(activeQuery) || !selectedBook;
     return `
       <div class="book-picker">
         ${renderLineItemGroupField(kind, index, line, itemGroup)}
@@ -3581,7 +3580,7 @@
             autocomplete="off"
             oninput="window.erpApp.setBookPickerQuery('${kind}', ${index}, this.value)">
         </label>
-        <div class="book-picker-results">
+        ${showResults ? `<div class="book-picker-results">
           ${filteredBooks.length ? filteredBooks.map((book) => {
             const itemId = book.erpCode || book.bookId;
             const selected = itemId === bookId;
@@ -3595,8 +3594,8 @@
                 <span class="book-picker-meta">${escapeHtml(itemId)}${avail !== null ? ` | Avail ${avail}` : ""}</span>
               </button>
             `;
-          }).join("") : `<div class="book-picker-empty">${escapeHtml(activeQuery ? `No books match "${activeQuery}".` : availabilityHint)}</div>`}
-        </div>
+          }).join("") : `<div class="book-picker-empty">${escapeHtml(activeQuery ? `No ${singular.toLowerCase()} match "${activeQuery}".` : availabilityHint)}</div>`}
+        </div>` : ""}
         ${selectedBook ? `<div class="book-picker-selected">Selected: ${escapeHtml(getBookPickerDisplayLabel(selectedBook))}</div>` : ""}
       </div>
     `;
@@ -4524,7 +4523,7 @@
   }
 
   function blankIssueLine() {
-    return { bookId: "", quantity: 1, rate: 0, itemGroup: normalizeItemGroup(state.issueDraft.itemGroup || "BOOK") };
+    return { bookId: "", quantity: "", rate: 0, itemGroup: normalizeItemGroup(state.issueDraft.itemGroup || "BOOK") };
   }
 
   function openSaleForm() {
@@ -4543,7 +4542,7 @@
   }
 
   function blankSaleLine() {
-    return { bookId: "", quantity: 1, rate: 0, itemGroup: normalizeItemGroup(state.saleDraft.itemGroup || "BOOK") };
+    return { bookId: "", quantity: "", rate: 0, itemGroup: normalizeItemGroup(state.saleDraft.itemGroup || "BOOK") };
   }
 
   function openOpeningStockForm() {
@@ -4560,7 +4559,7 @@
   }
 
   function blankOpeningLine() {
-    return { bookId: "", quantity: 1, rate: 0, itemGroup: normalizeItemGroup(state.openingDraft.itemGroup || "BOOK") };
+    return { bookId: "", quantity: "", rate: 0, itemGroup: normalizeItemGroup(state.openingDraft.itemGroup || "BOOK") };
   }
 
   function openPurchaseForm() {
@@ -5138,13 +5137,9 @@
         ${state.openingLines.map((line, index) => `
           <div class="line-row">
             ${bookPickerMarkup("opening", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.openingBookQueries[index] || "", "", itemGroup)}
-            <label class="field">
+            <label class="field qty-field">
               <span>Qty</span>
-              <input type="number" min="0" step="0.5" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateOpeningLine(${index}, 'quantity', this.value)" required>
-            </label>
-            <label class="field">
-              <span>Cost</span>
-              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.rate)}" onchange="window.erpApp.updateOpeningLine(${index}, 'rate', this.value)">
+              <input type="number" min="0" step="0.5" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateOpeningLine(${index}, 'quantity', this.value)" placeholder="Qty">
             </label>
             <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeOpeningLine(${index})">Remove</button>
           </div>
@@ -5174,7 +5169,7 @@
 
   function updateOpeningLine(index, key, value) {
     if (!state.openingLines[index]) return;
-    state.openingLines[index][key] = key === "bookId" ? value : Number(value || 0);
+    state.openingLines[index][key] = key === "bookId" ? value : (value === "" ? "" : Number(value || 0));
   }
 
   function halveOpeningQuantities() {
@@ -5509,7 +5504,7 @@
   }
 
   function blankUnsettledLine() {
-    return { bookId: "", quantity: 1, rate: 0, itemGroup: normalizeItemGroup(state.unsettledDraft.itemGroup || "BOOK") };
+    return { bookId: "", quantity: "", rate: 0, itemGroup: normalizeItemGroup(state.unsettledDraft.itemGroup || "BOOK") };
   }
 
   function renderUnsettledOpeningModal() {
@@ -5588,13 +5583,9 @@
         ${state.unsettledLines.map((line, index) => `
           <div class="line-row">
             ${bookPickerMarkup("unsettled", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.unsettledBookQueries[index] || "", "", itemGroup)}
-            <label class="field">
+            <label class="field qty-field">
               <span>Qty</span>
-              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateUnsettledLine(${index}, 'quantity', this.value)" required>
-            </label>
-            <label class="field">
-              <span>Rate</span>
-              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.rate)}" onchange="window.erpApp.updateUnsettledLine(${index}, 'rate', this.value)">
+              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateUnsettledLine(${index}, 'quantity', this.value)" placeholder="Qty">
             </label>
             <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeUnsettledLine(${index})">Remove</button>
           </div>
@@ -5624,7 +5615,7 @@
 
   function updateUnsettledLine(index, key, value) {
     if (!state.unsettledLines[index]) return;
-    state.unsettledLines[index][key] = key === "bookId" ? value : Number(value || 0);
+    state.unsettledLines[index][key] = key === "bookId" ? value : (value === "" ? "" : Number(value || 0));
   }
 
   function syncUnsettledDraft() {
@@ -5737,13 +5728,9 @@
         ${state.saleLines.map((line, index) => `
           <div class="line-row">
             ${bookPickerMarkup("sale", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.saleBookQueries[index] || "", warehouseId, itemGroup)}
-            <label class="field">
+            <label class="field qty-field">
               <span>Qty</span>
-              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateSaleLine(${index}, 'quantity', this.value)" required>
-            </label>
-            <label class="field">
-              <span>Rate</span>
-              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.rate)}" onchange="window.erpApp.updateSaleLine(${index}, 'rate', this.value)">
+              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateSaleLine(${index}, 'quantity', this.value)" placeholder="Qty">
             </label>
             <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeSaleLine(${index})">Remove</button>
           </div>
@@ -5773,7 +5760,7 @@
 
   function updateSaleLine(index, key, value) {
     if (!state.saleLines[index]) return;
-    state.saleLines[index][key] = key === "bookId" ? value : Number(value || 0);
+    state.saleLines[index][key] = key === "bookId" ? value : (value === "" ? "" : Number(value || 0));
   }
 
   function syncSaleDraft() {
@@ -5893,13 +5880,9 @@
         ${state.issueLines.map((line, index) => `
           <div class="line-row">
             ${bookPickerMarkup("issue", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.issueBookQueries[index] || "", fromWarehouseId, itemGroup)}
-            <label class="field">
+            <label class="field qty-field">
               <span>Qty</span>
-              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateIssueLine(${index}, 'quantity', this.value)" required>
-            </label>
-            <label class="field">
-              <span>Rate</span>
-              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.rate)}" onchange="window.erpApp.updateIssueLine(${index}, 'rate', this.value)">
+              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateIssueLine(${index}, 'quantity', this.value)" placeholder="Qty">
             </label>
             <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeIssueLine(${index})">Remove</button>
           </div>
@@ -5929,7 +5912,7 @@
 
   function updateIssueLine(index, key, value) {
     if (!state.issueLines[index]) return;
-    state.issueLines[index][key] = key === "bookId" ? value : Number(value || 0);
+    state.issueLines[index][key] = key === "bookId" ? value : (value === "" ? "" : Number(value || 0));
   }
 
   function syncIssueDraft() {
@@ -6005,7 +5988,7 @@
   }
 
   function blankReceiveLine() {
-    return { bookId: "", quantity: 1, rate: 0, itemGroup: normalizeItemGroup(state.receiveDraft.itemGroup || "BOOK") };
+    return { bookId: "", quantity: "", rate: 0, itemGroup: normalizeItemGroup(state.receiveDraft.itemGroup || "BOOK") };
   }
 
   function renderReceiveModal() {
@@ -6079,13 +6062,9 @@
         ${state.receiveLines.map((line, index) => `
           <div class="line-row">
             ${bookPickerMarkup("receive", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.receiveBookQueries[index] || "", "", itemGroup)}
-            <label class="field">
+            <label class="field qty-field">
               <span>Qty</span>
-              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateReceiveLine(${index}, 'quantity', this.value)" required>
-            </label>
-            <label class="field">
-              <span>Rate</span>
-              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.rate)}" onchange="window.erpApp.updateReceiveLine(${index}, 'rate', this.value)">
+              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateReceiveLine(${index}, 'quantity', this.value)" placeholder="Qty">
             </label>
             <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeReceiveLine(${index})">Remove</button>
           </div>
@@ -6115,7 +6094,7 @@
 
   function updateReceiveLine(index, key, value) {
     if (!state.receiveLines[index]) return;
-    state.receiveLines[index][key] = key === "bookId" ? value : Number(value || 0);
+    state.receiveLines[index][key] = key === "bookId" ? value : (value === "" ? "" : Number(value || 0));
   }
 
   function syncReceiveDraft() {
@@ -6190,7 +6169,7 @@
   }
 
   function blankTransferLine() {
-    return { bookId: "", quantity: 1, rate: 0, itemGroup: normalizeItemGroup(state.transferDraft.itemGroup || "BOOK") };
+    return { bookId: "", quantity: "", rate: 0, itemGroup: normalizeItemGroup(state.transferDraft.itemGroup || "BOOK") };
   }
 
   function renderTransferModal() {
@@ -6255,13 +6234,9 @@
         ${state.transferLines.map((line, index) => `
           <div class="line-row">
             ${bookPickerMarkup("transfer", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.transferBookQueries[index] || "", fromWarehouseId, itemGroup)}
-            <label class="field">
+            <label class="field qty-field">
               <span>Qty</span>
-              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateTransferLine(${index}, 'quantity', this.value)" required>
-            </label>
-            <label class="field">
-              <span>Rate</span>
-              <input type="number" min="0" step="0.01" value="${escapeAttribute(line.rate)}" onchange="window.erpApp.updateTransferLine(${index}, 'rate', this.value)">
+              <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateTransferLine(${index}, 'quantity', this.value)" placeholder="Qty">
             </label>
             <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeTransferLine(${index})">Remove</button>
           </div>
@@ -6291,7 +6266,7 @@
 
   function updateTransferLine(index, key, value) {
     if (!state.transferLines[index]) return;
-    state.transferLines[index][key] = key === "bookId" ? value : Number(value || 0);
+    state.transferLines[index][key] = key === "bookId" ? value : (value === "" ? "" : Number(value || 0));
   }
 
   function syncTransferDraft() {

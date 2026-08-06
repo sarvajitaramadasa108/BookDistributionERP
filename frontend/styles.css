@@ -742,7 +742,7 @@ tbody tr:hover td {
 
 .line-row {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(90px, 0.25fr) minmax(110px, 0.3fr) auto;
+  grid-template-columns: minmax(320px, 1fr) minmax(90px, 0.2fr) auto;
   align-items: start;
   gap: 10px;
   border: 1px solid var(--line);
@@ -757,11 +757,22 @@ tbody tr:hover td {
 
 .book-picker {
   display: grid;
-  gap: 8px;
+  grid-template-columns: minmax(160px, 0.4fr) minmax(220px, 1fr);
+  gap: 8px 10px;
+  align-items: end;
 }
 
 .compact-line-group {
   min-width: min(180px, 100%);
+}
+
+.book-picker-results,
+.book-picker-selected {
+  grid-column: 1 / -1;
+}
+
+.qty-field {
+  min-width: 84px;
 }
 
 .book-picker-results {
@@ -876,6 +887,10 @@ tbody tr:hover td {
   }
 
   .line-row {
+    grid-template-columns: 1fr;
+  }
+
+  .book-picker {
     grid-template-columns: 1fr;
   }
 
