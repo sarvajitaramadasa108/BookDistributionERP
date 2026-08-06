@@ -3469,7 +3469,13 @@
   }
 
   function getAvailableStock(warehouseId, bookId) {
-    const stockRow = state.currentStock.find((row) => row.warehouseId === warehouseId && row.bookId === bookId);
+    const warehouse = state.warehouses.find((item) => item.warehouseId === warehouseId || item.rowId === warehouseId);
+    const validWarehouseIds = new Set([
+      String(warehouseId || "").trim(),
+      String(warehouse?.warehouseId || "").trim(),
+      String(warehouse?.rowId || "").trim()
+    ].filter(Boolean));
+    const stockRow = state.currentStock.find((row) => validWarehouseIds.has(String(row.warehouseId || "").trim()) && row.bookId === bookId);
     return stockRow ? Number(stockRow.quantity || 0) : 0;
   }
 
