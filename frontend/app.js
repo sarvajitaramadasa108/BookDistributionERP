@@ -1365,7 +1365,7 @@
           </thead>
           <tbody>
             ${filteredRows.length ? filteredRows.map((row, index) => {
-              const activityStatus = Number(row.summary?.returnQty || 0) > 0 ? "Settlement Pending" : "Return Pending";
+              const activityStatus = row.settlementStatus || (Number(row.summary?.returnQty || 0) > 0 ? "Settlement Pending" : "Return Pending");
               return `
               <tr>
                 <td>${index + 1}</td>
@@ -1584,9 +1584,9 @@
     const summary = detail.summary || {};
     const activityStatus = readOnly
       ? "Settled"
-      : Number(summary.pendingAmount || 0) <= 0
+      : (detail.settlementStatus || (Number(summary.pendingAmount || 0) <= 0
         ? "Settled"
-        : (Number(summary.returnQty || 0) > 0 ? "Settlement Pending" : "Return Pending");
+        : (Number(summary.returnQty || 0) > 0 ? "Settlement Pending" : "Return Pending")));
     return `
       <div class="panel-header compact-header">
         <h2>${escapeHtml(detail.activityName || detail.activityId || "Pending Settlement")}</h2>

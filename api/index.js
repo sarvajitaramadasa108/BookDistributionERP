@@ -1174,6 +1174,10 @@ async function createDocument(supabase, payload, currentUser) {
     if (activityError) throw activityError;
   }
 
+  if (activityRow && ["COMPLIMENTARY", "ADJUSTMENT"].includes(documentType)) {
+    await syncActivitySettlementStatus(supabase, activityRow.id);
+  }
+
   return { documentId: doc.document_code };
 }
 
@@ -1790,13 +1794,19 @@ function buildSettlementSummaryForActivity(activity, context) {
   summary.paidTotalAmount = paidTotalAmount;
   summary.pendingAmount = Math.max(pendingAmountRaw, 0);
   summary.overpaidAmount = Math.max(paidTotalAmount - summary.saleDueAmount, 0);
+  const isCompleted = String(activity.status || "").toLowerCase() === "completed" || Boolean(activity.settled_at);
+  const settlementStatus = isCompleted && Number(summary.pendingAmount || 0) <= 0
+    ? "Settled"
+    : (Number(summary.returnQty || 0) > 0 || Number(summary.complimentaryQty || 0) > 0 || Number(summary.paidTotalAmount || 0) > 0
+      ? "Settlement Pending"
+      : "Return Pending");
   return {
     activityId,
     activityName: activity.activity_name || activity.activity_code,
     activityCode: activity.activity_code,
     activityType: activity.activity_type,
     activityStatus: activity.status,
-    settlementStatus: Number(summary.pendingAmount || 0) <= 0 ? "Settled" : (Number(summary.returnQty || 0) > 0 ? "Settlement Pending" : "Return Pending"),
+    settlementStatus,
     settledAt: activity.settled_at,
     devoteeId: devoteeById[activity.devotee_id]?.devotee_code || activity.devotee_id || "",
     devoteeName: devoteeById[activity.devotee_id]?.devotee_name || "",
@@ -1817,12 +1827,33 @@ function buildSettlementSummaryForActivity(activity, context) {
   };
 }
 
+async function syncActivitySettlementStatus(supabase, activityRef) {
+  if (!activityRef) return;
+  const context = await getSettlementContext(supabase);
+  const activity = context.activities.find((row) => row.id === activityRef || row.activity_code === activityRef);
+  if (!activity) return;
+  const detail = buildSettlementSummaryForActivity(activity, context);
+  const shouldBeCompleted = Number(detail.summary.pendingAmount || 0) <= 0
+    && Number(detail.summary.issueQty || 0) > 0;
+  const isCompleted = String(activity.status || "").toLowerCase() === "completed" || Boolean(activity.settled_at);
+  if (shouldBeCompleted && !isCompleted) {
+    const { error } = await supabase.from("activities").update({
+      status: "Completed",
+      settled_at: nowIso()
+    }).eq("id", activity.id);
+    if (error) throw error;
+  }
+}
+
 async function getPendingSettlements(supabase) {
   const context = await getSettlementContext(supabase);
   return context.activities
-    .filter((activity) => activity.status === "Completed" || activity.settled_at)
     .map((activity) => buildSettlementSummaryForActivity(activity, context))
-    .filter((row) => Number(row.summary.pendingAmount || 0) > 0)
+    .filter((row) => {
+      const hasIssueHistory = Number(row.summary?.issueQty || 0) > 0;
+      const isCompleted = String(row.activityStatus || "").toLowerCase() === "completed" || Boolean(row.settledAt);
+      return hasIssueHistory && (!isCompleted || Number(row.summary?.pendingAmount || 0) > 0);
+    })
     .sort((a, b) => Number(b.summary.pendingAmount || 0) - Number(a.summary.pendingAmount || 0) || String(a.activityName).localeCompare(String(b.activityName)));
 }
 
@@ -1862,12 +1893,8 @@ async function createSettlementPayment(supabase, payload, currentUser) {
   const activity = context.activities.find((row) => row.id === resolvedActivityId || row.activity_code === activityId);
   if (activity) {
     const detail = buildSettlementSummaryForActivity(activity, context);
-    if (Number(detail.summary.pendingAmount || 0) <= 0 && String(activity.status || "").toLowerCase() !== "completed") {
-      const { error: updateError } = await supabase.from("activities").update({
-        status: "Completed",
-        settled_at: nowIso()
-      }).eq("id", activity.id);
-      if (updateError) throw updateError;
+    if (Number(detail.summary.pendingAmount || 0) <= 0) {
+      await syncActivitySettlementStatus(supabase, activity.id);
     }
   }
   return {
@@ -1937,6 +1964,8 @@ async function savePendingSettlementAdjustments(supabase, payload, currentUser) 
       createdAdjustments.push({ bookId, target, direction, quantity: absQty });
     }
   }
+
+  await syncActivitySettlementStatus(supabase, activity.id);
 
   return {
     activityId,
