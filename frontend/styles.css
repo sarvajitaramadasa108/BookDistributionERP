@@ -610,12 +610,28 @@ tbody tr:hover td {
   display: grid;
   place-items: center;
   gap: 10px;
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(12, 29, 51, 0.24);
   z-index: 20;
 }
 
 .loading-overlay.hidden {
   display: none;
+}
+
+.loading-card {
+  min-width: 240px;
+  max-width: min(92vw, 320px);
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 20px 22px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow-strong);
+  color: var(--blue-900);
+  font-weight: 700;
+  text-align: center;
 }
 
 .loader {

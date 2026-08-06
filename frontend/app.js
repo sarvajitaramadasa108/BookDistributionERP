@@ -104,6 +104,7 @@
   const sidebar = document.getElementById("sidebar");
   const sidebarToggleButton = document.getElementById("sidebarToggleButton");
   const loadingOverlay = document.getElementById("loadingOverlay");
+  const loadingOverlayLabel = document.getElementById("loadingOverlayLabel");
   const toastStack = document.getElementById("toastStack");
   const authRoot = document.getElementById("authRoot");
   const userChip = document.getElementById("userChip");
@@ -6684,8 +6685,11 @@
     return `Rs. ${Number(value || 0).toLocaleString("en-IN")}`;
   }
 
-  function setLoading(value) {
+  function setLoading(value, message) {
     loadingOverlay.classList.toggle("hidden", !value);
+    if (loadingOverlayLabel) {
+      loadingOverlayLabel.textContent = value ? (message || "Processing in progress...") : "Loading...";
+    }
   }
 
   function showToast(message) {
