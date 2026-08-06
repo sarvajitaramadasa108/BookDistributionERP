@@ -4190,6 +4190,19 @@
     });
   }
 
+  function focusTopDocumentLine(kind) {
+    requestAnimationFrame(function () {
+      const table = document.querySelector(".line-table.scroll-lines");
+      if (table) {
+        table.scrollTop = 0;
+      }
+      const input = document.querySelector('[data-book-picker="' + kind + '-0"]');
+      if (input) {
+        input.focus();
+      }
+    });
+  }
+
   function getIssuedActivityOptions() {
     return state.activities.filter((activity) => {
       const activityRef = activity.activityRowId || activity.activityId;
@@ -4666,8 +4679,9 @@
 
   function addPurchaseLine() {
     syncPurchaseDraft();
-    state.purchaseLines.push(blankPurchaseLine());
+    state.purchaseLines.unshift(blankPurchaseLine());
     renderPurchaseModal();
+    focusTopDocumentLine("purchase");
   }
 
   function removePurchaseLine(index) {
@@ -5141,9 +5155,10 @@
 
   function addOpeningLine() {
     syncOpeningDraft();
-    state.openingLines.push(blankOpeningLine());
-    state.openingBookQueries.push("");
+    state.openingLines.unshift(blankOpeningLine());
+    state.openingBookQueries.unshift("");
     renderOpeningStockModal();
+    focusTopDocumentLine("opening");
   }
 
   function removeOpeningLine(index) {
@@ -5590,9 +5605,10 @@
 
   function addUnsettledLine() {
     syncUnsettledDraft();
-    state.unsettledLines.push(blankUnsettledLine());
-    state.unsettledBookQueries.push("");
+    state.unsettledLines.unshift(blankUnsettledLine());
+    state.unsettledBookQueries.unshift("");
     renderUnsettledOpeningModal();
+    focusTopDocumentLine("unsettled");
   }
 
   function removeUnsettledLine(index) {
@@ -5738,9 +5754,10 @@
 
   function addSaleLine() {
     syncSaleDraft();
-    state.saleLines.push(blankSaleLine());
-    state.saleBookQueries.push("");
+    state.saleLines.unshift(blankSaleLine());
+    state.saleBookQueries.unshift("");
     renderSaleModal();
+    focusTopDocumentLine("sale");
   }
 
   function removeSaleLine(index) {
@@ -5893,9 +5910,10 @@
 
   function addIssueLine() {
     syncIssueDraft();
-    state.issueLines.push(blankIssueLine());
-    state.issueBookQueries.push("");
+    state.issueLines.unshift(blankIssueLine());
+    state.issueBookQueries.unshift("");
     renderIssueModal();
+    focusTopDocumentLine("issue");
   }
 
   function removeIssueLine(index) {
@@ -6078,9 +6096,10 @@
 
   function addReceiveLine() {
     syncReceiveDraft();
-    state.receiveLines.push(blankReceiveLine());
-    state.receiveBookQueries.push("");
+    state.receiveLines.unshift(blankReceiveLine());
+    state.receiveBookQueries.unshift("");
     renderReceiveModal();
+    focusTopDocumentLine("receive");
   }
 
   function removeReceiveLine(index) {
@@ -6253,9 +6272,10 @@
 
   function addTransferLine() {
     syncTransferDraft();
-    state.transferLines.push(blankTransferLine());
-    state.transferBookQueries.push("");
+    state.transferLines.unshift(blankTransferLine());
+    state.transferBookQueries.unshift("");
     renderTransferModal();
+    focusTopDocumentLine("transfer");
   }
 
   function removeTransferLine(index) {
@@ -6291,6 +6311,7 @@
     syncIssueDraft();
     state.issueDraft.fromWarehouseId = warehouseId;
     state.issueLines = [blankIssueLine()];
+    state.issueBookQueries = [""];
     renderIssueModal();
     refreshCurrentStockForOpenDocumentModal();
   }
@@ -6299,6 +6320,7 @@
     syncSaleDraft();
     state.saleDraft.warehouseId = warehouseId;
     state.saleLines = [blankSaleLine()];
+    state.saleBookQueries = [""];
     renderSaleModal();
     refreshCurrentStockForOpenDocumentModal();
   }
@@ -6307,6 +6329,7 @@
     syncTransferDraft();
     state.transferDraft.fromWarehouseId = warehouseId;
     state.transferLines = [blankTransferLine()];
+    state.transferBookQueries = [""];
     renderTransferModal();
     refreshCurrentStockForOpenDocumentModal();
   }
