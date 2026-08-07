@@ -1040,6 +1040,16 @@ async function updateDocumentInPlace(supabase, payload, currentUser) {
   if (docError) throw docError;
   if (!doc) throw new Error("Document not found");
   if (!isCountableDocument(doc)) throw new Error("This document cannot be edited");
+  if (doc.activity_id) {
+    const context = await getSettlementContext(supabase);
+    const activity = context.activities.find((row) => row.id === doc.activity_id);
+    if (activity) {
+      const detail = buildSettlementSummaryForActivity(activity, context);
+      if (Number(detail.summary?.pendingAmount || 0) <= 0) {
+        throw new Error("This activity is fully settled. Document editing is locked.");
+      }
+    }
+  }
   const { data: existingLines, error: linesError } = await supabase
     .from("document_lines")
     .select("*")

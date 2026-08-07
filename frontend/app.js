@@ -566,7 +566,7 @@
                 <td>${escapeHtml(row.notes || "-")}</td>
                 <td>
                   <div class="row-actions">
-                    ${isMainAdmin() ? `<button class="small-button" type="button" onclick="window.erpApp.openDocumentEditForm('${escapeAttribute(row.documentId)}')">Edit</button>` : ""}
+                    ${canEditActivityLinkedDocument(row.activityId) ? `<button class="small-button" type="button" onclick="window.erpApp.openDocumentEditForm('${escapeAttribute(row.documentId)}')">Edit</button>` : ""}
                     <button class="small-button" type="button" onclick="window.erpApp.previewDocumentPdf('${escapeAttribute(row.documentId)}')">PDF</button>
                   </div>
                 </td>
@@ -3764,6 +3764,22 @@
     rerenderDocumentModal(kind, index, value);
   }
 
+  function onIssueItemInput(index, value) {
+    const line = state.issueLines[index];
+    if (!line) return;
+    const bucket = ensureBookPickerState("issue", index);
+    bucket[index] = value;
+    const itemGroup = getLineItemGroup(line, "BOOK");
+    const items = getIssueSelectableItems(state.issueDraft.fromWarehouseId || "", itemGroup);
+    const match = resolveIssuePickerSelection(value, items);
+    if (match) {
+      line.bookId = match.erpCode || match.bookId || "";
+      line.rate = Number(line.rate || 0);
+    } else if (!String(value || "").trim()) {
+      line.bookId = "";
+    }
+  }
+
   function pickBookFromPicker(kind, index, bookId) {
     const line = getDocumentLineByKind(kind, index);
     if (!line) return;
@@ -3776,6 +3792,66 @@
 
   function getBookPickerDisplayLabel(book) {
     return `${book.name || book["Book Name"] || "-"}${book.bookType || book.category || book["Book Type"] ? ` - ${book.bookType || book.category || book["Book Type"]}` : ""}`;
+  }
+
+  function getIssueItemPickerValue(book) {
+    const code = book.erpCode || book.bookId || "";
+    const name = book.name || book["Book Name"] || "";
+    return [code, name].filter(Boolean).join(" | ");
+  }
+
+  function getIssueSelectableItems(fromWarehouseId, itemGroup) {
+    return getDocumentItemsForGroup(itemGroup).filter((book) => {
+      const itemId = book.erpCode || book.bookId;
+      if (!fromWarehouseId || !state.currentStockLoaded) {
+        return true;
+      }
+      return getAvailableStock(fromWarehouseId, itemId) > 0;
+    });
+  }
+
+  function resolveIssuePickerSelection(value, items) {
+    const needle = String(value || "").trim().toLowerCase();
+    if (!needle) return null;
+    return items.find((book) => {
+      const code = String(book.erpCode || book.bookId || "").trim().toLowerCase();
+      const name = String(book.name || book["Book Name"] || "").trim().toLowerCase();
+      const display = getIssueItemPickerValue(book).toLowerCase();
+      return needle === code || needle === name || needle === display;
+    }) || null;
+  }
+
+  function issueItemPickerMarkup(index, line, fromWarehouseId) {
+    const itemGroup = getLineItemGroup(line, "BOOK");
+    const singular = getItemGroupSingularLabel(itemGroup);
+    const items = getIssueSelectableItems(fromWarehouseId, itemGroup);
+    const selectedBook = line.bookId ? getBook(line.bookId) : null;
+    const inputValue = state.issueBookQueries[index] || (selectedBook ? getIssueItemPickerValue(selectedBook) : "");
+    const datalistId = `issueItems-${index}`;
+    return `
+      <div class="book-picker">
+        ${renderLineItemGroupField("issue", index, line, "BOOK")}
+        <label class="field">
+          <span>Select ${singular}</span>
+          <input
+            type="search"
+            list="${escapeAttribute(datalistId)}"
+            data-book-picker="issue-${index}"
+            value="${escapeAttribute(inputValue)}"
+            placeholder="Type ERP code or ${singular.toLowerCase()} name"
+            autocomplete="off"
+            oninput="window.erpApp.onIssueItemInput(${index}, this.value)">
+          <datalist id="${escapeAttribute(datalistId)}">
+            ${items.map((book) => {
+              const itemId = book.erpCode || book.bookId;
+              const avail = fromWarehouseId && state.currentStockLoaded ? getAvailableStock(fromWarehouseId, itemId) : null;
+              return `<option value="${escapeAttribute(getIssueItemPickerValue(book))}">${escapeHtml(`${getBookType(book)}${avail !== null ? ` | Avail ${avail}` : ""}`)}</option>`;
+            }).join("")}
+          </datalist>
+        </label>
+        ${selectedBook ? `<div class="book-picker-selected">Selected: ${escapeHtml(getIssueItemPickerValue(selectedBook))}${fromWarehouseId && state.currentStockLoaded ? ` | Avail ${escapeHtml(String(getAvailableStock(fromWarehouseId, selectedBook.erpCode || selectedBook.bookId)))}` : ""}</div>` : ""}
+      </div>
+    `;
   }
 
   function filterBooksForPicker(activeBooks, query, warehouseId) {
@@ -4444,6 +4520,23 @@
       const activityRef = activity.activityRowId || activity.activityId;
       return state.documents.some((document) => String(document.activityId || "") === String(activityRef || "") && (document.documentType === "ISSUE" || document.documentType === "UNSETTLED_OPENING"));
     });
+  }
+
+  function getIssueActivityOptions() {
+    return state.activities
+      .filter((activity) => activity.status !== "Cancelled")
+      .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")) || String(a.activityId || "").localeCompare(String(b.activityId || "")));
+  }
+
+  function canEditActivityLinkedDocument(activityId) {
+    if (!isMainAdmin()) {
+      return false;
+    }
+    const activityRef = String(activityId || "").trim();
+    if (!activityRef) {
+      return true;
+    }
+    return state.pendingSettlements.some((row) => String(row.activityId || "").trim() === activityRef);
   }
 
   function isMainAdmin() {
@@ -6054,9 +6147,8 @@
   }
 
   function renderIssueModal() {
-    const itemGroup = normalizeItemGroup(state.issueDraft.itemGroup || "BOOK");
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
-    const openActivities = state.activities.filter((activity) => activity.status !== "Completed" && activity.status !== "Cancelled");
+    const issueActivities = getIssueActivityOptions();
     const draft = state.issueDraft;
     const isComplimentary = state.issueDocumentType === "COMPLIMENTARY";
     const fromWarehouseId = draft.fromWarehouseId || "";
@@ -6081,12 +6173,11 @@
               ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.fromWarehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
             </select>
           </label>
-          ${renderDocumentItemGroupField("issue", draft)}
           <label class="field wide-field">
             <span>Activity</span>
             <select name="activityId" required>
               <option value="">Select activity</option>
-              ${openActivities.map((activity) => `<option value="${escapeAttribute(activity.activityId)}" ${draft.activityId === activity.activityId ? "selected" : ""}>${escapeHtml(activity.name)} (${escapeHtml(getWarehouseName(activity.warehouseId))})</option>`).join("")}
+              ${issueActivities.map((activity) => `<option value="${escapeAttribute(activity.activityId)}" ${draft.activityId === activity.activityId ? "selected" : ""}>${escapeHtml(activity.name)} (${escapeHtml(getWarehouseName(activity.warehouseId))})</option>`).join("")}
             </select>
           </label>
           <label class="field wide-field">
@@ -6095,14 +6186,14 @@
           </label>
           <div class="wide-field">
             <div class="line-editor-header">
-              <h3>${isComplimentary ? `${getItemGroupLabel(itemGroup)} for Complimentary Issue` : `${getItemGroupLabel(itemGroup)}${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}`}</h3>
+              <h3>${isComplimentary ? `Complimentary Issue${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}` : `Issue Entry${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}`}</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addIssueLine()">Add Line</button>
             </div>
-            ${hasAnyItems ? issueLinesMarkup([], fromWarehouseId, itemGroup) : '<div class="empty-state">Add active books or devotional items before posting issue.</div>'}
+            ${hasAnyItems ? issueLinesMarkup([], fromWarehouseId) : '<div class="empty-state">Add active books or devotional items before posting issue.</div>'}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit" ${(hasAnyItems && fromWarehouseId && openActivities.length) ? "" : "disabled"}>${isComplimentary ? "Post Complimentary" : "Post Issue"}</button>
+            <button class="button" type="submit" ${(hasAnyItems && fromWarehouseId && issueActivities.length) ? "" : "disabled"}>${isComplimentary ? "Post Complimentary" : "Post Issue"}</button>
           </div>
         </form>
       </section>
@@ -6111,12 +6202,12 @@
     document.getElementById("issueForm").addEventListener("submit", saveIssueDocument);
   }
 
-  function issueLinesMarkup(activeBooks, fromWarehouseId, itemGroup) {
+  function issueLinesMarkup(activeBooks, fromWarehouseId) {
     return `
       <div class="line-table scroll-lines">
         ${state.issueLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("issue", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.issueBookQueries[index] || "", fromWarehouseId, itemGroup)}
+            ${issueItemPickerMarkup(index, line, fromWarehouseId)}
             <label class="field qty-field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateIssueLine(${index}, 'quantity', this.value)" placeholder="Qty">
@@ -6161,7 +6252,7 @@
       fromWarehouseId: data.get("fromWarehouseId") || "",
       activityId: data.get("activityId") || "",
       notes: data.get("notes") || "",
-      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.issueDraft.itemGroup || "BOOK")
+      itemGroup: normalizeItemGroup(state.issueDraft.itemGroup || "BOOK")
     };
   }
 
@@ -6188,7 +6279,7 @@
       documentDate: data.get("documentDate"),
       fromWarehouseId: data.get("fromWarehouseId"),
       activityId: data.get("activityId"),
-      itemGroup: normalizeItemGroup(data.get("itemGroup") || state.issueDraft.itemGroup || "BOOK"),
+      itemGroup: "BOOK",
       status: "Posted",
       notes: data.get("notes").trim(),
       lines
@@ -7172,6 +7263,7 @@
     removeUnsettledLine,
     updateUnsettledLine,
     setBookPickerQuery,
+    onIssueItemInput,
     pickBookFromPicker,
     updateDocumentLineItemGroup,
     openIssueForm,
