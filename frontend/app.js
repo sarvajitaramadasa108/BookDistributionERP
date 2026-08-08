@@ -4540,7 +4540,12 @@
   }
 
   function isMainAdmin() {
-    return (state.currentUser && state.currentUser.role === "mainAdmin") || appConfig.currentUserRole === "mainAdmin";
+    const currentRole = String(state.currentUser && state.currentUser.role || "").trim();
+    const configuredRole = String(appConfig.currentUserRole || "").trim();
+    return currentRole === "mainAdmin"
+      || currentRole === "admin"
+      || configuredRole === "mainAdmin"
+      || configuredRole === "admin";
   }
 
   function getActivityName(activityId) {

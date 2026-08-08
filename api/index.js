@@ -308,7 +308,9 @@ async function requireCurrentUser(supabase, payload, publicAction) {
 }
 
 function requireAdminUser(currentUser) {
-  if (!currentUser || currentUser.role !== "mainAdmin") {
+  const role = String(currentUser && currentUser.role || "").trim();
+  const isAdmin = role === "mainAdmin" || role === "admin";
+  if (!currentUser || !isAdmin) {
     throw new Error("Admin access required");
   }
 }
