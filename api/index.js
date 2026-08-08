@@ -710,6 +710,17 @@ async function booksAdminList(supabase) {
   return itemsList(supabase, { itemGroup: "BOOK" });
 }
 
+async function itemsAdminList(supabase, payload) {
+  return itemsList(supabase, payload);
+}
+
+async function itemsPublicList(supabase, payload) {
+  return (await itemsList(supabase, payload)).map((row) => {
+    const { purchasePrice, distributorPrice, ...publicRow } = row;
+    return publicRow;
+  });
+}
+
 async function booksCreate(supabase, payload) {
   return createItem(supabase, { ...payload, itemGroup: "BOOK" });
 }
@@ -2679,7 +2690,10 @@ async function main(request) {
         requireAdminUser(currentUser);
         return json(200, { ok: true, data: await booksBulkUpsert(supabase, payload) });
       case "items.list":
-        return json(200, { ok: true, data: await itemsList(supabase, payload) });
+        return json(200, { ok: true, data: await itemsPublicList(supabase, payload) });
+      case "items.adminList":
+        requireAdminUser(currentUser);
+        return json(200, { ok: true, data: await itemsAdminList(supabase, payload) });
       case "items.create":
         requireAdminUser(currentUser);
         return json(200, { ok: true, data: await itemsCreate(supabase, payload) });

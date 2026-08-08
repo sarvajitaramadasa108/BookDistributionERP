@@ -201,7 +201,7 @@
   }
 
   async function renderDevotionalItems() {
-    state.devotionalItems = await window.erpApi.request("items.list", { itemGroup: "PARAPHERNALIA" });
+    state.devotionalItems = await window.erpApi.request(isMainAdmin() ? "items.adminList" : "items.list", { itemGroup: "PARAPHERNALIA" });
     return renderDevotionalItemsMarkup();
   }
 
@@ -420,7 +420,7 @@
       }));
     }
     if (!state.devotionalItems.length) {
-      jobs.push(window.erpApi.request("items.list", { itemGroup: "PARAPHERNALIA" }).then((rows) => {
+      jobs.push(window.erpApi.request(isMainAdmin() ? "items.adminList" : "items.list", { itemGroup: "PARAPHERNALIA" }).then((rows) => {
         state.devotionalItems = Array.isArray(rows) ? rows : [];
       }));
     }
@@ -582,7 +582,7 @@
     const results = await Promise.allSettled([
       window.erpApi.request("stock.current"),
       window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list"),
-      window.erpApi.request("items.list", { itemGroup: "PARAPHERNALIA" }),
+      window.erpApi.request(isMainAdmin() ? "items.adminList" : "items.list", { itemGroup: "PARAPHERNALIA" }),
       window.erpApi.request("warehouses.list"),
       window.erpApi.request("devotees.list"),
       window.erpApi.request("activities.list"),
@@ -5210,7 +5210,7 @@
       setLoading(true);
       try {
         await window.erpApi.request("items.bulkUpsert", { itemGroup: "PARAPHERNALIA", items });
-        state.devotionalItems = await window.erpApi.request("items.list", { itemGroup: "PARAPHERNALIA" });
+        state.devotionalItems = await window.erpApi.request(isMainAdmin() ? "items.adminList" : "items.list", { itemGroup: "PARAPHERNALIA" });
         content.innerHTML = renderDevotionalItemsMarkup();
         showToast(`Imported ${items.length} devotional items`);
       } finally {
