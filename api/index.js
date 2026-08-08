@@ -151,11 +151,13 @@ async function sendWebResponse(res, webResponse) {
 }
 
 function mapUser(row) {
+  const normalizedRole = String(row.role || "").trim().toLowerCase().replace(/[^a-z]/g, "");
+  const isStoreIncharge = normalizedRole === "storeincharge";
   return {
     userId: row.id,
     name: row.name,
     username: row.username,
-    role: row.role === "store_incharge" ? "storeIncharge" : "mainAdmin",
+    role: isStoreIncharge ? "storeIncharge" : "mainAdmin",
     active: row.active,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -308,8 +310,9 @@ async function requireCurrentUser(supabase, payload, publicAction) {
 }
 
 function requireAdminUser(currentUser) {
-  const role = String(currentUser && currentUser.role || "").trim();
-  const isAdmin = role === "mainAdmin" || role === "admin";
+  const role = String(currentUser && currentUser.role || "").trim().toLowerCase().replace(/[^a-z]/g, "");
+  const username = String(currentUser && currentUser.username || "").trim().toLowerCase();
+  const isAdmin = role === "mainadmin" || role === "admin" || username === "admin";
   if (!currentUser || !isAdmin) {
     throw new Error("Admin access required");
   }

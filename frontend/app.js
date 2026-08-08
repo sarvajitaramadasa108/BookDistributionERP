@@ -4540,11 +4540,14 @@
   }
 
   function isMainAdmin() {
-    const currentRole = String(state.currentUser && state.currentUser.role || "").trim();
-    const configuredRole = String(appConfig.currentUserRole || "").trim();
-    return currentRole === "mainAdmin"
+    const normalizeRole = (value) => String(value || "").trim().toLowerCase().replace(/[^a-z]/g, "");
+    const currentRole = normalizeRole(state.currentUser && state.currentUser.role);
+    const configuredRole = normalizeRole(appConfig.currentUserRole);
+    const currentUsername = String(state.currentUser && state.currentUser.username || "").trim().toLowerCase();
+    return currentRole === "mainadmin"
       || currentRole === "admin"
-      || configuredRole === "mainAdmin"
+      || currentUsername === "admin"
+      || configuredRole === "mainadmin"
       || configuredRole === "admin";
   }
 
