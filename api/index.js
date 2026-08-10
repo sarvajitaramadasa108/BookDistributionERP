@@ -141,6 +141,11 @@ function buildCatalogProfileFromRequestRows(rows) {
   };
 }
 
+function canAcceptCatalogRequest(row) {
+  const status = String(row.status || "").trim().toUpperCase();
+  return !["ACCEPTED", "FULFILLED", "REJECTED"].includes(status);
+}
+
 function normalizeCatalogKey(value) {
   return String(value || "")
     .replace(/[^\p{L}\p{N}]+/gu, " ")
@@ -1196,7 +1201,7 @@ async function updateDocumentInPlace(supabase, payload, currentUser) {
   if (doc.activity_id) {
     await syncActivitySettlementStatus(supabase, doc.activity_id);
   }
-  return { documentId: doc.document_code };
+  return { documentId: doc.document_code, documentRowId: doc.id };
 }
 
 function isCountableDocument(doc) {
@@ -1784,6 +1789,11 @@ async function createCatalogRequest(supabase, payload, currentUser) {
     folkGuideName: request.folk_guide_name,
     preacherName: request.preacher_name,
     requesterLocation: request.requester_location,
+    acceptedActivityId: request.accepted_activity_id || "",
+    acceptedActivityCode: request.accepted_activity_code || "",
+    acceptedDocumentId: request.accepted_document_id || "",
+    acceptedDocumentCode: request.accepted_document_code || "",
+    acceptedAt: request.accepted_at || "",
     createdAt: request.created_at
   };
 }
@@ -1829,6 +1839,11 @@ async function catalogRequestsList(supabase) {
       folkGuideName: row.folk_guide_name || "",
       preacherName: row.preacher_name || "",
       requesterLocation: row.requester_location || "",
+      acceptedActivityId: row.accepted_activity_id || "",
+      acceptedActivityCode: row.accepted_activity_code || "",
+      acceptedDocumentId: row.accepted_document_id || "",
+      acceptedDocumentCode: row.accepted_document_code || "",
+      acceptedAt: row.accepted_at || "",
       notes: row.notes || "",
       status: row.status || "New",
       totalQty,
@@ -1883,6 +1898,11 @@ async function catalogRequestsByMobile(supabase, payload) {
       folkGuideName: row.folk_guide_name || "",
       preacherName: row.preacher_name || "",
       requesterLocation: row.requester_location || "",
+      acceptedActivityId: row.accepted_activity_id || "",
+      acceptedActivityCode: row.accepted_activity_code || "",
+      acceptedDocumentId: row.accepted_document_id || "",
+      acceptedDocumentCode: row.accepted_document_code || "",
+      acceptedAt: row.accepted_at || "",
       notes: row.notes || "",
       status: row.status || "New",
       totalQty,
@@ -1892,6 +1912,86 @@ async function catalogRequestsByMobile(supabase, payload) {
       lines: requestLines
     };
   });
+}
+
+async function approveCatalogRequest(supabase, payload, currentUser) {
+  const requestRef = String(payload.requestId || payload.requestCode || "").trim();
+  if (!requestRef) throw new Error("Request is required");
+  const { data: requestRow, error: requestError } = await supabase
+    .from("catalog_requests")
+    .select("*")
+    .or(`id.eq.${requestRef},request_code.eq.${requestRef}`)
+    .maybeSingle();
+  if (requestError) throw requestError;
+  if (!requestRow) throw new Error("Request not found");
+  if (!canAcceptCatalogRequest(requestRow)) {
+    throw new Error("This request is already processed");
+  }
+
+  const linesResult = await supabase
+    .from("catalog_request_lines")
+    .select("*")
+    .eq("request_id", requestRow.id)
+    .order("line_no", { ascending: true });
+  if (linesResult.error) throw linesResult.error;
+  const requestLines = Array.isArray(linesResult.data) ? linesResult.data : [];
+  if (!requestLines.length) throw new Error("This request has no item lines");
+
+  const activityPayload = {
+    name: String(payload.activityName || payload.name || "").trim(),
+    type: String(payload.activityType || payload.type || "Stall").trim(),
+    devoteeId: String(payload.devoteeId || "").trim(),
+    warehouseId: String(payload.warehouseId || requestRow.source_warehouse_code || "").trim(),
+    spoc: String(payload.spoc || requestRow.requester_name || "").trim(),
+    startDate: payload.startDate || null,
+    endDate: payload.endDate || null,
+    status: String(payload.activityStatus || payload.status || "Running").trim() || "Running"
+  };
+  if (!activityPayload.name || !activityPayload.type || !activityPayload.devoteeId || !activityPayload.warehouseId) {
+    throw new Error("Activity name, type, devotee, and warehouse are required");
+  }
+
+  const createdActivity = await createActivity(supabase, activityPayload);
+  const createdActivityCode = String(createdActivity.activity_code || "").trim();
+  const issuePayload = {
+    documentType: "ISSUE",
+    documentDate: payload.issueDate || toDateOnly(nowIso()),
+    fromWarehouseId: activityPayload.warehouseId,
+    activityId: createdActivityCode,
+    status: "Posted",
+    notes: String(payload.issueNotes || requestRow.notes || "").trim(),
+    itemGroup: requestRow.item_group || deriveRequestItemGroup(requestLines, "BOOK"),
+    lines: requestLines.map((line) => ({
+      bookId: line.item_erp_code,
+      erpCode: line.item_erp_code,
+      quantity: Number(line.requested_qty || 0),
+      rate: Number(line.sale_price || 0),
+      notes: `Approved from request ${requestRow.request_code || ""}`.trim()
+    }))
+  };
+  const createdIssue = await createDocument(supabase, issuePayload, currentUser);
+
+  const { error: updateRequestError } = await supabase.from("catalog_requests").update({
+    status: "Accepted",
+    accepted_activity_id: createdActivity.id,
+    accepted_activity_code: createdActivity.activity_code || "",
+    accepted_document_id: createdIssue.documentRowId || null,
+    accepted_document_code: createdIssue.documentId || "",
+    accepted_at: nowIso(),
+    accepted_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null,
+    updated_at: nowIso()
+  }).eq("id", requestRow.id);
+  if (updateRequestError) throw updateRequestError;
+
+  return {
+    requestId: requestRow.id,
+    requestCode: requestRow.request_code,
+    status: "Accepted",
+    activityId: createdActivity.activity_code || "",
+    activityName: createdActivity.activity_name || "",
+    documentId: createdIssue.documentId || "",
+    acceptedAt: nowIso()
+  };
 }
 
 async function getActivityUnsettled(supabase) {
@@ -2955,6 +3055,8 @@ async function main(request) {
         return json(200, { ok: true, data: await catalogRequestsByMobile(supabase, payload) });
       case "requests.list":
         return json(200, { ok: true, data: await catalogRequestsList(supabase) });
+      case "requests.approve":
+        return json(200, { ok: true, data: await approveCatalogRequest(supabase, payload, currentUser) });
       case "reports.activityLedger":
         return json(200, { ok: true, data: await getActivityLedger(supabase, payload) });
       case "reports.activityMonthly":

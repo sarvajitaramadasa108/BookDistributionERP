@@ -129,6 +129,7 @@
       "catalog.submit": () => createMockCatalogRequest(payload),
       "catalog.requestsByMobile": () => getMockCatalogRequestsByMobile(payload),
       "requests.list": () => mockData.requests.slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))),
+      "requests.approve": () => approveMockCatalogRequest(payload),
       "onlineClasses.warehouseBooks": () => getMockOnlineClassWarehouseBooks(payload),
       "onlineClasses.list": mockData.onlineClasses.slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))),
       "onlineClasses.submit": () => createMockOnlineClassRegistration(payload),
@@ -581,6 +582,55 @@
     return mockData.requests
       .filter((row) => String(row.requesterMobile || "").replace(/\D/g, "").slice(-10) === mobile)
       .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  }
+
+  function approveMockCatalogRequest(payload) {
+    const requestId = String(payload.requestId || payload.requestCode || "").trim();
+    const request = mockData.requests.find((row) => row.requestId === requestId || row.requestCode === requestId);
+    if (!request) {
+      throw new Error("Request not found");
+    }
+    if (["Accepted", "Rejected", "Fulfilled"].includes(String(request.status || ""))) {
+      throw new Error("This request is already processed");
+    }
+    const activity = createMockActivity({
+      name: String(payload.activityName || payload.name || "").trim(),
+      type: String(payload.activityType || payload.type || "Stall").trim(),
+      devoteeId: String(payload.devoteeId || "").trim(),
+      startDate: payload.startDate || "",
+      endDate: payload.endDate || "",
+      warehouseId: String(payload.warehouseId || request.sourceWarehouseCode || "").trim(),
+      spoc: String(payload.spoc || request.requesterName || "").trim(),
+      status: String(payload.activityStatus || payload.status || "Running").trim()
+    });
+    const document = createMockDocument({
+      documentType: "ISSUE",
+      documentDate: payload.issueDate || new Date().toISOString().slice(0, 10),
+      fromWarehouseId: activity.warehouseId,
+      activityId: activity.activityId,
+      status: "Posted",
+      notes: String(payload.issueNotes || request.notes || "").trim(),
+      lines: (request.lines || []).map((line) => ({
+        bookId: line.erpCode,
+        quantity: Number(line.requestedQty || 0),
+        rate: Number(line.salePrice || 0)
+      }))
+    });
+    request.status = "Accepted";
+    request.acceptedActivityId = activity.activityId;
+    request.acceptedDocumentId = document.documentId;
+    request.acceptedAt = new Date().toISOString();
+    request.updatedAt = request.acceptedAt;
+    saveMockData();
+    return {
+      requestId: request.requestId,
+      requestCode: request.requestCode,
+      status: request.status,
+      activityId: activity.activityId,
+      activityName: activity.name,
+      documentId: document.documentId,
+      acceptedAt: request.acceptedAt
+    };
   }
 
   function createMockOnlineClassRegistration(payload) {

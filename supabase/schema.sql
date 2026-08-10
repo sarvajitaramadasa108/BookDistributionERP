@@ -201,7 +201,13 @@ create table if not exists public.catalog_requests (
   preacher_name text not null default '',
   requester_location text not null default '',
   notes text not null default '',
-  status text not null default 'New' check (status in ('New', 'Viewed', 'Approved', 'Rejected', 'Fulfilled')),
+  status text not null default 'New' check (status in ('New', 'Viewed', 'Approved', 'Accepted', 'Rejected', 'Fulfilled')),
+  accepted_activity_id uuid references public.activities(id) on update cascade on delete set null,
+  accepted_activity_code text not null default '',
+  accepted_document_id uuid references public.documents(id) on update cascade on delete set null,
+  accepted_document_code text not null default '',
+  accepted_at timestamptz,
+  accepted_by_user_id uuid references public.users(id) on update cascade on delete set null,
   created_by_user_id uuid references public.users(id) on update cascade on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -274,11 +280,36 @@ alter table public.catalog_requests
   add column if not exists requester_location text not null default '';
 
 alter table public.catalog_requests
+  add column if not exists accepted_activity_id uuid references public.activities(id) on update cascade on delete set null;
+
+alter table public.catalog_requests
+  add column if not exists accepted_activity_code text not null default '';
+
+alter table public.catalog_requests
+  add column if not exists accepted_document_id uuid references public.documents(id) on update cascade on delete set null;
+
+alter table public.catalog_requests
+  add column if not exists accepted_document_code text not null default '';
+
+alter table public.catalog_requests
+  add column if not exists accepted_at timestamptz;
+
+alter table public.catalog_requests
+  add column if not exists accepted_by_user_id uuid references public.users(id) on update cascade on delete set null;
+
+alter table public.catalog_requests
   drop constraint if exists catalog_requests_item_group_check;
 
 alter table public.catalog_requests
   add constraint catalog_requests_item_group_check
   check (item_group in ('BOOK', 'PARAPHERNALIA', 'MIXED'));
+
+alter table public.catalog_requests
+  drop constraint if exists catalog_requests_status_check;
+
+alter table public.catalog_requests
+  add constraint catalog_requests_status_check
+  check (status in ('New', 'Viewed', 'Approved', 'Accepted', 'Rejected', 'Fulfilled'));
 
 drop trigger if exists trg_users_updated_at on public.users;
 create trigger trg_users_updated_at

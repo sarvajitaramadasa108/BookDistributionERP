@@ -32,6 +32,7 @@
     requestSearch: "",
     requestGroupFilter: "all",
     requestDetailId: "",
+    requestApprovalDraft: null,
     onlineClasses: [],
     onlineClassSearch: "",
     issueDraft: {},
@@ -1083,7 +1084,22 @@
   }
 
   function requestGroupLabel(group) {
-    return String(group || "BOOK").toUpperCase() === "PARAPHERNALIA" ? "Devotional Items" : "Books";
+    const normalized = String(group || "BOOK").toUpperCase();
+    if (normalized === "PARAPHERNALIA") return "Devotional Items";
+    if (normalized === "MIXED") return "Books + Devotional Items";
+    return "Books";
+  }
+
+  function requestStatusTone(statusValue) {
+    const normalized = String(statusValue || "").trim().toUpperCase();
+    if (["ACCEPTED", "FULFILLED"].includes(normalized)) return "good";
+    if (normalized === "REJECTED") return "bad";
+    return "warn";
+  }
+
+  function canApproveRequest(row) {
+    const normalized = String(row && row.status || "").trim().toUpperCase();
+    return !["ACCEPTED", "FULFILLED", "REJECTED"].includes(normalized);
   }
 
   function renderRequestsMarkup() {
@@ -1150,7 +1166,7 @@
                 <td>${escapeHtml((row.lines || []).length ? row.lines.map((line) => line.itemName).join(", ") : "-")}</td>
                 <td>${Number(row.totalQty || 0)}</td>
                 <td>${money(Number(row.totalAmount || 0))}</td>
-                <td>${status(row.status || "New", "warn")}</td>
+                <td>${status(row.status || "New", requestStatusTone(row.status))}</td>
                 <td><button class="small-button" type="button" onclick="window.erpApp.showRequestDetails('${escapeAttribute(row.requestId)}')">Show Details</button></td>
               </tr>
             `).join("")}
@@ -1176,8 +1192,20 @@
               <div class="detail-meta">
                 <div><strong>Name:</strong> ${escapeHtml(detail.requesterName || "-")}</div>
                 <div><strong>Mobile:</strong> ${escapeHtml(detail.requesterMobile || "-")}</div>
+                <div><strong>Category:</strong> ${escapeHtml(detail.requesterSegment || "-")}</div>
+                <div><strong>Location:</strong> ${escapeHtml(detail.requesterLocation || "-")}</div>
+                ${detail.folkGuideName ? `<div><strong>Folk Guide:</strong> ${escapeHtml(detail.folkGuideName)}</div>` : ""}
+                ${detail.preacherName ? `<div><strong>Preacher:</strong> ${escapeHtml(detail.preacherName)}</div>` : ""}
                 <div><strong>Warehouse:</strong> ${escapeHtml(detail.sourceWarehouseName || detail.sourceWarehouseCode || "-")}</div>
                 <div><strong>Notes:</strong> ${escapeHtml(detail.notes || "-")}</div>
+                ${detail.acceptedAt ? `<div><strong>Accepted On:</strong> ${escapeHtml(formatDateTime(detail.acceptedAt))}</div>` : ""}
+                ${detail.acceptedActivityCode ? `<div><strong>Activity:</strong> ${escapeHtml(detail.acceptedActivityCode)}</div>` : ""}
+                ${detail.acceptedDocumentCode ? `<div><strong>Issue Document:</strong> ${escapeHtml(detail.acceptedDocumentCode)}</div>` : ""}
+              </div>
+              <div class="form-actions" style="margin-top:14px;">
+                ${canApproveRequest(detail)
+                  ? `<button class="button" type="button" onclick="window.erpApp.openRequestApprovalForm('${escapeAttribute(detail.requestId)}')">Accept And Generate Issue</button>`
+                  : `<div class="empty-state" style="padding:10px 12px;">This request is already ${escapeHtml(String(detail.status || "").toLowerCase() || "processed")}.</div>`}
               </div>
             </div>
           </section>
@@ -2437,6 +2465,7 @@
       state.documentPdfPreviewUrl = "";
     }
     state.documentEditDetail = null;
+    state.requestApprovalDraft = null;
     state.stockEditWarehouseId = "";
     modalRoot.innerHTML = "";
   }
@@ -4617,6 +4646,187 @@
     content.innerHTML = renderRequestsMarkup();
   }
 
+  async function refreshRequestsData() {
+    state.requests = await window.erpApi.request("requests.list");
+    return state.requests;
+  }
+
+  async function refreshActivitiesData() {
+    const activities = await window.erpApi.request("activities.list");
+    state.activities = Array.isArray(activities) ? activities.map(normalizeActivity) : [];
+    return state.activities;
+  }
+
+  async function refreshDocumentsData() {
+    const documents = await window.erpApi.request("documents.list");
+    state.documents = Array.isArray(documents) ? documents.map(normalizeDocument) : [];
+    return state.documents;
+  }
+
+  async function loadCurrentStock(force = false) {
+    if (!force && state.currentStockLoaded) {
+      return state.currentStock;
+    }
+    state.currentStockLoading = true;
+    try {
+      state.currentStock = (await window.erpApi.request("stock.current")).map(normalizeStockRow);
+      state.currentStockLoaded = true;
+      return state.currentStock;
+    } finally {
+      state.currentStockLoading = false;
+    }
+  }
+
+  async function openRequestApprovalForm(requestId) {
+    const detail = state.requests.find((row) => row.requestId === requestId);
+    if (!detail) {
+      showToast("Request not found");
+      return;
+    }
+    if (!canApproveRequest(detail)) {
+      showToast("This request is already processed");
+      return;
+    }
+    setLoading(true);
+    try {
+      await ensureActivityMastersLoaded();
+    } catch (error) {
+      showToast(error.message || "Could not load approval form data");
+      return;
+    } finally {
+      setLoading(false);
+    }
+
+    const defaultWarehouseId = state.warehouses.find((warehouse) =>
+      warehouse.warehouseId === detail.sourceWarehouseCode || warehouse.rowId === detail.sourceWarehouseId
+    )?.warehouseId || detail.sourceWarehouseCode || "";
+    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active || warehouse.warehouseId === defaultWarehouseId);
+    const draft = {
+      requestId: detail.requestId,
+      activityName: detail.requesterName ? `${detail.requesterName} Request` : "",
+      activityType: "Stall",
+      devoteeId: "",
+      warehouseId: defaultWarehouseId,
+      startDate: new Date().toISOString().slice(0, 10),
+      endDate: "",
+      spoc: detail.requesterName || "",
+      activityStatus: "Running",
+      issueDate: new Date().toISOString().slice(0, 10),
+      issueNotes: detail.notes || ""
+    };
+    state.requestApprovalDraft = draft;
+
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="requestApprovalTitle">
+        <div class="modal-header">
+          <h2 id="requestApprovalTitle">Accept Request And Generate Issue</h2>
+          <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
+        </div>
+        <form class="form-grid" id="requestApprovalForm">
+          <input type="hidden" name="requestId" value="${escapeAttribute(detail.requestId)}">
+          <div class="wide-field detail-meta" style="margin-top:0;">
+            <div><strong>Request:</strong> ${escapeHtml(detail.requestCode || "-")}</div>
+            <div><strong>Name:</strong> ${escapeHtml(detail.requesterName || "-")}</div>
+            <div><strong>Mobile:</strong> ${escapeHtml(detail.requesterMobile || "-")}</div>
+            <div><strong>Worth:</strong> ${money(Number(detail.totalAmount || 0))}</div>
+          </div>
+          <label class="field wide-field">
+            <span>Activity Name</span>
+            <input name="activityName" required value="${escapeAttribute(draft.activityName)}" placeholder="Activity name">
+          </label>
+          <label class="field">
+            <span>Type</span>
+            <select name="activityType" required>
+              ${["Stall", "Daily", "Event", "Marathon", "Festival"].map((type) => `<option value="${type}" ${draft.activityType === type ? "selected" : ""}>${type}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field wide-field">
+            <span>Devotee</span>
+            <select name="devoteeId" required>
+              <option value="" selected disabled>Select devotee</option>
+              ${state.devotees.map((devotee) => `<option value="${escapeAttribute(devotee.devoteeId)}">${escapeHtml(devotee.devoteeName || devotee.devoteeId || "-")}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>Warehouse</span>
+            <select name="warehouseId" required>
+              <option value="">Select warehouse</option>
+              ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${draft.warehouseId === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>Start Date</span>
+            <input name="startDate" type="date" value="${escapeAttribute(draft.startDate)}">
+          </label>
+          <label class="field">
+            <span>End Date</span>
+            <input name="endDate" type="date" value="${escapeAttribute(draft.endDate)}">
+          </label>
+          <label class="field">
+            <span>SPOC</span>
+            <input name="spoc" value="${escapeAttribute(draft.spoc)}" placeholder="Person responsible">
+          </label>
+          <label class="field">
+            <span>Activity Status</span>
+            <select name="activityStatus">
+              ${["Running", "Draft"].map((item) => `<option value="${item}" ${draft.activityStatus === item ? "selected" : ""}>${item}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>Issue Date</span>
+            <input name="issueDate" type="date" value="${escapeAttribute(draft.issueDate)}">
+          </label>
+          <label class="field wide-field">
+            <span>Issue Notes</span>
+            <input name="issueNotes" value="${escapeAttribute(draft.issueNotes)}" placeholder="Optional note for issue document">
+          </label>
+          <div class="form-actions">
+            <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
+            <button class="button" type="submit">Accept Request</button>
+          </div>
+        </form>
+      </section>
+    `;
+    document.getElementById("requestApprovalForm").addEventListener("submit", submitRequestApproval);
+  }
+
+  async function submitRequestApproval(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const payload = {
+      requestId: data.get("requestId"),
+      activityName: String(data.get("activityName") || "").trim(),
+      activityType: data.get("activityType"),
+      devoteeId: data.get("devoteeId"),
+      warehouseId: data.get("warehouseId"),
+      startDate: data.get("startDate"),
+      endDate: data.get("endDate"),
+      spoc: String(data.get("spoc") || "").trim(),
+      activityStatus: data.get("activityStatus"),
+      issueDate: data.get("issueDate"),
+      issueNotes: String(data.get("issueNotes") || "").trim()
+    };
+    if (!payload.activityName || !payload.activityType || !payload.devoteeId || !payload.warehouseId) {
+      showToast("Activity name, type, devotee, and warehouse are required");
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await window.erpApi.request("requests.approve", payload);
+      closeModal();
+      await Promise.all([refreshRequestsData(), refreshActivitiesData(), refreshDocumentsData(), loadCurrentStock(true)]);
+      state.requestDetailId = result.requestId || payload.requestId;
+      content.innerHTML = renderRequestsMarkup();
+      showToast(`Request accepted. Issue ${result.documentId || ""} created`);
+    } catch (error) {
+      showToast(error.message || "Could not accept request");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function setActivityReportDevoteeSearch(value) {
     state.activityReportDevoteeSearch = value;
     content.innerHTML = renderReportsMarkup();
@@ -6695,17 +6905,7 @@
   }
 
   async function ensureCurrentStockLoaded() {
-    if (state.currentStockLoaded) {
-      return state.currentStock;
-    }
-    state.currentStockLoading = true;
-    try {
-      state.currentStock = (await window.erpApi.request("stock.current")).map(normalizeStockRow);
-      state.currentStockLoaded = true;
-      return state.currentStock;
-    } finally {
-      state.currentStockLoading = false;
-    }
+    return loadCurrentStock(false);
   }
 
   function invalidateCurrentStockCache() {
@@ -7218,6 +7418,7 @@
     setRequestGroupFilter,
     showRequestDetails,
     backToRequestsSummary,
+    openRequestApprovalForm,
     loadWarehouseReport,
     loadWarehouseDayWiseSales,
     downloadWarehouseReport,
