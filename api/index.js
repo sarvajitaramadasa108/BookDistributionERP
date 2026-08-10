@@ -1637,7 +1637,7 @@ async function onlineClassWarehouseBooks(supabase, payload) {
   if (itemsResult.error) throw itemsResult.error;
   const stockByBook = new Map();
   for (const row of stockRows || []) {
-    if (sourceWarehouseRow && String(row.warehouseId || "") !== String(sourceWarehouseRow.id || "")) continue;
+    if (sourceWarehouseRow && String(row.warehouseId || "") !== String(sourceWarehouseRow.warehouse_code || "")) continue;
     stockByBook.set(String(row.bookId || ""), Number(row.quantity || 0));
   }
   return (itemsResult.data || [])
@@ -1671,7 +1671,7 @@ async function catalogRequestItems(supabase, payload) {
   if (itemsResult.error) throw itemsResult.error;
   const stockByBook = new Map();
   for (const row of stockRows || []) {
-    if (String(row.warehouseId || "") !== String(sourceWarehouseRow.id || "")) continue;
+    if (String(row.warehouseId || "") !== String(sourceWarehouseRow.warehouse_code || "")) continue;
     stockByBook.set(String(row.bookId || ""), Number(row.quantity || 0));
   }
   return (itemsResult.data || [])
