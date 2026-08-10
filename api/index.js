@@ -75,6 +75,72 @@ function toDateOnly(value) {
   return d.toISOString().slice(0, 10);
 }
 
+function normalizeMobile(value) {
+  return String(value || "").replace(/\D/g, "").slice(-10);
+}
+
+function normalizeRequesterSegment(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return "";
+  if (raw === "CONGREGATION") return "CONGREGATION";
+  if (raw === "FOLK") return "FOLK";
+  if (raw === "FTM") return "FTM";
+  return "";
+}
+
+function deriveRequestItemGroup(lines, fallback = "BOOK") {
+  const groups = [...new Set((lines || []).map((line) => String(line.itemGroup || fallback || "BOOK").trim().toUpperCase()).filter(Boolean))];
+  if (!groups.length) return String(fallback || "BOOK").trim().toUpperCase();
+  return groups.length === 1 ? groups[0] : "MIXED";
+}
+
+function buildCatalogProfileFromRequestRows(rows) {
+  const ordered = Array.isArray(rows) ? rows : [];
+  const latest = ordered[0] || null;
+  if (!latest) {
+    return {
+      exists: false,
+      complete: false,
+      name: "",
+      mobile: "",
+      requesterSegment: "",
+      folkGuideName: "",
+      preacherName: "",
+      requesterLocation: ""
+    };
+  }
+
+  const values = {
+    name: "",
+    mobile: normalizeMobile(latest.requester_mobile || ""),
+    requesterSegment: "",
+    folkGuideName: "",
+    preacherName: "",
+    requesterLocation: ""
+  };
+  for (const row of ordered) {
+    if (!values.name && String(row.requester_name || "").trim()) values.name = String(row.requester_name || "").trim();
+    if (!values.requesterSegment && normalizeRequesterSegment(row.requester_segment)) values.requesterSegment = normalizeRequesterSegment(row.requester_segment);
+    if (!values.folkGuideName && String(row.folk_guide_name || "").trim()) values.folkGuideName = String(row.folk_guide_name || "").trim();
+    if (!values.preacherName && String(row.preacher_name || "").trim()) values.preacherName = String(row.preacher_name || "").trim();
+    if (!values.requesterLocation && String(row.requester_location || "").trim()) values.requesterLocation = String(row.requester_location || "").trim();
+  }
+
+  const missingFields = [];
+  if (!values.name) missingFields.push("name");
+  if (!values.requesterSegment) missingFields.push("requesterSegment");
+  if (!values.requesterLocation) missingFields.push("requesterLocation");
+  if (values.requesterSegment === "FOLK" && !values.folkGuideName) missingFields.push("folkGuideName");
+  if (values.requesterSegment === "CONGREGATION" && !values.preacherName) missingFields.push("preacherName");
+
+  return {
+    exists: true,
+    complete: missingFields.length === 0,
+    missingFields,
+    ...values
+  };
+}
+
 function normalizeCatalogKey(value) {
   return String(value || "")
     .replace(/[^\p{L}\p{N}]+/gu, " ")
@@ -1630,13 +1696,24 @@ async function catalogRequestItems(supabase, payload) {
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")) || String(a.erpCode || "").localeCompare(String(b.erpCode || "")));
 }
 
+async function catalogProfileLookup(supabase, payload) {
+  const requesterMobile = normalizeMobile(payload.requesterMobile || payload.mobile || "");
+  if (requesterMobile.length !== 10) throw new Error("Mobile number is required");
+  const { data, error } = await supabase
+    .from("catalog_requests")
+    .select("requester_name, requester_mobile, requester_segment, folk_guide_name, preacher_name, requester_location, created_at")
+    .eq("requester_mobile", requesterMobile)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) throw error;
+  return buildCatalogProfileFromRequestRows(data || []);
+}
+
 async function createCatalogRequest(supabase, payload, currentUser) {
-  const itemGroup = String(payload.itemGroup || "BOOK").trim().toUpperCase();
-  if (!["BOOK", "PARAPHERNALIA"].includes(itemGroup)) throw new Error("Item category is required");
   const sourceWarehouseRow = await resolveWarehouseRow(supabase, payload.sourceWarehouseId || payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
   if (!sourceWarehouseRow) throw new Error("Warehouse is required");
   const requesterName = String(payload.requesterName || payload.name || "").trim();
-  const requesterMobile = String(payload.requesterMobile || payload.mobile || "").replace(/\D/g, "").trim();
+  const requesterMobile = normalizeMobile(payload.requesterMobile || payload.mobile || "");
   if (!requesterName) throw new Error("Name is required");
   if (requesterMobile.length !== 10) throw new Error("Mobile number is required");
   const lines = Array.isArray(payload.lines) ? payload.lines : [];
@@ -1644,7 +1721,7 @@ async function createCatalogRequest(supabase, payload, currentUser) {
     .map((line) => ({
       erpCode: String(line.erpCode || line.bookId || "").trim(),
       itemName: String(line.itemName || line.name || "").trim(),
-      itemGroup: String(line.itemGroup || itemGroup).trim().toUpperCase(),
+      itemGroup: String(line.itemGroup || payload.itemGroup || "BOOK").trim().toUpperCase(),
       imageUrl: String(line.imageUrl || line.image_url || "").trim(),
       salePrice: Number(line.salePrice || 0),
       availableQty: Number(line.availableQty || 0),
@@ -1652,6 +1729,16 @@ async function createCatalogRequest(supabase, payload, currentUser) {
     }))
     .filter((line) => line.erpCode && line.itemName && line.quantity > 0);
   if (!cleanLines.length) throw new Error("Add at least one item");
+  const itemGroup = deriveRequestItemGroup(cleanLines, payload.itemGroup || "BOOK");
+  if (!["BOOK", "PARAPHERNALIA", "MIXED"].includes(itemGroup)) throw new Error("Item category is required");
+  const requesterSegment = normalizeRequesterSegment(payload.requesterSegment || payload.segment || payload.category || "");
+  const folkGuideName = String(payload.folkGuideName || "").trim();
+  const preacherName = String(payload.preacherName || "").trim();
+  const requesterLocation = String(payload.requesterLocation || payload.location || "").trim();
+  if (!requesterSegment) throw new Error("Category is required");
+  if (!requesterLocation) throw new Error("Location is required");
+  if (requesterSegment === "FOLK" && !folkGuideName) throw new Error("Folk guide name is required");
+  if (requesterSegment === "CONGREGATION" && !preacherName) throw new Error("Preacher name is required");
 
   const requestCode = await nextCode(supabase, "catalog_requests", "request_code", "REQ");
   const { data: request, error: requestError } = await supabase.from("catalog_requests").insert({
@@ -1662,6 +1749,10 @@ async function createCatalogRequest(supabase, payload, currentUser) {
     item_group: itemGroup,
     requester_name: requesterName,
     requester_mobile: requesterMobile,
+    requester_segment: requesterSegment,
+    folk_guide_name: folkGuideName,
+    preacher_name: preacherName,
+    requester_location: requesterLocation,
     notes: String(payload.notes || "").trim(),
     status: "New",
     created_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null
@@ -1689,6 +1780,10 @@ async function createCatalogRequest(supabase, payload, currentUser) {
     itemGroup: request.item_group,
     requesterName: request.requester_name,
     requesterMobile: request.requester_mobile,
+    requesterSegment: request.requester_segment,
+    folkGuideName: request.folk_guide_name,
+    preacherName: request.preacher_name,
+    requesterLocation: request.requester_location,
     createdAt: request.created_at
   };
 }
@@ -1730,6 +1825,64 @@ async function catalogRequestsList(supabase) {
       itemGroup: row.item_group || "BOOK",
       requesterName: row.requester_name || "",
       requesterMobile: row.requester_mobile || "",
+      requesterSegment: row.requester_segment || "",
+      folkGuideName: row.folk_guide_name || "",
+      preacherName: row.preacher_name || "",
+      requesterLocation: row.requester_location || "",
+      notes: row.notes || "",
+      status: row.status || "New",
+      totalQty,
+      totalAmount,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      lines: requestLines
+    };
+  });
+}
+
+async function catalogRequestsByMobile(supabase, payload) {
+  const requesterMobile = normalizeMobile(payload.requesterMobile || payload.mobile || "");
+  if (requesterMobile.length !== 10) throw new Error("Mobile number is required");
+  const [{ data: requests, error: requestError }, { data: lines, error: lineError }] = await Promise.all([
+    supabase.from("catalog_requests").select("*").eq("requester_mobile", requesterMobile).order("created_at", { ascending: false }),
+    supabase.from("catalog_request_lines").select("*").order("request_id", { ascending: true }).order("line_no", { ascending: true })
+  ]);
+  if (requestError) throw requestError;
+  if (lineError) throw lineError;
+  const linesByRequest = new Map();
+  for (const line of lines || []) {
+    const requestId = line.request_id;
+    if (!linesByRequest.has(requestId)) linesByRequest.set(requestId, []);
+    linesByRequest.get(requestId).push({
+      lineId: line.id,
+      lineNo: line.line_no,
+      erpCode: line.item_erp_code || "",
+      itemName: line.item_name || "",
+      itemGroup: line.item_group || "BOOK",
+      imageUrl: line.image_url || "",
+      salePrice: Number(line.sale_price || 0),
+      availableQty: Number(line.available_qty || 0),
+      requestedQty: Number(line.requested_qty || 0),
+      lineTotal: Number(line.line_total || 0)
+    });
+  }
+  return (requests || []).map((row) => {
+    const requestLines = linesByRequest.get(row.id) || [];
+    const totalQty = requestLines.reduce((sum, line) => sum + Number(line.requestedQty || 0), 0);
+    const totalAmount = requestLines.reduce((sum, line) => sum + Number(line.lineTotal || 0), 0);
+    return {
+      requestId: row.id,
+      requestCode: row.request_code,
+      sourceWarehouseId: row.source_warehouse_id || "",
+      sourceWarehouseCode: row.source_warehouse_code || "",
+      sourceWarehouseName: row.source_warehouse_name || "",
+      itemGroup: row.item_group || "BOOK",
+      requesterName: row.requester_name || "",
+      requesterMobile: row.requester_mobile || "",
+      requesterSegment: row.requester_segment || "",
+      folkGuideName: row.folk_guide_name || "",
+      preacherName: row.preacher_name || "",
+      requesterLocation: row.requester_location || "",
       notes: row.notes || "",
       status: row.status || "New",
       totalQty,
@@ -2656,7 +2809,20 @@ async function main(request) {
     const action = body.action;
     const payload = body.payload || {};
     const supabase = getSupabase();
-    const publicActions = new Set(["auth.login", "auth.logout", "auth.me", "warehouses.list", "books.list", "stock.current", "onlineClasses.submit", "onlineClasses.warehouseBooks", "catalog.items", "catalog.submit"]);
+    const publicActions = new Set([
+      "auth.login",
+      "auth.logout",
+      "auth.me",
+      "warehouses.list",
+      "books.list",
+      "stock.current",
+      "onlineClasses.submit",
+      "onlineClasses.warehouseBooks",
+      "catalog.items",
+      "catalog.profileLookup",
+      "catalog.submit",
+      "catalog.requestsByMobile"
+    ]);
     const currentUser = await requireCurrentUser(supabase, payload, publicActions.has(action));
 
     switch (action) {
@@ -2781,8 +2947,12 @@ async function main(request) {
         return json(200, { ok: true, data: await getSettledActivities(supabase) });
       case "catalog.items":
         return json(200, { ok: true, data: await catalogRequestItems(supabase, payload) });
+      case "catalog.profileLookup":
+        return json(200, { ok: true, data: await catalogProfileLookup(supabase, payload) });
       case "catalog.submit":
         return json(200, { ok: true, data: await createCatalogRequest(supabase, payload, currentUser) });
+      case "catalog.requestsByMobile":
+        return json(200, { ok: true, data: await catalogRequestsByMobile(supabase, payload) });
       case "requests.list":
         return json(200, { ok: true, data: await catalogRequestsList(supabase) });
       case "reports.activityLedger":

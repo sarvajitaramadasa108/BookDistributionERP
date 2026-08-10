@@ -53,6 +53,10 @@
       "dest": "/frontend/assets/$1"
     },
     {
+      "src": "/manifest.webmanifest",
+      "dest": "/frontend/manifest.webmanifest"
+    },
+    {
       "src": "/(.*\\.(css|js|png|jpg|jpeg|webp|svg|ico))",
       "dest": "/frontend/$1"
     },

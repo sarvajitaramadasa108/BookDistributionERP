@@ -125,7 +125,9 @@
       "documents.list": mockData.documents,
       "documents.create": () => createMockDocument(payload),
       "catalog.items": () => getMockCatalogItems(payload),
+      "catalog.profileLookup": () => getMockCatalogProfile(payload),
       "catalog.submit": () => createMockCatalogRequest(payload),
+      "catalog.requestsByMobile": () => getMockCatalogRequestsByMobile(payload),
       "requests.list": () => mockData.requests.slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))),
       "onlineClasses.warehouseBooks": () => getMockOnlineClassWarehouseBooks(payload),
       "onlineClasses.list": mockData.onlineClasses.slice().sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))),
@@ -478,15 +480,21 @@
   function createMockCatalogRequest(payload) {
     const lines = Array.isArray(payload.lines) ? payload.lines : [];
     const requestId = nextMockId("REQ", mockData.requests, "requestId");
+    const requesterMobile = String(payload.requesterMobile || payload.mobile || "").replace(/\D/g, "").slice(-10);
+    const requesterSegment = String(payload.requesterSegment || payload.segment || payload.category || "").trim().toUpperCase();
     const request = {
       requestId,
       requestCode: requestId,
       sourceWarehouseId: payload.sourceWarehouseId || "WH-001",
       sourceWarehouseCode: payload.sourceWarehouseId || "WH-001",
       sourceWarehouseName: payload.sourceWarehouseName || "GMB Main",
-      itemGroup: String(payload.itemGroup || "BOOK").trim().toUpperCase(),
+      itemGroup: deriveMockRequestItemGroup(lines, payload.itemGroup || "BOOK"),
       requesterName: String(payload.requesterName || payload.name || "").trim(),
-      requesterMobile: String(payload.requesterMobile || payload.mobile || "").trim(),
+      requesterMobile,
+      requesterSegment,
+      folkGuideName: String(payload.folkGuideName || "").trim(),
+      preacherName: String(payload.preacherName || "").trim(),
+      requesterLocation: String(payload.requesterLocation || payload.location || "").trim(),
       notes: String(payload.notes || "").trim(),
       status: "New",
       totalQty: lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0),
@@ -509,6 +517,70 @@
     mockData.requests.unshift(request);
     saveMockData();
     return request;
+  }
+
+  function deriveMockRequestItemGroup(lines, fallback) {
+    const groups = [...new Set((Array.isArray(lines) ? lines : []).map((line) => String(line.itemGroup || fallback || "BOOK").trim().toUpperCase()).filter(Boolean))];
+    if (!groups.length) return String(fallback || "BOOK").trim().toUpperCase();
+    return groups.length === 1 ? groups[0] : "MIXED";
+  }
+
+  function getMockCatalogProfile(payload) {
+    const mobile = String(payload.requesterMobile || payload.mobile || "").replace(/\D/g, "").slice(-10);
+    if (mobile.length !== 10) {
+      throw new Error("Mobile number is required");
+    }
+    const matches = mockData.requests
+      .filter((row) => String(row.requesterMobile || "").replace(/\D/g, "").slice(-10) === mobile)
+      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+    if (!matches.length) {
+      return {
+        exists: false,
+        complete: false,
+        name: "",
+        mobile,
+        requesterSegment: "",
+        folkGuideName: "",
+        preacherName: "",
+        requesterLocation: ""
+      };
+    }
+    const profile = {
+      exists: true,
+      complete: false,
+      name: "",
+      mobile,
+      requesterSegment: "",
+      folkGuideName: "",
+      preacherName: "",
+      requesterLocation: ""
+    };
+    for (const row of matches) {
+      if (!profile.name && row.requesterName) profile.name = row.requesterName;
+      if (!profile.requesterSegment && row.requesterSegment) profile.requesterSegment = row.requesterSegment;
+      if (!profile.folkGuideName && row.folkGuideName) profile.folkGuideName = row.folkGuideName;
+      if (!profile.preacherName && row.preacherName) profile.preacherName = row.preacherName;
+      if (!profile.requesterLocation && row.requesterLocation) profile.requesterLocation = row.requesterLocation;
+    }
+    const missingFields = [];
+    if (!profile.name) missingFields.push("name");
+    if (!profile.requesterSegment) missingFields.push("requesterSegment");
+    if (!profile.requesterLocation) missingFields.push("requesterLocation");
+    if (profile.requesterSegment === "FOLK" && !profile.folkGuideName) missingFields.push("folkGuideName");
+    if (profile.requesterSegment === "CONGREGATION" && !profile.preacherName) missingFields.push("preacherName");
+    profile.complete = missingFields.length === 0;
+    profile.missingFields = missingFields;
+    return profile;
+  }
+
+  function getMockCatalogRequestsByMobile(payload) {
+    const mobile = String(payload.requesterMobile || payload.mobile || "").replace(/\D/g, "").slice(-10);
+    if (mobile.length !== 10) {
+      throw new Error("Mobile number is required");
+    }
+    return mockData.requests
+      .filter((row) => String(row.requesterMobile || "").replace(/\D/g, "").slice(-10) === mobile)
+      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   }
 
   function createMockOnlineClassRegistration(payload) {

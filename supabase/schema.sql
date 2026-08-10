@@ -193,9 +193,13 @@ create table if not exists public.catalog_requests (
   source_warehouse_id uuid references public.warehouses(id) on update cascade on delete set null,
   source_warehouse_code text not null default '',
   source_warehouse_name text not null default '',
-  item_group text not null default 'BOOK' check (item_group in ('BOOK', 'PARAPHERNALIA')),
+  item_group text not null default 'BOOK',
   requester_name text not null default '',
   requester_mobile text not null default '',
+  requester_segment text not null default '',
+  folk_guide_name text not null default '',
+  preacher_name text not null default '',
+  requester_location text not null default '',
   notes text not null default '',
   status text not null default 'New' check (status in ('New', 'Viewed', 'Approved', 'Rejected', 'Fulfilled')),
   created_by_user_id uuid references public.users(id) on update cascade on delete set null,
@@ -254,7 +258,27 @@ create index if not exists idx_online_class_registrations_warehouse on public.on
 create index if not exists idx_online_class_registrations_item on public.online_class_registrations (item_id);
 create index if not exists idx_catalog_requests_created_at on public.catalog_requests (created_at desc);
 create index if not exists idx_catalog_requests_warehouse on public.catalog_requests (source_warehouse_id, created_at desc);
+create index if not exists idx_catalog_requests_mobile on public.catalog_requests (requester_mobile, created_at desc);
 create index if not exists idx_catalog_request_lines_request on public.catalog_request_lines (request_id, line_no);
+
+alter table public.catalog_requests
+  add column if not exists requester_segment text not null default '';
+
+alter table public.catalog_requests
+  add column if not exists folk_guide_name text not null default '';
+
+alter table public.catalog_requests
+  add column if not exists preacher_name text not null default '';
+
+alter table public.catalog_requests
+  add column if not exists requester_location text not null default '';
+
+alter table public.catalog_requests
+  drop constraint if exists catalog_requests_item_group_check;
+
+alter table public.catalog_requests
+  add constraint catalog_requests_item_group_check
+  check (item_group in ('BOOK', 'PARAPHERNALIA', 'MIXED'));
 
 drop trigger if exists trg_users_updated_at on public.users;
 create trigger trg_users_updated_at
