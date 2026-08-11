@@ -77,6 +77,8 @@
     settledActivityDetails: null,
     pendingSettlementActivityId: "",
     pendingSettlementDetails: null,
+    receiveActivityDetail: null,
+    receiveActivityDetailLoading: false,
     documentEditDetail: null,
     stockEditWarehouseId: "",
     sidebarCollapsed: false,
@@ -752,6 +754,11 @@
                     ${metric("Return Qty", reportStats.returnQty, "Return quantity total")}
                     ${metric("Sale Qty", reportStats.saleQty, "Sale quantity total")}
                     ${metric("Unsettled Qty", reportStats.unsettledQty, "Open balance for the activity")}
+                    ${metric("Status", reportStats.settlementStatus || "-", "Return or settlement stage")}
+                    ${metric("Sale Due", money(reportStats.saleDueAmount || 0), "Final sale value")}
+                    ${metric("Cash", money(reportStats.paidCashAmount || 0), "Cash received")}
+                    ${metric("Online", money(reportStats.paidOnlineAmount || 0), "Online received")}
+                    ${metric("Pending", money(reportStats.pendingAmount || 0), "Still to be collected")}
                   </div>
                 ` : ""}
                 ${activityMonthlyMarkup(state.activityMonthlyReport)}
@@ -1391,6 +1398,8 @@
               <th>Activity</th>
               <th>Status</th>
               <th>Sale Due</th>
+              <th>Cash</th>
+              <th>Online</th>
               <th>Paid</th>
               <th>Pending</th>
               <th>Action</th>
@@ -1409,12 +1418,14 @@
                 </td>
                 <td>${status(activityStatus, activityStatus === "Settlement Pending" ? "warn" : "good")}</td>
                 <td>${money(Number(row.summary?.saleDueAmount || 0))}</td>
+                <td>${money(Number(row.summary?.paidCashAmount || 0))}</td>
+                <td>${money(Number(row.summary?.paidOnlineAmount || 0))}</td>
                 <td>${money(Number(row.summary?.paidTotalAmount || 0))}</td>
                 <td><strong>${money(Number(row.summary?.pendingAmount || 0))}</strong></td>
                 <td><button class="small-button" type="button" onclick="window.erpApp.showPendingSettlementDetails('${escapeAttribute(row.activityId)}')">Show Details</button></td>
               </tr>
             `;
-            }).join("") : `<tr><td colspan="8"><div class="empty-state">No pending settlements found.</div></td></tr>`}
+            }).join("") : `<tr><td colspan="10"><div class="empty-state">No pending settlements found.</div></td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1433,6 +1444,8 @@
               <th>Activity</th>
               <th>Status</th>
               <th>Sale Due</th>
+              <th>Cash</th>
+              <th>Online</th>
               <th>Paid</th>
               <th>Pending</th>
               <th>Action</th>
@@ -1449,11 +1462,13 @@
                 </td>
                 <td>${status("Settled", "good")}</td>
                 <td>${money(Number(row.summary?.saleDueAmount || 0))}</td>
+                <td>${money(Number(row.summary?.paidCashAmount || 0))}</td>
+                <td>${money(Number(row.summary?.paidOnlineAmount || 0))}</td>
                 <td>${money(Number(row.summary?.paidTotalAmount || 0))}</td>
                 <td><strong>${money(Number(row.summary?.pendingAmount || 0))}</strong></td>
                 <td><button class="small-button" type="button" onclick="window.erpApp.showSettledActivityDetails('${escapeAttribute(row.activityId)}')">Show Details</button></td>
               </tr>
-            `).join("") : `<tr><td colspan="8"><div class="empty-state">No settled activities found.</div></td></tr>`}
+            `).join("") : `<tr><td colspan="10"><div class="empty-state">No settled activities found.</div></td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1482,6 +1497,15 @@
 
   function pendingSettlementBooksMarkupWithMode(detail, editable) {
     const rows = detail && Array.isArray(detail.books) ? detail.books : [];
+    const totals = rows.reduce((acc, row) => {
+      const price = Number(getBookSalePrice(row.bookId) || 0);
+      acc.issueWorth += Number(row.issueQty || 0) * price;
+      acc.returnWorth += Number(row.returnQty || 0) * price;
+      acc.saleWorth += Math.max(Number(row.issueQty || 0) - Number(row.returnQty || 0) - Number(row.complimentaryQty || 0), 0) * price;
+      acc.complimentaryWorth += Number(row.complimentaryQty || 0) * price;
+      acc.amount += Number(row.amount || 0);
+      return acc;
+    }, { issueWorth: 0, returnWorth: 0, saleWorth: 0, complimentaryWorth: 0, amount: 0 });
     return `
       <div class="table-wrap">
         <table>
@@ -1497,10 +1521,20 @@
             </tr>
           </thead>
           <tbody>
+            ${rows.length ? `
+              <tr class="worth-row">
+                <td colspan="2"><strong>Worth</strong></td>
+                <td><strong>${money(totals.issueWorth)}</strong></td>
+                <td><strong>${money(totals.returnWorth)}</strong></td>
+                <td><strong>${money(totals.saleWorth)}</strong></td>
+                <td><strong>${money(totals.complimentaryWorth)}</strong></td>
+                <td><strong>${money(totals.amount)}</strong></td>
+              </tr>
+            ` : ""}
             ${rows.length ? rows.map((row, index) => {
               const issueQty = Number(row.issueQty || 0);
               const returnQty = Number(row.returnQty || 0);
-              const saleQty = Number(row.saleQty || 0);
+              const saleQty = Math.max(issueQty - returnQty - Number(row.complimentaryQty || 0), 0);
               const complimentaryQty = Number(row.complimentaryQty || 0);
               return `
               <tr data-book-id="${escapeAttribute(row.bookId || "")}" data-row-index="${index}">
@@ -1606,6 +1640,8 @@
       </div>
       <div class="grid metrics">
         ${metric("Sale Due", money(Number(summary.saleDueAmount || 0)), "Total issue less return value")}
+        ${metric("Cash", money(Number(summary.paidCashAmount || 0)), "Cash received so far")}
+        ${metric("Online", money(Number(summary.paidOnlineAmount || 0)), "Online received so far")}
         ${metric("Paid", money(Number(summary.paidTotalAmount || 0)), "Cash plus online already received")}
         ${metric("Complimentary", Number(summary.complimentaryQty || 0), "Marked as free issue")}
         ${metric("Status", activityStatus, "Current settlement stage")}
@@ -1614,6 +1650,11 @@
       </div>
       ${readOnly ? "" : `
       <div class="section-gap">
+        ${activityStatus === "Return Pending" ? `
+          <div class="form-actions" style="justify-content:flex-start; margin-bottom:12px;">
+            <button class="button secondary" type="button" onclick="window.erpApp.markPendingSettlementReturnsComplete()">Returns Complete, Move to Settlement</button>
+          </div>
+        ` : ""}
         <form class="form-grid" id="pendingSettlementPaymentForm" onsubmit="window.erpApp.savePendingSettlementPayment(event)">
           <label class="field">
             <span>Payment Date</span>
@@ -1730,6 +1771,24 @@
       showToast("Settlement payment saved");
     } catch (error) {
       showToast(error.message || "Could not save settlement payment");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function markPendingSettlementReturnsComplete() {
+    const detail = state.pendingSettlementDetails;
+    if (!detail) {
+      showToast("Select a pending settlement first");
+      return;
+    }
+    setLoading(true);
+    try {
+      state.pendingSettlementDetails = await window.erpApi.request("activity.markReturnsComplete", { activityId: detail.activityId });
+      await refreshSettlementLinkedViews();
+      showToast("Activity moved to settlement pending");
+    } catch (error) {
+      showToast(error.message || "Could not update return status");
     } finally {
       setLoading(false);
     }
@@ -3201,7 +3260,12 @@
       issueQty: Number(report.totals && report.totals.issueQty || 0),
       returnQty: Number(report.totals && report.totals.returnQty || 0),
       saleQty: Number(report.totals && report.totals.saleQty || 0),
-      unsettledQty: Number(report.totals && report.totals.unsettledQty || 0)
+      unsettledQty: Number(report.totals && report.totals.unsettledQty || 0),
+      settlementStatus: report.settlementStatus || "",
+      saleDueAmount: Number(report.saleDueAmount || 0),
+      paidCashAmount: Number(report.paidCashAmount || 0),
+      paidOnlineAmount: Number(report.paidOnlineAmount || 0),
+      pendingAmount: Number(report.pendingAmount || 0)
     };
   }
 
@@ -3556,6 +3620,12 @@
       activityId: row.activityId || row["Activity ID"] || "",
       activityName: row.activityName || row["Activity Name"] || "",
       activityStatus: row.activityStatus || row["Activity Status"] || "",
+      settlementStatus: row.settlementStatus || row["Settlement Status"] || "",
+      saleDueAmount: Number(row.saleDueAmount || row["Sale Due Amount"] || 0),
+      paidCashAmount: Number(row.paidCashAmount || row["Paid Cash Amount"] || 0),
+      paidOnlineAmount: Number(row.paidOnlineAmount || row["Paid Online Amount"] || 0),
+      paidTotalAmount: Number(row.paidTotalAmount || row["Paid Total Amount"] || 0),
+      pendingAmount: Number(row.pendingAmount || row["Pending Amount"] || 0),
       warehouseId: row.warehouseId || row["Warehouse ID"] || "",
       warehouseName: row.warehouseName || row["Warehouse Name"] || "",
       documents: (row.documents || row["Documents"] || []).map((doc) => ({
@@ -3881,6 +3951,35 @@
         ${selectedBook ? `<div class="book-picker-selected">Selected: ${escapeHtml(getIssueItemPickerValue(selectedBook))}${fromWarehouseId && state.currentStockLoaded ? ` | Avail ${escapeHtml(String(getAvailableStock(fromWarehouseId, selectedBook.erpCode || selectedBook.bookId)))}` : ""}</div>` : ""}
       </div>
     `;
+  }
+
+  function computeLineWorth(line) {
+    const bookId = String(line && line.bookId || "").trim();
+    const qty = Number(line && line.quantity || 0);
+    if (!bookId || qty <= 0) return 0;
+    return qty * Number(getBookSalePrice(bookId) || 0);
+  }
+
+  function lineWorthFieldMarkup(line) {
+    return `
+      <label class="field qty-field">
+        <span>Price</span>
+        <input type="text" value="${escapeAttribute(money(computeLineWorth(line)))}" readonly>
+      </label>
+    `;
+  }
+
+  function getReturnableItemsForActivity(activityId, itemGroup) {
+    const detail = state.receiveActivityDetail;
+    if (!detail || String(detail.activityId || "") !== String(activityId || "")) {
+      return [];
+    }
+    const normalizedGroup = normalizeItemGroup(itemGroup || "BOOK");
+    return (detail.books || [])
+      .filter((row) => normalizeItemGroup(row.itemGroup || "BOOK") === normalizedGroup)
+      .filter((row) => (Number(row.issueQty || 0) - Number(row.returnQty || 0) - Number(row.complimentaryQty || 0)) > 0)
+      .map((row) => getBook(row.bookId))
+      .filter(Boolean);
   }
 
   function filterBooksForPicker(activeBooks, query, warehouseId) {
@@ -4547,7 +4646,8 @@
   function getIssuedActivityOptions() {
     return state.activities.filter((activity) => {
       const activityRef = activity.activityRowId || activity.activityId;
-      return state.documents.some((document) => String(document.activityId || "") === String(activityRef || "") && (document.documentType === "ISSUE" || document.documentType === "UNSETTLED_OPENING"));
+      const hasIssueHistory = state.documents.some((document) => String(document.activityId || "") === String(activityRef || "") && (document.documentType === "ISSUE" || document.documentType === "UNSETTLED_OPENING"));
+      return hasIssueHistory && String(activity.status || "").toLowerCase() !== "completed";
     });
   }
 
@@ -5689,6 +5789,7 @@
               <span>Qty</span>
               <input type="number" min="0" step="0.5" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateOpeningLine(${index}, 'quantity', this.value)" placeholder="Qty">
             </label>
+            ${lineWorthFieldMarkup(line)}
             <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeOpeningLine(${index})">Remove</button>
           </div>
         `).join("")}
@@ -6135,6 +6236,7 @@
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateUnsettledLine(${index}, 'quantity', this.value)" placeholder="Qty">
             </label>
+            ${lineWorthFieldMarkup(line)}
             <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeUnsettledLine(${index})">Remove</button>
           </div>
         `).join("")}
@@ -6280,6 +6382,7 @@
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateSaleLine(${index}, 'quantity', this.value)" placeholder="Qty">
             </label>
+            ${lineWorthFieldMarkup(line)}
             <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeSaleLine(${index})">Remove</button>
           </div>
         `).join("")}
@@ -6430,6 +6533,7 @@
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateIssueLine(${index}, 'quantity', this.value)" placeholder="Qty">
             </label>
+            ${lineWorthFieldMarkup(line)}
             <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeIssueLine(${index})">Remove</button>
           </div>
         `).join("")}
@@ -6525,12 +6629,17 @@
       toWarehouseId: state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || "",
       activityId,
       notes: "",
-      returnSettlement: "Settled",
+      returnSettlement: "RETURNS_PENDING",
       itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
+    state.receiveActivityDetail = null;
+    state.receiveActivityDetailLoading = false;
     state.receiveLines = [blankReceiveLine()];
     state.receiveBookQueries = [""];
     renderReceiveModal();
+    if (activityId) {
+      void loadReceiveActivityDetail(activityId);
+    }
   }
 
   function blankReceiveLine() {
@@ -6543,6 +6652,8 @@
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
     const issuedActivities = getIssuedActivityOptions();
     const draft = state.receiveDraft;
+    const returnableItems = draft.activityId ? getReturnableItemsForActivity(draft.activityId, itemGroup) : [];
+    const canPost = Boolean(draft.activityId) && returnableItems.length > 0 && !state.receiveActivityDetailLoading;
 
     modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
@@ -6567,7 +6678,7 @@
           ${issuedActivities.length ? `
             <label class="field wide-field">
               <span>Activity</span>
-              <select name="activityId" required>
+              <select name="activityId" required onchange="window.erpApp.onReceiveActivityChange(this.value)">
                 <option value="">Select issued activity</option>
                 ${issuedActivities.map((activity) => `<option value="${escapeAttribute(activity.activityId)}" ${draft.activityId === activity.activityId ? "selected" : ""}>${escapeHtml(activity.name)} (${escapeHtml(getWarehouseName(activity.warehouseId))})</option>`).join("")}
               </select>
@@ -6578,10 +6689,10 @@
             <input name="notes" value="${escapeAttribute(draft.notes)}" placeholder="Return note">
           </label>
           <label class="field">
-            <span>Activity outcome</span>
+            <span>Return status</span>
             <select name="returnSettlement" required>
-              <option value="Settled" ${draft.returnSettlement === "Settled" ? "selected" : ""}>Settle activity now</option>
-              <option value="Unsettled" ${draft.returnSettlement === "Unsettled" ? "selected" : ""}>Keep activity unsettled</option>
+              <option value="RETURNS_PENDING" ${draft.returnSettlement === "RETURNS_PENDING" ? "selected" : ""}>More returns may still come</option>
+              <option value="RETURNS_COMPLETE" ${draft.returnSettlement === "RETURNS_COMPLETE" ? "selected" : ""}>Returns complete, move to settlement</option>
             </select>
           </label>
           <div class="wide-field">
@@ -6589,11 +6700,17 @@
               <h3>${getItemGroupLabel(itemGroup)}</h3>
               <button class="small-button" type="button" onclick="window.erpApp.addReceiveLine()">Add Line</button>
             </div>
-            ${hasAnyItems ? receiveLinesMarkup([], itemGroup) : `<div class="empty-state">Add active books or devotional items before posting returns.</div>`}
+            ${!draft.activityId
+              ? `<div class="empty-state">Select an activity first. Returns can only be entered for items already issued to that activity.</div>`
+              : state.receiveActivityDetailLoading
+                ? `<div class="empty-state">Loading issued items for this activity...</div>`
+                : (!returnableItems.length
+                  ? `<div class="empty-state">No returnable books or devotional items are pending for this activity.</div>`
+                  : receiveLinesMarkup(returnableItems, itemGroup))}
           </div>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit" ${(hasAnyItems && issuedActivities.length) ? "" : "disabled"}>Post Return</button>
+            <button class="button" type="submit" ${(hasAnyItems && issuedActivities.length && canPost) ? "" : "disabled"}>Post Return</button>
           </div>
         </form>
       </section>
@@ -6607,11 +6724,12 @@
       <div class="line-table scroll-lines">
         ${state.receiveLines.map((line, index) => `
           <div class="line-row">
-            ${bookPickerMarkup("receive", index, getDocumentItemsForGroup(getLineItemGroup(line, itemGroup)), line, state.receiveBookQueries[index] || "", "", itemGroup)}
+            ${bookPickerMarkup("receive", index, activeBooks, line, state.receiveBookQueries[index] || "", "", itemGroup)}
             <label class="field qty-field">
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateReceiveLine(${index}, 'quantity', this.value)" placeholder="Qty">
             </label>
+            ${lineWorthFieldMarkup(line)}
             <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeReceiveLine(${index})">Remove</button>
           </div>
         `).join("")}
@@ -6652,9 +6770,42 @@
       toWarehouseId: data.get("toWarehouseId") || "",
       activityId: data.get("activityId") || "",
       notes: data.get("notes") || "",
-      returnSettlement: data.get("returnSettlement") || "Settled",
+      returnSettlement: data.get("returnSettlement") || "RETURNS_PENDING",
       itemGroup: normalizeItemGroup(data.get("itemGroup") || state.receiveDraft.itemGroup || "BOOK")
     };
+  }
+
+  async function loadReceiveActivityDetail(activityId) {
+    const activityRef = String(activityId || "").trim();
+    if (!activityRef) {
+      state.receiveActivityDetail = null;
+      state.receiveActivityDetailLoading = false;
+      return;
+    }
+    state.receiveActivityDetailLoading = true;
+    renderReceiveModal();
+    try {
+      state.receiveActivityDetail = await window.erpApi.request("activity.pendingSettlementDetails", { activityId: activityRef });
+    } catch (error) {
+      state.receiveActivityDetail = null;
+      showToast(error.message || "Could not load activity return details");
+    } finally {
+      state.receiveActivityDetailLoading = false;
+      renderReceiveModal();
+    }
+  }
+
+  function onReceiveActivityChange(activityId) {
+    syncReceiveDraft();
+    state.receiveDraft.activityId = activityId || "";
+    state.receiveLines = [blankReceiveLine()];
+    state.receiveBookQueries = [""];
+    state.receiveActivityDetail = null;
+    state.receiveActivityDetailLoading = false;
+    renderReceiveModal();
+    if (activityId) {
+      void loadReceiveActivityDetail(activityId);
+    }
   }
 
   async function saveReceiveDocument(event) {
@@ -6680,7 +6831,8 @@
       toWarehouseId: data.get("toWarehouseId"),
       activityId: data.get("activityId"),
       itemGroup: normalizeItemGroup(data.get("itemGroup") || state.receiveDraft.itemGroup || "BOOK"),
-      status: data.get("returnSettlement") || "Settled",
+      status: "Posted",
+      returnProgress: data.get("returnSettlement") || "RETURNS_PENDING",
       notes: data.get("notes").trim(),
       lines
     };
@@ -6784,6 +6936,7 @@
               <span>Qty</span>
               <input type="number" min="1" step="1" value="${escapeAttribute(line.quantity)}" onchange="window.erpApp.updateTransferLine(${index}, 'quantity', this.value)" placeholder="Qty">
             </label>
+            ${lineWorthFieldMarkup(line)}
             <button class="small-button danger line-remove" type="button" onclick="window.erpApp.removeTransferLine(${index})">Remove</button>
           </div>
         `).join("")}
@@ -7438,6 +7591,7 @@
     downloadDocumentPdf,
     showPendingSettlementDetails,
     showSettledActivityDetails,
+    markPendingSettlementReturnsComplete,
     backToPendingSettlementSummary,
     backToSettledSummary,
     savePendingSettlementPayment,
@@ -7485,6 +7639,7 @@
     removeSaleLine,
     updateSaleLine,
     openReceiveForm,
+    onReceiveActivityChange,
     addReceiveLine,
     removeReceiveLine,
     updateReceiveLine,

@@ -1364,12 +1364,21 @@ async function createDocument(supabase, payload, currentUser) {
     if (ledgerError) throw ledgerError;
   }
 
-  if (documentType === "RETURN" && String(payload.status || "").trim().toLowerCase() === "settled") {
-    const { error: activityError } = await supabase.from("activities").update({
-      status: "Completed",
-      settled_at: nowIso()
-    }).eq("id", activityRow ? activityRow.id : null);
-    if (activityError) throw activityError;
+  if (documentType === "RETURN" && activityRow) {
+    const returnProgress = String(payload.returnProgress || "").trim().toUpperCase();
+    if (returnProgress === "RETURNS_COMPLETE") {
+      const { error: activityError } = await supabase.from("activities").update({
+        status: "Completed",
+        settled_at: nowIso()
+      }).eq("id", activityRow.id);
+      if (activityError) throw activityError;
+    } else {
+      const { error: activityError } = await supabase.from("activities").update({
+        status: "Running",
+        settled_at: null
+      }).eq("id", activityRow.id);
+      if (activityError) throw activityError;
+    }
   }
 
   if (activityRow && ["COMPLIMENTARY", "ADJUSTMENT"].includes(documentType)) {
@@ -2124,7 +2133,6 @@ async function getSettlementContext(supabase) {
 function buildSettlementSummaryForActivity(activity, context) {
   const { documents, lines, items, devotees, warehouses, payments } = context;
   const activityDocs = documents.filter((doc) => doc.activity_id === activity.id && isCountableDocument(doc));
-  const docsById = Object.fromEntries(activityDocs.map((doc) => [doc.id, doc]));
   const itemById = Object.fromEntries(items.map((row) => [row.id, row]));
   const devoteeById = Object.fromEntries(devotees.map((row) => [row.id, row]));
   const warehouseById = Object.fromEntries(warehouses.map((row) => [row.id, row]));
@@ -2205,9 +2213,11 @@ function buildSettlementSummaryForActivity(activity, context) {
       const existingBookRow = bookIndex.get(bookKey) || {
         bookId: item.erp_code || line.item_id,
         bookName: item.item_name || line.item_id,
+        itemGroup: item.item_group || "BOOK",
         issueQty: 0,
         returnQty: 0,
         saleQty: 0,
+        complimentaryQty: 0,
         amount: 0
       };
       if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") {
@@ -2264,10 +2274,19 @@ function buildSettlementSummaryForActivity(activity, context) {
     });
     summary.issueQty += issueQty;
     summary.returnQty += returnQty;
-    summary.saleQty += saleQty;
     summary.saleDueAmount += amount;
     summary.complimentaryQty += complimentaryQty;
   }
+  const bookRows = Array.from(bookIndex.values())
+    .map((row) => {
+      const finalSaleQty = Math.max(Number(row.issueQty || 0) - Number(row.returnQty || 0) - Number(row.complimentaryQty || 0), 0);
+      return {
+        ...row,
+        saleQty: finalSaleQty
+      };
+    })
+    .sort((a, b) => String(a.bookName).localeCompare(String(b.bookName)) || String(a.bookId).localeCompare(String(b.bookId)));
+  summary.saleQty = bookRows.reduce((sum, row) => sum + Number(row.saleQty || 0), 0);
   const paidCashAmount = activityPayments.reduce((sum, row) => sum + Number(row.cash_amount || 0), 0);
   const paidOnlineAmount = activityPayments.reduce((sum, row) => sum + Number(row.online_amount || 0), 0);
   const paidTotalAmount = paidCashAmount + paidOnlineAmount;
@@ -2278,11 +2297,9 @@ function buildSettlementSummaryForActivity(activity, context) {
   summary.pendingAmount = Math.max(pendingAmountRaw, 0);
   summary.overpaidAmount = Math.max(paidTotalAmount - summary.saleDueAmount, 0);
   const isCompleted = String(activity.status || "").toLowerCase() === "completed" || Boolean(activity.settled_at);
-  const settlementStatus = isCompleted && Number(summary.pendingAmount || 0) <= 0
-    ? "Settled"
-    : (Number(summary.returnQty || 0) > 0 || Number(summary.complimentaryQty || 0) > 0 || Number(summary.paidTotalAmount || 0) > 0
-      ? "Settlement Pending"
-      : "Return Pending");
+  const settlementStatus = isCompleted
+    ? (Number(summary.pendingAmount || 0) <= 0 ? "Settled" : "Settlement Pending")
+    : "Return Pending";
   return {
     activityId,
     activityName: activity.activity_name || activity.activity_code,
@@ -2297,7 +2314,7 @@ function buildSettlementSummaryForActivity(activity, context) {
     warehouseName: warehouseById[activity.warehouse_id]?.warehouse_name || "",
     summary,
     documents: docRows.sort((a, b) => String(a.documentDate).localeCompare(String(b.documentDate)) || String(a.documentId).localeCompare(String(b.documentId))),
-    books: Array.from(bookIndex.values()).sort((a, b) => String(a.bookName).localeCompare(String(b.bookName)) || String(a.bookId).localeCompare(String(b.bookId))),
+    books: bookRows,
     payments: activityPayments.map((row) => ({
       paymentId: row.id,
       paymentDate: row.payment_date,
@@ -2316,10 +2333,8 @@ async function syncActivitySettlementStatus(supabase, activityRef) {
   const activity = context.activities.find((row) => row.id === activityRef || row.activity_code === activityRef);
   if (!activity) return;
   const detail = buildSettlementSummaryForActivity(activity, context);
-  const shouldBeCompleted = Number(detail.summary.pendingAmount || 0) <= 0
-    && Number(detail.summary.issueQty || 0) > 0;
   const isCompleted = String(activity.status || "").toLowerCase() === "completed" || Boolean(activity.settled_at);
-  if (shouldBeCompleted && !isCompleted) {
+  if (isCompleted && Number(detail.summary.pendingAmount || 0) <= 0 && !activity.settled_at) {
     const { error } = await supabase.from("activities").update({
       status: "Completed",
       settled_at: nowIso()
@@ -2389,6 +2404,29 @@ async function createSettlementPayment(supabase, payload, currentUser) {
     totalAmount: Number(data.cash_amount || 0) + Number(data.online_amount || 0),
     notes: data.notes || ""
   };
+}
+
+async function markReturnsComplete(supabase, payload) {
+  const activityId = String(payload.activityId || "").trim();
+  if (!activityId) throw new Error("Activity is required");
+  let resolvedActivityId = activityId;
+  if (!isUuidLike(activityId)) {
+    const { data: activityRow, error: activityLookupError } = await supabase.from("activities").select("id").eq("activity_code", activityId).maybeSingle();
+    if (activityLookupError) throw activityLookupError;
+    if (!activityRow) throw new Error("Activity not found");
+    resolvedActivityId = activityRow.id;
+  }
+  const { error } = await supabase.from("activities").update({
+    status: "Completed",
+    settled_at: nowIso()
+  }).eq("id", resolvedActivityId);
+  if (error) throw error;
+  const context = await getSettlementContext(supabase);
+  const activity = context.activities.find((row) => row.id === resolvedActivityId || row.activity_code === activityId);
+  if (!activity) {
+    return { activityId: resolvedActivityId };
+  }
+  return buildSettlementSummaryForActivity(activity, context);
 }
 
 async function savePendingSettlementAdjustments(supabase, payload, currentUser) {
@@ -2645,16 +2683,25 @@ async function getActivityMonthlyReport(supabase, payload) {
       };
     })
   }));
-  const isSettledActivity = String(activity.status || "").toLowerCase() === "completed" || Boolean(activity.settled_at);
-  if (isSettledActivity) {
-    for (const row of rowsWithDocArray) {
-      const settledSaleQty = Math.max(Number(row.issueQty || 0) - Number(row.returnQty || 0) - Number(row.complimentaryQty || 0), 0);
-      row.saleQty = settledSaleQty;
-      const item = itemById[Object.keys(itemById).find((itemId) => (itemById[itemId].erp_code || itemId) === row.bookId)] || {};
-      const price = Number(item.sale_price || 0);
-      row.worth = settledSaleQty * price;
-    }
+  for (const row of rowsWithDocArray) {
+    const finalSaleQty = Math.max(Number(row.issueQty || 0) - Number(row.returnQty || 0) - Number(row.complimentaryQty || 0), 0);
+    row.saleQty = finalSaleQty;
+    const item = itemById[Object.keys(itemById).find((itemId) => (itemById[itemId].erp_code || itemId) === row.bookId)] || {};
+    const price = Number(item.sale_price || 0);
+    row.worth = finalSaleQty * price;
   }
+  const settlementContext = await getSettlementContext(supabase);
+  const settlementActivity = settlementContext.activities.find((row) => row.id === activity.id) || activity;
+  const settlementDetail = buildSettlementSummaryForActivity(settlementActivity, settlementContext);
+  const totals = rowsWithDocArray.reduce((acc, row) => {
+    acc.issueQty += Number(row.issueQty || 0);
+    acc.returnQty += Number(row.returnQty || 0);
+    acc.saleQty += Number(row.saleQty || 0);
+    acc.complimentaryQty += Number(row.complimentaryQty || 0);
+    acc.unsettledQty += Number(row.unsettledQty || 0);
+    acc.worth += Number(row.worth || 0);
+    return acc;
+  }, { issueQty: 0, returnQty: 0, saleQty: 0, complimentaryQty: 0, unsettledQty: 0, worth: 0 });
   return {
     month,
     devoteeId: selectedDevotee?.devotee_code || devoteeById[activity.devotee_id]?.devotee_code || "",
@@ -2662,19 +2709,17 @@ async function getActivityMonthlyReport(supabase, payload) {
     activityId: activity.activity_code,
     activityName: activity.activity_name,
     activityStatus: activity.status,
+    settlementStatus: settlementDetail.settlementStatus,
+    saleDueAmount: Number(settlementDetail.summary?.saleDueAmount || 0),
+    paidCashAmount: Number(settlementDetail.summary?.paidCashAmount || 0),
+    paidOnlineAmount: Number(settlementDetail.summary?.paidOnlineAmount || 0),
+    paidTotalAmount: Number(settlementDetail.summary?.paidTotalAmount || 0),
+    pendingAmount: Number(settlementDetail.summary?.pendingAmount || 0),
     warehouseId: activity.warehouse_id || "",
     warehouseName: warehouseById[activity.warehouse_id]?.warehouse_name || "",
     documents: documentsArray,
     rows: rowsWithDocArray,
-    totals: rowsWithDocArray.reduce((acc, row) => {
-      acc.issueQty += Number(row.issueQty || 0);
-      acc.returnQty += Number(row.returnQty || 0);
-      acc.saleQty += Number(row.saleQty || 0);
-      acc.complimentaryQty += Number(row.complimentaryQty || 0);
-      acc.unsettledQty += Number(row.unsettledQty || 0);
-      acc.worth += Number(row.worth || 0);
-      return acc;
-    }, { issueQty: 0, returnQty: 0, saleQty: 0, complimentaryQty: 0, unsettledQty: 0, worth: 0 })
+    totals
   };
 }
 
@@ -3041,6 +3086,8 @@ async function main(request) {
         return json(200, { ok: true, data: await getPendingSettlementDetails(supabase, payload) });
       case "activity.settlementPaymentCreate":
         return json(200, { ok: true, data: await createSettlementPayment(supabase, payload, currentUser) });
+      case "activity.markReturnsComplete":
+        return json(200, { ok: true, data: await markReturnsComplete(supabase, payload) });
       case "activity.pendingSettlementAdjustmentsSave":
         return json(200, { ok: true, data: await savePendingSettlementAdjustments(supabase, payload, currentUser) });
       case "activity.settledActivities":
