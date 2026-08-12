@@ -27,6 +27,7 @@
     mySalesExpanded: "",
     requestSubmitting: false,
     submittedSaleId: "",
+    lastSubmittedSale: null,
     installReady: false,
     deferredInstallPrompt: null
   };
@@ -65,6 +66,11 @@
   function money(value) {
     const number = Number(value || 0);
     return `Rs. ${number.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  }
+
+  function moneyNumber(value) {
+    const number = Number(value || 0);
+    return number.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   }
 
   function formatDateTime(value) {
@@ -318,6 +324,11 @@
     }
   }
 
+  async function loadSaleDetail(documentId) {
+    if (!documentId) return null;
+    return window.erpApi.request("sales.entryDetail", { documentId });
+  }
+
   function setView(view) {
     state.view = view;
     if (view === "history" && state.currentUser) {
@@ -412,6 +423,7 @@
         }))
       });
       state.submittedSaleId = result?.documentId || "";
+      state.lastSubmittedSale = result || null;
       state.cart = [];
       state.notes = "";
       state.view = "submitted";
@@ -423,6 +435,165 @@
       showToast(error.message || "Could not create sale entry");
     } finally {
       state.requestSubmitting = false;
+      setLoading(false);
+    }
+  }
+
+  function buildReceiptHtml(detail) {
+    const lines = Array.isArray(detail?.lines) ? detail.lines : [];
+    const createdAt = detail?.createdAt || detail?.documentDate || new Date().toISOString();
+    const totalQty = lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+    const totalAmount = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+    return `
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(detail?.documentId || "Sale Receipt")}</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 12px;
+      font-family: Arial, sans-serif;
+      color: #111;
+      background: #fff;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .receipt {
+      width: 58mm;
+      max-width: 100%;
+      margin: 0 auto;
+    }
+    .center { text-align: center; }
+    .strong { font-weight: 700; }
+    .divider {
+      border-top: 1px dashed #000;
+      margin: 8px 0;
+    }
+    .meta-row,
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 6px;
+    }
+    th, td {
+      vertical-align: top;
+      padding: 3px 0;
+    }
+    th {
+      text-align: left;
+      border-bottom: 1px solid #000;
+      font-size: 11px;
+    }
+    td.num, th.num {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .item-name {
+      word-break: break-word;
+    }
+    .actions {
+      width: 58mm;
+      max-width: 100%;
+      margin: 0 auto 12px;
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+    button {
+      padding: 8px 10px;
+      border: 1px solid #000;
+      background: #fff;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    @media print {
+      body { padding: 0; }
+      .actions { display: none; }
+      .receipt { width: auto; margin: 0; }
+      @page { margin: 4mm; size: 58mm auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="actions">
+    <button onclick="window.print()">Print Bill</button>
+    <button onclick="window.close()">Close</button>
+  </div>
+  <div class="receipt">
+    <div class="center strong">HARE KRISHNA MOVEMENT</div>
+    <div class="center strong">VISAKHAPATNAM</div>
+    <div class="center">Kakinada Warehouse Sale Bill</div>
+    <div class="divider"></div>
+    <div class="meta-row"><span>Bill No</span><span>${escapeHtml(detail?.documentId || "-")}</span></div>
+    <div class="meta-row"><span>Date</span><span>${escapeHtml(formatDateTime(createdAt))}</span></div>
+    <div class="meta-row"><span>Warehouse</span><span>${escapeHtml(detail?.warehouseName || WAREHOUSE_KEY)}</span></div>
+    <div class="meta-row"><span>User</span><span>${escapeHtml(detail?.createdByName || detail?.createdByUsername || "-")}</span></div>
+    ${detail?.notes ? `<div class="meta-row"><span>Notes</span><span style="text-align:right;">${escapeHtml(detail.notes)}</span></div>` : ""}
+    <div class="divider"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th class="num">Qty</th>
+          <th class="num">Rate</th>
+          <th class="num">Amt</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lines.map((line) => `
+          <tr>
+            <td class="item-name">${escapeHtml(line.itemName || "-")}</td>
+            <td class="num">${Number(line.quantity || 0)}</td>
+            <td class="num">${moneyNumber(line.rate || 0)}</td>
+            <td class="num">${moneyNumber(line.amount || 0)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+    <div class="divider"></div>
+    <div class="total-row strong"><span>Total Qty</span><span>${totalQty}</span></div>
+    <div class="total-row strong"><span>Total Amount</span><span>Rs. ${moneyNumber(totalAmount)}</span></div>
+    <div class="divider"></div>
+    <div class="center">Thank you</div>
+  </div>
+</body>
+</html>
+    `;
+  }
+
+  async function openReceipt(documentId) {
+    const targetId = String(documentId || state.submittedSaleId || "").trim();
+    if (!targetId) {
+      showToast("No sale entry available for bill");
+      return;
+    }
+    setLoading(true, "Preparing bill...");
+    try {
+      const detail = state.lastSubmittedSale && String(state.lastSubmittedSale.documentId || "") === targetId
+        ? state.lastSubmittedSale
+        : await loadSaleDetail(targetId);
+      if (!detail) {
+        throw new Error("Sale entry not found");
+      }
+      const receiptWindow = window.open("", "_blank");
+      if (!receiptWindow) {
+        throw new Error("Popup blocked. Please allow popups for printing.");
+      }
+      receiptWindow.document.open();
+      receiptWindow.document.write(buildReceiptHtml(detail));
+      receiptWindow.document.close();
+      receiptWindow.focus();
+    } catch (error) {
+      showToast(error.message || "Could not prepare bill");
+    } finally {
       setLoading(false);
     }
   }
@@ -633,7 +804,12 @@
                     <td>${escapeHtml(money(row.paidCashAmount || 0))}</td>
                     <td>${escapeHtml(money(row.paidOnlineAmount || 0))}</td>
                     <td>${escapeHtml(money(row.pendingAmount || 0))}</td>
-                    <td><button class="small-button" type="button" onclick="window.kkdSalesApp.toggleHistoryDetails('${escapeAttr(row.documentId)}')">${state.mySalesExpanded === row.documentId ? "Hide" : "Show"} Details</button></td>
+                    <td>
+                      <div class="row-actions">
+                        <button class="small-button" type="button" onclick="window.kkdSalesApp.toggleHistoryDetails('${escapeAttr(row.documentId)}')">${state.mySalesExpanded === row.documentId ? "Hide" : "Show"} Details</button>
+                        <button class="small-button" type="button" onclick="window.kkdSalesApp.openReceipt('${escapeAttr(row.documentId)}')">Print Bill</button>
+                      </div>
+                    </td>
                   </tr>
                   ${state.mySalesExpanded === row.documentId ? `
                     <tr class="history-detail-row">
@@ -690,6 +866,7 @@
         <p>Your cart has been posted as a sale entry for the ${escapeHtml(state.warehouseName)} warehouse.</p>
         <div class="success-meta">${state.submittedSaleId ? `Sale Entry ${escapeHtml(state.submittedSaleId)} was created successfully.` : "Sale entry created successfully."}</div>
         <div class="public-actions centered-actions">
+          <button class="button secondary" type="button" onclick="window.kkdSalesApp.openReceipt('${escapeAttr(state.submittedSaleId)}')">Print Bill</button>
           <button class="button secondary" type="button" onclick="window.kkdSalesApp.setView('history')">My Sale Entries</button>
           <button class="button" type="button" onclick="window.kkdSalesApp.setView('catalog')">Post Another Sale</button>
         </div>
@@ -775,6 +952,7 @@
     updateCartQty,
     removeCartLine,
     submitSale,
+    openReceipt,
     toggleHistoryDetails,
     openImageViewer,
     openImageViewerByCode,
