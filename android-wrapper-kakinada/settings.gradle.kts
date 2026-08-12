@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "HKM Matchless POS"
+rootProject.name = "HKM Kakinada POS"
 include(":app")

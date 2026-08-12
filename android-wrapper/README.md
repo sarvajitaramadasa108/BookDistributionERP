@@ -1,11 +1,11 @@
-# HKM Kakinada POS Android Wrapper
+# HKM Matchless POS Android Wrapper
 
-This folder contains a native Android wrapper app for the Kakinada sales POS flow.
+This folder contains a native Android wrapper app for the Matchless Gift Store POS flow.
 
 ## What it does
 
-- Opens the live KKD sales page:
-  - `https://book-distribution-erp.vercel.app/sales/kakinada`
+- Opens the live Matchless sales page:
+  - `https://book-distribution-erp.vercel.app/sales/matchless`
 - Injects a native JavaScript bridge:
   - `window.AndroidPosPrinter`
 - Supports:
@@ -38,4 +38,4 @@ This folder contains a native Android wrapper app for the Kakinada sales POS flo
   2. allow permission
   3. tap again
 - Bluetooth printer connection uses the paired-device list and attempts a classic SPP connection.
-- This is a practical wrapper baseline for field testing. Depending on the exact printer chipset, we may still need device-specific tuning.
+- This is the print-enabled wrapper for Matchless billing.

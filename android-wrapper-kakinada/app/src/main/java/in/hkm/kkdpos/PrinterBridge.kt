@@ -1,4 +1,4 @@
-package org.hkm.matchlesspos
+package org.hkm.kakinadapos
 
 import android.Manifest
 import android.app.PendingIntent
@@ -33,7 +33,7 @@ class PrinterBridge(private val context: Context) {
 
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
-    private val usbPermissionAction = "org.hkm.matchlesspos.USB_PERMISSION"
+    private val usbPermissionAction = "org.hkm.kakinadapos.USB_PERMISSION"
 
     private var usbConnection: UsbDeviceConnection? = null
     private var usbInterface: UsbInterface? = null

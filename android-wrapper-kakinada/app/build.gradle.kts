@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "org.hkm.matchlesspos"
+    namespace = "org.hkm.kakinadapos"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "org.hkm.matchlesspos"
+        applicationId = "org.hkm.kakinadapos"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

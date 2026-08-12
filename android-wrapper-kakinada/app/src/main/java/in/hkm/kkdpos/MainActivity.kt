@@ -1,4 +1,4 @@
-package org.hkm.matchlesspos
+package org.hkm.kakinadapos
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -44,7 +44,7 @@ class MainActivity : ComponentActivity() {
         webView.webViewClient = WebViewClient()
         webView.webChromeClient = WebChromeClient()
         webView.addJavascriptInterface(printerBridge, "AndroidPosPrinter")
-        webView.loadUrl("https://book-distribution-erp.vercel.app/sales/matchless?android_wrapper=1&v=20260812")
+        webView.loadUrl("https://book-distribution-erp.vercel.app/sales/kakinada?android_wrapper=1&v=20260812")
     }
 
     private fun requestBluetoothPermissionsIfNeeded() {

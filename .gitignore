@@ -6,3 +6,8 @@ android-wrapper/.idea/
 android-wrapper/.kotlin/
 android-wrapper/app/build/
 android-wrapper/local.properties
+android-wrapper-kakinada/.gradle/
+android-wrapper-kakinada/.idea/
+android-wrapper-kakinada/.kotlin/
+android-wrapper-kakinada/app/build/
+android-wrapper-kakinada/local.properties
