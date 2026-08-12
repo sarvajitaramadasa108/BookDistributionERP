@@ -92,11 +92,11 @@ class PrinterBridge(private val context: Context) {
     fun printHtml(title: String?, html: String?): String {
         val activity = context as? Activity
             ?: return response(false, "Activity context is not available for printing")
-        val safeHtml = String(html ?: "").trim()
+        val safeHtml = (html ?: "").trim()
         if (safeHtml.isEmpty()) {
             return response(false, "Nothing to print")
         }
-        val jobTitle = String(title ?: "HKM Receipt").ifBlank { "HKM Receipt" }
+        val jobTitle = (title ?: "HKM Receipt").ifBlank { "HKM Receipt" }
         activity.runOnUiThread {
             try {
                 val printWebView = WebView(activity)
