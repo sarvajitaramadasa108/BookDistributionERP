@@ -65,12 +65,28 @@
       "dest": "/frontend/sales-kakinada.html"
     },
     {
+      "src": "/sales/matchless",
+      "dest": "/frontend/sales-matchless.html"
+    },
+    {
+      "src": "/sales/matchless/",
+      "dest": "/frontend/sales-matchless.html"
+    },
+    {
       "src": "/sales-kakinada.html",
       "dest": "/frontend/sales-kakinada.html"
     },
     {
       "src": "/sales-kakinada.webmanifest",
       "dest": "/frontend/sales-kakinada.webmanifest"
+    },
+    {
+      "src": "/sales-matchless.html",
+      "dest": "/frontend/sales-matchless.html"
+    },
+    {
+      "src": "/sales-matchless.webmanifest",
+      "dest": "/frontend/sales-matchless.webmanifest"
     },
     {
       "src": "/assets/(.*)",

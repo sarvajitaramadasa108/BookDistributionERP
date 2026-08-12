@@ -3,7 +3,7 @@
   const modalRoot = document.getElementById("modalRoot");
   const overlay = document.getElementById("loadingOverlay");
   const toastStack = document.getElementById("toastStack");
-  const WAREHOUSE_KEY = "Kakinada";
+  const WAREHOUSE_KEY = "Matchless Gift Store";
 
   const state = {
     currentUser: null,
@@ -397,7 +397,7 @@
       encodeEscPosText("HARE KRISHNA MOVEMENT\n"),
       encodeEscPosText("VISAKHAPATNAM\n"),
       new Uint8Array([0x1b, 0x45, 0x00]),
-      encodeEscPosText("Kakinada Warehouse Sale Bill\n"),
+      encodeEscPosText("Matchless Gift Store Sale Bill\n"),
       new Uint8Array([0x1b, 0x61, 0x00]),
       encodeEscPosText("--------------------------------\n"),
       encodeEscPosText(`Bill No: ${detail?.documentId || "-"}\n`),
@@ -424,7 +424,7 @@
       new Uint8Array([0x1b, 0x45, 0x01]),
       encodeEscPosText("HKM TEST PRINT\n"),
       new Uint8Array([0x1b, 0x45, 0x00]),
-      encodeEscPosText("Kakinada Warehouse\n"),
+      encodeEscPosText("Matchless Gift Store\n"),
       encodeEscPosText(`${formatDateTime(new Date().toISOString())}\n`),
       encodeEscPosText("If this prints, USB access works.\n\n\n")
     ]);
@@ -911,7 +911,7 @@
   <div class="receipt">
     <div class="center strong">HARE KRISHNA MOVEMENT</div>
     <div class="center strong">VISAKHAPATNAM</div>
-    <div class="center">Kakinada Warehouse Sale Bill</div>
+    <div class="center">Matchless Gift Store Sale Bill</div>
     <div class="divider"></div>
     <div class="meta-row"><span>Bill No</span><span>${escapeHtml(detail?.documentId || "-")}</span></div>
     <div class="meta-row"><span>Date</span><span>${escapeHtml(formatDateTime(createdAt))}</span></div>
@@ -1025,7 +1025,15 @@
 
   function renderPrinterCard() {
     if (!state.currentUser) return "";
-    return "";
+    return `
+      <section class="public-card category-switch-card">
+        <div class="public-card-header compact-header">
+          <h2>Printing</h2>
+          <div class="public-tag">${escapeHtml(canUseAndroidNativePrint() ? "Android Print Ready" : "Web Preview Mode")}</div>
+        </div>
+        <div class="empty-note">Use the single <strong>Print Bill</strong> button in each sale entry. That is the only print action now.</div>
+      </section>
+    `;
   }
 
   function renderHeader() {
@@ -1034,8 +1042,8 @@
         <div class="public-brand">
           <div class="public-mark">HKM</div>
           <div>
-            <div class="public-title">Kakinada Warehouse Sales</div>
-            <div class="public-subtitle">Log in, build a cart from live stock, and post direct sale entries for Kakinada.</div>
+            <div class="public-title">Matchless Gift Store Sales</div>
+            <div class="public-subtitle">Log in, build a cart from live stock, post direct sale entries, and print bills for Matchless Gift Store.</div>
           </div>
         </div>
       </header>
@@ -1206,6 +1214,7 @@
                     <td>
                       <div class="row-actions">
                         <button class="small-button" type="button" onclick="window.kkdSalesApp.toggleHistoryDetails('${escapeAttr(row.documentId)}')">${state.mySalesExpanded === row.documentId ? "Hide" : "Show"} Details</button>
+                        <button class="small-button" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(row.documentId)}')">Print Bill</button>
                       </div>
                     </td>
                   </tr>
@@ -1264,6 +1273,7 @@
         <p>Your cart has been posted as a sale entry for the ${escapeHtml(state.warehouseName)} warehouse.</p>
         <div class="success-meta">${state.submittedSaleId ? `Sale Entry ${escapeHtml(state.submittedSaleId)} was created successfully.` : "Sale entry created successfully."}</div>
         <div class="public-actions centered-actions">
+          <button class="button secondary" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(state.submittedSaleId)}')">Print Bill</button>
           <button class="button secondary" type="button" onclick="window.kkdSalesApp.setView('history')">My Sale Entries</button>
           <button class="button" type="button" onclick="window.kkdSalesApp.setView('catalog')">Post Another Sale</button>
         </div>
@@ -1275,8 +1285,8 @@
     return `
       <section class="public-card success-card">
         <div class="success-badge">HKM</div>
-        <h1>Kakinada Sales Login</h1>
-        <p>Sign in with the warehouse incharge account to post live sales from Kakinada stock.</p>
+        <h1>Matchless Gift Store Login</h1>
+        <p>Sign in with the warehouse incharge account to post live sales from Matchless Gift Store stock.</p>
         <form class="public-form" onsubmit="window.kkdSalesApp.login(event)">
           <label class="field">
             <span>Username</span>
@@ -1316,13 +1326,13 @@
   function render() {
     root.innerHTML = renderPage();
     renderImageViewer();
-    document.title = state.currentUser ? "Kakinada Sales" : "Kakinada Sales Login";
+    document.title = state.currentUser ? "Matchless Gift Store Sales" : "Matchless Gift Store Login";
   }
 
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sales-kakinada-sw.js?v=5").catch(() => {});
+      navigator.serviceWorker.register("/sales-matchless-sw.js?v=1").catch(() => {});
     });
   }
 

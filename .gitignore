@@ -1,5 +1,6 @@
 outputs/
 work/
+node_modules/
 android-wrapper/.gradle/
 android-wrapper/.idea/
 android-wrapper/.kotlin/

@@ -1,0 +1,12 @@
+{
+  "name": "HKM Matchless Gift Store Sales",
+  "short_name": "Matchless Sales",
+  "description": "Matchless Gift Store sales catalog for books and devotional items.",
+  "start_url": "/sales/matchless",
+  "display": "standalone",
+  "background_color": "#f5e3c7",
+  "theme_color": "#7b3f1d",
+  "scope": "/sales/",
+  "orientation": "portrait",
+  "icons": []
+}
