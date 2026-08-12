@@ -28,6 +28,14 @@
     requestSubmitting: false,
     submittedSaleId: "",
     lastSubmittedSale: null,
+    printerTransport: "",
+    printerReady: false,
+    printerLabel: "Not connected",
+    printerBaudRate: "9600",
+    printerPort: null,
+    printerDevice: null,
+    printerUsbInterfaceNumber: null,
+    printerUsbEndpointOut: null,
     installReady: false,
     deferredInstallPrompt: null
   };
@@ -71,6 +79,22 @@
   function moneyNumber(value) {
     const number = Number(value || 0);
     return number.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+
+  function concatUint8Arrays(parts) {
+    const arrays = parts.filter(Boolean).map((part) => part instanceof Uint8Array ? part : new Uint8Array(part));
+    const totalLength = arrays.reduce((sum, array) => sum + array.length, 0);
+    const merged = new Uint8Array(totalLength);
+    let offset = 0;
+    arrays.forEach((array) => {
+      merged.set(array, offset);
+      offset += array.length;
+    });
+    return merged;
+  }
+
+  function encodeEscPosText(value) {
+    return new TextEncoder().encode(String(value || ""));
   }
 
   function formatDateTime(value) {
@@ -327,6 +351,217 @@
   async function loadSaleDetail(documentId) {
     if (!documentId) return null;
     return window.erpApi.request("sales.entryDetail", { documentId });
+  }
+
+  function buildEscPosReceiptBytes(detail) {
+    const lines = Array.isArray(detail?.lines) ? detail.lines : [];
+    const createdAt = detail?.createdAt || detail?.documentDate || new Date().toISOString();
+    const totalQty = lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+    const totalAmount = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+    const rowText = lines.map((line) => {
+      const qty = Number(line.quantity || 0);
+      const rate = moneyNumber(line.rate || 0);
+      const amount = moneyNumber(line.amount || 0);
+      return `${String(line.itemName || "-").slice(0, 24)}\n${qty} x ${rate} = ${amount}\n`;
+    }).join("");
+    return concatUint8Arrays([
+      new Uint8Array([0x1b, 0x40]),
+      new Uint8Array([0x1b, 0x61, 0x01]),
+      new Uint8Array([0x1b, 0x45, 0x01]),
+      encodeEscPosText("HARE KRISHNA MOVEMENT\n"),
+      encodeEscPosText("VISAKHAPATNAM\n"),
+      new Uint8Array([0x1b, 0x45, 0x00]),
+      encodeEscPosText("Kakinada Warehouse Sale Bill\n"),
+      new Uint8Array([0x1b, 0x61, 0x00]),
+      encodeEscPosText("--------------------------------\n"),
+      encodeEscPosText(`Bill No: ${detail?.documentId || "-"}\n`),
+      encodeEscPosText(`Date: ${formatDateTime(createdAt)}\n`),
+      encodeEscPosText(`Warehouse: ${detail?.warehouseName || WAREHOUSE_KEY}\n`),
+      encodeEscPosText(`User: ${detail?.createdByName || detail?.createdByUsername || "-"}\n`),
+      detail?.notes ? encodeEscPosText(`Notes: ${detail.notes}\n`) : new Uint8Array(),
+      encodeEscPosText("--------------------------------\n"),
+      encodeEscPosText(rowText),
+      encodeEscPosText("--------------------------------\n"),
+      new Uint8Array([0x1b, 0x45, 0x01]),
+      encodeEscPosText(`Total Qty: ${totalQty}\n`),
+      encodeEscPosText(`Total Amount: Rs. ${moneyNumber(totalAmount)}\n`),
+      new Uint8Array([0x1b, 0x45, 0x00]),
+      new Uint8Array([0x1b, 0x61, 0x01]),
+      encodeEscPosText("Thank you\n\n\n")
+    ]);
+  }
+
+  function buildTestPrintBytes() {
+    return concatUint8Arrays([
+      new Uint8Array([0x1b, 0x40]),
+      new Uint8Array([0x1b, 0x61, 0x01]),
+      new Uint8Array([0x1b, 0x45, 0x01]),
+      encodeEscPosText("HKM TEST PRINT\n"),
+      new Uint8Array([0x1b, 0x45, 0x00]),
+      encodeEscPosText("Kakinada Warehouse\n"),
+      encodeEscPosText(`${formatDateTime(new Date().toISOString())}\n`),
+      encodeEscPosText("If this prints, USB access works.\n\n\n")
+    ]);
+  }
+
+  function updatePrinterState(nextState) {
+    Object.assign(state, nextState);
+    render();
+  }
+
+  async function connectUsbPrinterDirect() {
+    if (!navigator.usb) {
+      throw new Error("WebUSB is not available in this browser");
+    }
+    const device = await navigator.usb.requestDevice({ filters: [] });
+    await device.open();
+    if (!device.configuration) {
+      await device.selectConfiguration(1);
+    }
+    let interfaceNumber = null;
+    let endpointOut = null;
+    const interfaces = device.configuration ? device.configuration.interfaces || [] : [];
+    for (const iface of interfaces) {
+      const alternates = iface.alternates || [];
+      for (const alternate of alternates) {
+        const outEndpoint = (alternate.endpoints || []).find((endpoint) => endpoint.direction === "out");
+        if (outEndpoint) {
+          interfaceNumber = iface.interfaceNumber;
+          endpointOut = outEndpoint.endpointNumber;
+          break;
+        }
+      }
+      if (endpointOut !== null) break;
+    }
+    if (interfaceNumber === null || endpointOut === null) {
+      throw new Error("No writable USB endpoint found for this printer");
+    }
+    await device.claimInterface(interfaceNumber);
+    updatePrinterState({
+      printerTransport: "usb",
+      printerReady: true,
+      printerLabel: `USB printer connected${device.productName ? `: ${device.productName}` : ""}`,
+      printerDevice: device,
+      printerPort: null,
+      printerUsbInterfaceNumber: interfaceNumber,
+      printerUsbEndpointOut: endpointOut
+    });
+    return true;
+  }
+
+  async function connectUsbPrinterSerial() {
+    if (!navigator.serial) {
+      throw new Error("Web Serial is not available in this browser");
+    }
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: Number(state.printerBaudRate || 9600) });
+    updatePrinterState({
+      printerTransport: "serial",
+      printerReady: true,
+      printerLabel: `Serial printer connected (${state.printerBaudRate} baud)`,
+      printerPort: port,
+      printerDevice: null,
+      printerUsbInterfaceNumber: null,
+      printerUsbEndpointOut: null
+    });
+    return true;
+  }
+
+  async function connectPrinter() {
+    setLoading(true, "Connecting printer...");
+    try {
+      try {
+        await connectUsbPrinterDirect();
+        showToast("USB printer connected");
+        return;
+      } catch (usbError) {
+        if (navigator.serial) {
+          await connectUsbPrinterSerial();
+          showToast("Serial printer connected");
+          return;
+        }
+        throw usbError;
+      }
+    } catch (error) {
+      updatePrinterState({
+        printerTransport: "",
+        printerReady: false,
+        printerLabel: "Connection failed",
+        printerPort: null,
+        printerDevice: null,
+        printerUsbInterfaceNumber: null,
+        printerUsbEndpointOut: null
+      });
+      showToast(error.message || "Could not connect printer");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function sendBytesToPrinter(bytes) {
+    if (!state.printerReady) {
+      throw new Error("Printer is not connected");
+    }
+    if (state.printerTransport === "serial" && state.printerPort?.writable) {
+      const writer = state.printerPort.writable.getWriter();
+      try {
+        await writer.write(bytes);
+      } finally {
+        writer.releaseLock();
+      }
+      return;
+    }
+    if (state.printerTransport === "usb" && state.printerDevice && state.printerUsbEndpointOut !== null) {
+      const result = await state.printerDevice.transferOut(state.printerUsbEndpointOut, bytes);
+      if (result.status !== "ok") {
+        throw new Error(`USB print failed: ${result.status}`);
+      }
+      return;
+    }
+    throw new Error("Printer connection is not writable");
+  }
+
+  async function testPrint() {
+    if (!state.printerReady) {
+      showToast("Connect the printer first");
+      return;
+    }
+    setLoading(true, "Sending test print...");
+    try {
+      await sendBytesToPrinter(buildTestPrintBytes());
+      showToast("Test print sent");
+    } catch (error) {
+      showToast(error.message || "Test print failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function printReceiptToPrinter(documentId) {
+    const targetId = String(documentId || state.submittedSaleId || "").trim();
+    if (!targetId) {
+      showToast("No sale entry available to print");
+      return;
+    }
+    if (!state.printerReady) {
+      showToast("Connect the printer first");
+      return;
+    }
+    setLoading(true, "Sending bill to printer...");
+    try {
+      const detail = state.lastSubmittedSale && String(state.lastSubmittedSale.documentId || "") === targetId
+        ? state.lastSubmittedSale
+        : await loadSaleDetail(targetId);
+      if (!detail) {
+        throw new Error("Sale entry not found");
+      }
+      await sendBytesToPrinter(buildEscPosReceiptBytes(detail));
+      showToast("Bill sent to printer");
+    } catch (error) {
+      showToast(error.message || "Could not print bill");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function setView(view) {
@@ -650,6 +885,39 @@
     `;
   }
 
+  function renderPrinterCard() {
+    if (!state.currentUser) return "";
+    return `
+      <section class="public-card category-switch-card">
+        <div class="public-card-header compact-header">
+          <h2>Printer</h2>
+          <div class="public-tag">${escapeHtml(state.printerLabel)}</div>
+        </div>
+        <div class="grid-two">
+          <label class="field">
+            <span>Serial Baud Rate</span>
+            <select onchange="window.kkdSalesApp.setField('printerBaudRate', this.value)">
+              <option value="9600"${String(state.printerBaudRate) === "9600" ? " selected" : ""}>9600</option>
+              <option value="19200"${String(state.printerBaudRate) === "19200" ? " selected" : ""}>19200</option>
+              <option value="38400"${String(state.printerBaudRate) === "38400" ? " selected" : ""}>38400</option>
+              <option value="57600"${String(state.printerBaudRate) === "57600" ? " selected" : ""}>57600</option>
+              <option value="115200"${String(state.printerBaudRate) === "115200" ? " selected" : ""}>115200</option>
+            </select>
+          </label>
+          <div class="field">
+            <span>Status</span>
+            <div class="public-tag">${escapeHtml(state.printerReady ? `Connected via ${state.printerTransport.toUpperCase()}` : "Not connected")}</div>
+          </div>
+        </div>
+        <div class="public-actions checkout-actions">
+          <button class="button secondary" type="button" onclick="window.kkdSalesApp.connectPrinter()">Connect Printer</button>
+          <button class="button secondary" type="button" onclick="window.kkdSalesApp.testPrint()" ${state.printerReady ? "" : "disabled"}>Test Print</button>
+          <button class="button secondary" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(state.submittedSaleId || "")}')" ${(state.printerReady && state.submittedSaleId) ? "" : "disabled"}>Print Last Bill</button>
+        </div>
+      </section>
+    `;
+  }
+
   function renderHeader() {
     return `
       <header class="public-hero">
@@ -829,6 +1097,7 @@
                       <div class="row-actions">
                         <button class="small-button" type="button" onclick="window.kkdSalesApp.toggleHistoryDetails('${escapeAttr(row.documentId)}')">${state.mySalesExpanded === row.documentId ? "Hide" : "Show"} Details</button>
                         <button class="small-button" type="button" onclick="window.kkdSalesApp.openReceipt('${escapeAttr(row.documentId)}')">Print Bill</button>
+                        <button class="small-button" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(row.documentId)}')" ${state.printerReady ? "" : "disabled"}>Print to Printer</button>
                       </div>
                     </td>
                   </tr>
@@ -888,6 +1157,7 @@
         <div class="success-meta">${state.submittedSaleId ? `Sale Entry ${escapeHtml(state.submittedSaleId)} was created successfully.` : "Sale entry created successfully."}</div>
         <div class="public-actions centered-actions">
           <button class="button secondary" type="button" onclick="window.kkdSalesApp.openReceipt('${escapeAttr(state.submittedSaleId)}')">Print Bill</button>
+          <button class="button secondary" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(state.submittedSaleId)}')" ${state.printerReady ? "" : "disabled"}>Print to Printer</button>
           <button class="button secondary" type="button" onclick="window.kkdSalesApp.setView('history')">My Sale Entries</button>
           <button class="button" type="button" onclick="window.kkdSalesApp.setView('catalog')">Post Another Sale</button>
         </div>
@@ -931,6 +1201,7 @@
       <div class="public-shell pwa-shell">
         ${renderFloatingActions()}
         ${state.currentUser ? renderHeader() : ""}
+        ${renderPrinterCard()}
         ${renderBody()}
       </div>
     `;
@@ -945,7 +1216,7 @@
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sales-kakinada-sw.js?v=2").catch(() => {});
+      navigator.serviceWorker.register("/sales-kakinada-sw.js?v=3").catch(() => {});
     });
   }
 
@@ -974,6 +1245,9 @@
     removeCartLine,
     submitSale,
     openReceipt,
+    connectPrinter,
+    testPrint,
+    printReceiptToPrinter,
     toggleHistoryDetails,
     openImageViewer,
     openImageViewerByCode,
