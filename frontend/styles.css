@@ -1510,14 +1510,15 @@ body.public-mode .loading-overlay {
 }
 
 .floating-request-actions {
-  position: fixed;
-  top: 14px;
-  right: 14px;
-  z-index: 35;
+  position: sticky;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  z-index: 20;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  margin-bottom: 14px;
+  padding-top: 4px;
 }
 
 .floating-request-actions .segment {
@@ -1657,11 +1658,9 @@ body.public-mode .loading-overlay {
 
 @media (max-width: 700px) {
   .floating-request-actions {
-    left: 12px;
-    right: 12px;
-    top: 10px;
     justify-content: stretch;
     gap: 10px;
+    margin-bottom: 12px;
   }
 
   .floating-request-actions .segment {
@@ -1675,10 +1674,6 @@ body.public-mode .loading-overlay {
     align-items: center;
     justify-content: center;
     padding-inline: 14px;
-  }
-
-  .public-shell.pwa-shell {
-    padding-top: 96px;
   }
 
   .public-top-actions {
@@ -1710,18 +1705,10 @@ body.public-mode .loading-overlay {
 }
 
 @media (max-width: 480px) {
-  .floating-request-actions {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .floating-request-actions .segment {
     flex-basis: calc(50% - 5px);
     font-size: 14px;
     padding-inline: 12px;
-  }
-
-  .public-shell.pwa-shell {
-    padding-top: 104px;
   }
 
   .compact-grid {
