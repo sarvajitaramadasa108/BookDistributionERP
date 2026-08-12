@@ -1,4 +1,4 @@
-const CACHE_NAME = "hkm-kakinada-sales-pwa-v4";
+const CACHE_NAME = "hkm-kakinada-sales-pwa-v5";
 const CORE_ASSETS = [
   "/sales/kakinada",
   "/sales-kakinada.html",

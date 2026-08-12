@@ -792,9 +792,6 @@
       await Promise.all([ensureCatalogLoaded("BOOK"), ensureCatalogLoaded("PARAPHERNALIA"), loadMySales()]);
       showToast("Sale entry created");
       render();
-      setTimeout(() => {
-        openReceipt(state.submittedSaleId);
-      }, 250);
     } catch (error) {
       showToast(error.message || "Could not create sale entry");
     } finally {
@@ -1031,38 +1028,10 @@
     return `
       <section class="public-card category-switch-card">
         <div class="public-card-header compact-header">
-          <h2>Printer</h2>
-          <div class="public-tag">${escapeHtml(state.printerLabel)}</div>
+          <h2>Printing</h2>
+          <div class="public-tag">${escapeHtml(canUseAndroidNativePrint() ? "Android Print Ready" : "Web Preview Mode")}</div>
         </div>
-        <div class="grid-two">
-          <label class="field">
-            <span>Serial Baud Rate</span>
-            <select onchange="window.kkdSalesApp.setField('printerBaudRate', this.value)">
-              <option value="9600"${String(state.printerBaudRate) === "9600" ? " selected" : ""}>9600</option>
-              <option value="19200"${String(state.printerBaudRate) === "19200" ? " selected" : ""}>19200</option>
-              <option value="38400"${String(state.printerBaudRate) === "38400" ? " selected" : ""}>38400</option>
-              <option value="57600"${String(state.printerBaudRate) === "57600" ? " selected" : ""}>57600</option>
-              <option value="115200"${String(state.printerBaudRate) === "115200" ? " selected" : ""}>115200</option>
-            </select>
-          </label>
-          <div class="field">
-            <span>Status</span>
-            <div class="public-tag">${escapeHtml(state.printerReady ? `Connected via ${state.printerTransport.toUpperCase()}` : "Not connected")}</div>
-          </div>
-        </div>
-        ${canUseAndroidNativePrint() ? `
-          <div class="empty-note">Android print service detected. Use Print Bill or Open Print Dialog to print through your working printer service.</div>
-          <div class="public-actions checkout-actions">
-            <button class="button secondary" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(state.submittedSaleId || "")}')" ${state.submittedSaleId ? "" : "disabled"}>Open Print Dialog</button>
-          </div>
-        ` : `
-          <div class="public-actions checkout-actions">
-            <button class="button secondary" type="button" onclick="window.kkdSalesApp.connectPrinter()">Connect USB Printer</button>
-            <button class="button secondary" type="button" onclick="window.kkdSalesApp.connectBluetoothPrinter()">Connect Bluetooth Printer</button>
-            <button class="button secondary" type="button" onclick="window.kkdSalesApp.testPrint()" ${state.printerReady ? "" : "disabled"}>Test Print</button>
-            <button class="button secondary" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(state.submittedSaleId || "")}')" ${(state.printerReady && state.submittedSaleId) ? "" : "disabled"}>Print Last Bill</button>
-          </div>
-        `}
+        <div class="empty-note">Use the single <strong>Print Bill</strong> button in each sale entry. That is the only print action now.</div>
       </section>
     `;
   }
@@ -1245,8 +1214,7 @@
                     <td>
                       <div class="row-actions">
                         <button class="small-button" type="button" onclick="window.kkdSalesApp.toggleHistoryDetails('${escapeAttr(row.documentId)}')">${state.mySalesExpanded === row.documentId ? "Hide" : "Show"} Details</button>
-                        <button class="small-button" type="button" onclick="window.kkdSalesApp.openReceipt('${escapeAttr(row.documentId)}')">Print Bill</button>
-                        <button class="small-button" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(row.documentId)}')" ${state.printerReady ? "" : "disabled"}>Print to Printer</button>
+                        <button class="small-button" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(row.documentId)}')">Print Bill</button>
                       </div>
                     </td>
                   </tr>
@@ -1305,8 +1273,7 @@
         <p>Your cart has been posted as a sale entry for the ${escapeHtml(state.warehouseName)} warehouse.</p>
         <div class="success-meta">${state.submittedSaleId ? `Sale Entry ${escapeHtml(state.submittedSaleId)} was created successfully.` : "Sale entry created successfully."}</div>
         <div class="public-actions centered-actions">
-          <button class="button secondary" type="button" onclick="window.kkdSalesApp.openReceipt('${escapeAttr(state.submittedSaleId)}')">Print Bill</button>
-          <button class="button secondary" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(state.submittedSaleId)}')" ${state.printerReady ? "" : "disabled"}>Print to Printer</button>
+          <button class="button secondary" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(state.submittedSaleId)}')">Print Bill</button>
           <button class="button secondary" type="button" onclick="window.kkdSalesApp.setView('history')">My Sale Entries</button>
           <button class="button" type="button" onclick="window.kkdSalesApp.setView('catalog')">Post Another Sale</button>
         </div>
@@ -1365,7 +1332,7 @@
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sales-kakinada-sw.js?v=4").catch(() => {});
+      navigator.serviceWorker.register("/sales-kakinada-sw.js?v=5").catch(() => {});
     });
   }
 

@@ -35,15 +35,16 @@ class MainActivity : ComponentActivity() {
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
-            cacheMode = WebSettings.LOAD_DEFAULT
+            cacheMode = WebSettings.LOAD_NO_CACHE
             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             builtInZoomControls = false
             displayZoomControls = false
         }
+        webView.clearCache(true)
         webView.webViewClient = WebViewClient()
         webView.webChromeClient = WebChromeClient()
         webView.addJavascriptInterface(printerBridge, "AndroidPosPrinter")
-        webView.loadUrl("https://book-distribution-erp.vercel.app/sales/kakinada")
+        webView.loadUrl("https://book-distribution-erp.vercel.app/sales/kakinada?android_wrapper=1&v=20260812")
     }
 
     private fun requestBluetoothPermissionsIfNeeded() {
