@@ -457,17 +457,22 @@
   <style>
     body {
       margin: 0;
-      padding: 12px;
+      padding: 16px;
       font-family: Arial, sans-serif;
       color: #111;
-      background: #fff;
-      font-size: 12px;
+      background: #f6efe4;
+      font-size: 14px;
       line-height: 1.35;
     }
     .receipt {
-      width: 58mm;
-      max-width: 100%;
+      width: min(100%, 420px);
       margin: 0 auto;
+      background: #fff;
+      border: 1px solid #d8c2a7;
+      border-radius: 12px;
+      padding: 16px 14px;
+      box-sizing: border-box;
+      box-shadow: 0 8px 24px rgba(80, 44, 18, 0.12);
     }
     .center { text-align: center; }
     .strong { font-weight: 700; }
@@ -503,24 +508,37 @@
       word-break: break-word;
     }
     .actions {
-      width: 58mm;
-      max-width: 100%;
+      width: min(100%, 420px);
       margin: 0 auto 12px;
       display: flex;
       gap: 8px;
       justify-content: center;
+      flex-wrap: wrap;
     }
     button {
-      padding: 8px 10px;
+      padding: 10px 12px;
       border: 1px solid #000;
       background: #fff;
-      font-size: 12px;
+      font-size: 14px;
       cursor: pointer;
+      border-radius: 8px;
     }
     @media print {
-      body { padding: 0; }
+      body {
+        padding: 0;
+        background: #fff;
+        font-size: 12px;
+      }
       .actions { display: none; }
-      .receipt { width: auto; margin: 0; }
+      .receipt {
+        width: 58mm;
+        max-width: 58mm;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
       @page { margin: 4mm; size: 58mm auto; }
     }
   </style>
