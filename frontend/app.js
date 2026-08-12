@@ -29,6 +29,11 @@
     purchaseImportName: "",
     documents: [],
     requests: [],
+    saleEntries: [],
+    saleEntrySearch: "",
+    saleEntryWarehouseFilter: "all",
+    saleEntryDetailId: "",
+    saleEntryDetail: null,
     requestSearch: "",
     requestGroupFilter: "all",
     requestDetailId: "",
@@ -96,6 +101,7 @@
     warehouses: ["Warehouses", "Main and event stock locations.", renderWarehouses],
     activities: ["Activities", "Daily stalls, marathons, events, and closing workflow.", renderActivities],
     documents: ["Stock Documents", "Issue, receive, sale, return, transfer, and adjustment entries.", renderDocuments],
+    "sale-entries": ["Sale Entries", "Warehouse sale orders, item details, and settlement tracking.", renderSaleEntries],
     requests: ["Requests", "Public book and devotional item requests.", renderRequests],
     "online-classes": ["Online Classes", "Public volunteer registrations for online Bhagavad Gita classes.", renderOnlineClasses],
     reports: ["Reports", "Current stock, activity summary, book-wise sales, and ledger.", renderReports],
@@ -2973,6 +2979,51 @@
     };
   }
 
+  function normalizeSaleEntrySummary(row) {
+    return {
+      documentRowId: row.documentRowId || row.id || "",
+      documentId: row.documentId || row.documentCode || "",
+      documentType: row.documentType || "SALE",
+      documentDate: row.documentDate || "",
+      status: row.status || "Posted",
+      notes: row.notes || "",
+      warehouseId: row.warehouseId || "",
+      warehouseCode: row.warehouseCode || "",
+      warehouseName: row.warehouseName || "",
+      createdByUserId: row.createdByUserId || "",
+      createdByName: row.createdByName || "",
+      createdByUsername: row.createdByUsername || "",
+      createdAt: row.createdAt || "",
+      updatedAt: row.updatedAt || "",
+      totalQty: Number(row.totalQty || 0),
+      totalAmount: Number(row.totalAmount || 0),
+      paidCashAmount: Number(row.paidCashAmount || 0),
+      paidOnlineAmount: Number(row.paidOnlineAmount || 0),
+      paidTotalAmount: Number(row.paidTotalAmount || 0),
+      pendingAmount: Number(row.pendingAmount || 0),
+      lines: Array.isArray(row.lines) ? row.lines.map((line) => ({
+        lineId: line.lineId || "",
+        lineNo: Number(line.lineNo || 0),
+        erpCode: line.erpCode || "",
+        itemName: line.itemName || line.bookName || "",
+        itemGroup: line.itemGroup || "BOOK",
+        itemType: line.itemType || line.bookType || "",
+        quantity: Number(line.quantity || 0),
+        rate: Number(line.rate || 0),
+        amount: Number(line.amount || 0)
+      })) : [],
+      payments: Array.isArray(row.payments) ? row.payments.map((payment) => ({
+        paymentId: payment.paymentId || "",
+        paymentDate: payment.paymentDate || "",
+        cashAmount: Number(payment.cashAmount || 0),
+        onlineAmount: Number(payment.onlineAmount || 0),
+        totalAmount: Number(payment.totalAmount || 0),
+        notes: payment.notes || "",
+        createdAt: payment.createdAt || ""
+      })) : []
+    };
+  }
+
   function getDocumentActivityMeta(activityId) {
     const activity = state.activities.find((item) => item.activityId === activityId || item.activityRowId === activityId);
     if (!activity) {
@@ -4736,6 +4787,78 @@
     content.innerHTML = renderRequestsMarkup();
   }
 
+  async function setSaleEntrySearch(value) {
+    state.saleEntrySearch = value || "";
+    const currentValue = String(value || "");
+    content.innerHTML = renderSaleEntriesMarkup();
+    const input = document.getElementById("saleEntrySearchInput");
+    if (input) {
+      input.value = currentValue;
+      input.focus();
+      if (typeof input.setSelectionRange === "function") {
+        input.setSelectionRange(currentValue.length, currentValue.length);
+      }
+    }
+  }
+
+  async function setSaleEntryWarehouseFilter(value) {
+    state.saleEntryWarehouseFilter = value || "all";
+    state.saleEntryDetailId = "";
+    state.saleEntryDetail = null;
+    content.innerHTML = renderSaleEntriesMarkup();
+  }
+
+  async function showSaleEntryDetails(documentId) {
+    if (!documentId) return;
+    state.saleEntryDetailId = documentId;
+    setLoading(true);
+    try {
+      const detail = await window.erpApi.request("sales.entryDetail", { documentId });
+      state.saleEntryDetail = normalizeSaleEntrySummary(detail || {});
+      content.innerHTML = renderSaleEntriesMarkup();
+    } catch (error) {
+      showToast(error.message || "Could not load sale entry details");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function backToSaleEntriesSummary() {
+    state.saleEntryDetailId = "";
+    state.saleEntryDetail = null;
+    content.innerHTML = renderSaleEntriesMarkup();
+  }
+
+  async function saveSaleEntryPayment(event, documentId) {
+    if (event) event.preventDefault();
+    const paymentDate = document.getElementById("saleEntryPaymentDate")?.value || "";
+    const cashAmount = Number(document.getElementById("saleEntryCashAmount")?.value || 0);
+    const onlineAmount = Number(document.getElementById("saleEntryOnlineAmount")?.value || 0);
+    const notes = String(document.getElementById("saleEntryPaymentNotes")?.value || "").trim();
+    if (cashAmount <= 0 && onlineAmount <= 0) {
+      showToast("Enter cash or online amount");
+      return;
+    }
+    setLoading(true, "Saving payment...");
+    try {
+      const detail = await window.erpApi.request("sales.entryPaymentCreate", {
+        documentId,
+        paymentDate,
+        cashAmount,
+        onlineAmount,
+        notes
+      });
+      state.saleEntryDetail = normalizeSaleEntrySummary(detail || {});
+      state.saleEntries = state.saleEntries.map((row) => row.documentId === state.saleEntryDetail.documentId ? state.saleEntryDetail : row);
+      content.innerHTML = renderSaleEntriesMarkup();
+      showToast("Payment saved");
+    } catch (error) {
+      showToast(error.message || "Could not save payment");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function showRequestDetails(requestId) {
     state.requestDetailId = requestId;
     content.innerHTML = renderRequestsMarkup();
@@ -4749,6 +4872,224 @@
   async function refreshRequestsData() {
     state.requests = await window.erpApi.request("requests.list");
     return state.requests;
+  }
+
+  async function renderSaleEntries() {
+    const [rows, warehouses] = await Promise.all([
+      window.erpApi.request("sales.entriesList"),
+      state.warehouses.length ? Promise.resolve(state.warehouses) : window.erpApi.request("warehouses.list")
+    ]);
+    state.saleEntries = Array.isArray(rows) ? rows.map(normalizeSaleEntrySummary) : [];
+    if (!state.warehouses.length) {
+      state.warehouses = Array.isArray(warehouses) ? warehouses.map(normalizeWarehouse) : [];
+    }
+    return renderSaleEntriesMarkup();
+  }
+
+  function filteredSaleEntries() {
+    const query = String(state.saleEntrySearch || "").trim().toLowerCase();
+    const warehouseFilter = String(state.saleEntryWarehouseFilter || "all");
+    return (state.saleEntries || []).filter((row) => {
+      if (warehouseFilter !== "all" && String(row.warehouseId || "") !== warehouseFilter) {
+        return false;
+      }
+      if (!query) return true;
+      const haystack = [
+        row.documentId,
+        row.warehouseName,
+        row.createdByName,
+        row.createdByUsername,
+        row.notes,
+        ...(row.lines || []).flatMap((line) => [line.erpCode, line.itemName, line.itemType])
+      ].join(" ").toLowerCase();
+      return haystack.includes(query);
+    });
+  }
+
+  function renderSaleEntriesMarkup() {
+    const rows = filteredSaleEntries();
+    const detail = state.saleEntryDetail || state.saleEntries.find((row) => row.documentId === state.saleEntryDetailId) || null;
+    const warehouseOptions = (state.warehouses || []).filter((row) => row.active !== false);
+    return `
+      <section class="card">
+        <div class="panel-header">
+          <h2>Sale Entries</h2>
+          <div class="row-actions">
+            ${detail ? `<button class="small-button" type="button" onclick="window.erpApp.backToSaleEntriesSummary()">Back to Summary</button>` : ""}
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="toolbar">
+            <label class="field compact-field">
+              <span>Search</span>
+              <input id="saleEntrySearchInput" type="search" value="${escapeAttribute(state.saleEntrySearch)}" placeholder="Search sale entry, warehouse, user, item..." oninput="window.erpApp.setSaleEntrySearch(this.value)">
+            </label>
+            <label class="field compact-field">
+              <span>Warehouse</span>
+              <select onchange="window.erpApp.setSaleEntryWarehouseFilter(this.value)">
+                <option value="all"${String(state.saleEntryWarehouseFilter || "all") === "all" ? " selected" : ""}>All warehouses</option>
+                ${warehouseOptions.map((row) => `<option value="${escapeAttribute(row.warehouseId)}"${String(state.saleEntryWarehouseFilter || "") === String(row.warehouseId || "") ? " selected" : ""}>${escapeHtml(row.name || row.warehouseId)}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+          ${detail ? saleEntryDetailMarkup(detail) : (rows.length ? saleEntriesTable(rows) : '<div class="empty-state">No sale entries found.</div>')}
+        </div>
+      </section>
+    `;
+  }
+
+  function saleEntriesTable(rows) {
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Sale ID</th>
+              <th>Warehouse</th>
+              <th>Created By</th>
+              <th>Items</th>
+              <th>Qty</th>
+              <th>Sale Amount</th>
+              <th>Cash</th>
+              <th>Online</th>
+              <th>Pending</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td>${escapeHtml(formatDateTime(row.createdAt || row.documentDate))}</td>
+                <td>${escapeHtml(row.documentId || "-")}</td>
+                <td>${escapeHtml(row.warehouseName || row.warehouseCode || "-")}</td>
+                <td>${escapeHtml(row.createdByName || row.createdByUsername || "-")}</td>
+                <td>${escapeHtml((row.lines || []).length ? row.lines.map((line) => line.itemName).join(", ") : "-")}</td>
+                <td>${Number(row.totalQty || 0)}</td>
+                <td>${money(Number(row.totalAmount || 0))}</td>
+                <td>${money(Number(row.paidCashAmount || 0))}</td>
+                <td>${money(Number(row.paidOnlineAmount || 0))}</td>
+                <td>${money(Number(row.pendingAmount || 0))}</td>
+                <td><button class="small-button" type="button" onclick="window.erpApp.showSaleEntryDetails('${escapeAttribute(row.documentId)}')">Show Details</button></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function saleEntryDetailMarkup(detail) {
+    const paymentRows = Array.isArray(detail.payments) ? detail.payments : [];
+    return `
+      <div class="section-gap">
+        <div class="grid two-col">
+          <section class="card">
+            <div class="panel-header"><h3>Sale Summary</h3></div>
+            <div class="panel-body">
+              <div class="grid two-col compact-grid">
+                ${metric("Sale Entry", detail.documentId || "-", detail.warehouseName || detail.warehouseCode || "-")}
+                ${metric("Created By", detail.createdByName || detail.createdByUsername || "-", formatDateTime(detail.createdAt || detail.documentDate))}
+                ${metric("Total Qty", Number(detail.totalQty || 0), "Total sold quantity")}
+                ${metric("Sale Amount", money(Number(detail.totalAmount || 0)), "Current total")}
+                ${metric("Cash Received", money(Number(detail.paidCashAmount || 0)), "Recorded cash")}
+                ${metric("Online Received", money(Number(detail.paidOnlineAmount || 0)), "Recorded online")}
+                ${metric("Pending Amount", money(Number(detail.pendingAmount || 0)), "Still to settle")}
+                ${metric("Status", detail.pendingAmount > 0 ? "Settlement Pending" : "Settled", detail.status || "Posted")}
+              </div>
+              <div class="detail-meta">
+                <div><strong>Warehouse:</strong> ${escapeHtml(detail.warehouseName || detail.warehouseCode || "-")}</div>
+                <div><strong>Notes:</strong> ${escapeHtml(detail.notes || "-")}</div>
+              </div>
+            </div>
+          </section>
+          <section class="card">
+            <div class="panel-header"><h3>Payments</h3></div>
+            <div class="panel-body">
+              ${paymentRows.length ? `
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Cash</th>
+                        <th>Online</th>
+                        <th>Total</th>
+                        <th>Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${paymentRows.map((row) => `
+                        <tr>
+                          <td>${escapeHtml(toInputDate(row.paymentDate) || "-")}</td>
+                          <td>${money(Number(row.cashAmount || 0))}</td>
+                          <td>${money(Number(row.onlineAmount || 0))}</td>
+                          <td>${money(Number(row.totalAmount || 0))}</td>
+                          <td>${escapeHtml(row.notes || "-")}</td>
+                        </tr>
+                      `).join("")}
+                    </tbody>
+                  </table>
+                </div>
+              ` : '<div class="empty-state">No payments recorded yet.</div>'}
+              <div class="section-gap"></div>
+              <form class="form-grid" onsubmit="window.erpApp.saveSaleEntryPayment(event, '${escapeAttribute(detail.documentId)}')">
+                <label class="field">
+                  <span>Payment Date</span>
+                  <input id="saleEntryPaymentDate" type="date" value="${escapeAttribute(toInputDate(new Date().toISOString()) || "")}">
+                </label>
+                <label class="field">
+                  <span>Cash Received</span>
+                  <input id="saleEntryCashAmount" type="number" min="0" step="0.01" placeholder="0">
+                </label>
+                <label class="field">
+                  <span>Online Received</span>
+                  <input id="saleEntryOnlineAmount" type="number" min="0" step="0.01" placeholder="0">
+                </label>
+                <label class="field wide-field">
+                  <span>Notes</span>
+                  <input id="saleEntryPaymentNotes" type="text" placeholder="Optional note">
+                </label>
+                <div class="form-actions">
+                  <button class="button" type="submit">Save Payment</button>
+                </div>
+              </form>
+            </div>
+          </section>
+        </div>
+        <section class="card">
+          <div class="panel-header"><h3>Item Details</h3></div>
+          <div class="panel-body">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ERP Code</th>
+                    <th>Item</th>
+                    <th>Category</th>
+                    <th>Qty</th>
+                    <th>Rate</th>
+                    <th>Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${(detail.lines || []).map((line) => `
+                    <tr>
+                      <td>${escapeHtml(line.erpCode || "-")}</td>
+                      <td>${escapeHtml(line.itemName || "-")}</td>
+                      <td>${escapeHtml(line.itemGroup === "PARAPHERNALIA" ? (line.itemType || "Devotional Item") : (line.itemType || "Books"))}</td>
+                      <td>${Number(line.quantity || 0)}</td>
+                      <td>${money(Number(line.rate || 0))}</td>
+                      <td>${money(Number(line.amount || 0))}</td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    `;
   }
 
   async function refreshActivitiesData() {
@@ -7569,6 +7910,11 @@
     setOnlineClassSearch,
     setRequestSearch,
     setRequestGroupFilter,
+    setSaleEntrySearch,
+    setSaleEntryWarehouseFilter,
+    showSaleEntryDetails,
+    backToSaleEntriesSummary,
+    saveSaleEntryPayment,
     showRequestDetails,
     backToRequestsSummary,
     openRequestApprovalForm,

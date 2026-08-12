@@ -1,0 +1,815 @@
+(function () {
+  const root = document.getElementById("salesRoot");
+  const modalRoot = document.getElementById("modalRoot");
+  const overlay = document.getElementById("loadingOverlay");
+  const toastStack = document.getElementById("toastStack");
+  const WAREHOUSE_KEY = "Kakinada";
+
+  const state = {
+    currentUser: null,
+    itemGroup: "BOOK",
+    devotionalCategory: "ALL",
+    search: "",
+    warehouseId: "",
+    warehouseName: WAREHOUSE_KEY,
+    catalogByGroup: {
+      BOOK: [],
+      PARAPHERNALIA: []
+    },
+    loadingCatalog: false,
+    cart: [],
+    notes: "",
+    view: "catalog",
+    imageViewer: null,
+    mySales: [],
+    mySalesLoaded: false,
+    mySalesLoading: false,
+    mySalesExpanded: "",
+    requestSubmitting: false,
+    submittedSaleId: "",
+    installReady: false,
+    deferredInstallPrompt: null
+  };
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function escapeAttr(value) {
+    return escapeHtml(value).replace(/`/g, "&#96;");
+  }
+
+  function normalizeText(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function normalizeDriveImageUrl(url) {
+    const raw = String(url || "").trim();
+    if (!raw) return "";
+    const fileMatch = raw.match(/\/file\/d\/([^/]+)/i) || raw.match(/[?&]id=([^&]+)/i);
+    if (raw.includes("drive.google.com") && fileMatch) {
+      return `/api/image?url=${encodeURIComponent(raw)}`;
+    }
+    return raw;
+  }
+
+  function selectorSafe(value) {
+    return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
+
+  function money(value) {
+    const number = Number(value || 0);
+    return `Rs. ${number.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  }
+
+  function formatDateTime(value) {
+    if (!value) return "-";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
+  function setLoading(value, message) {
+    overlay.classList.toggle("hidden", !value);
+    const label = overlay ? overlay.querySelector("span") : null;
+    if (label) label.textContent = message || "Loading";
+  }
+
+  function showToast(message) {
+    const item = document.createElement("div");
+    item.className = "toast";
+    item.textContent = message;
+    toastStack.appendChild(item);
+    setTimeout(() => {
+      item.classList.add("hide");
+      setTimeout(() => item.remove(), 240);
+    }, 2200);
+  }
+
+  function getStoredSessionToken() {
+    try {
+      return window.localStorage.getItem("hkm-session-token") || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function setStoredSessionToken(token) {
+    try {
+      if (token) {
+        window.localStorage.setItem("hkm-session-token", token);
+      } else {
+        window.localStorage.removeItem("hkm-session-token");
+      }
+    } catch (error) {
+      // ignore storage issues
+    }
+  }
+
+  function normalizeCategorySelection(categories, value) {
+    const raw = String(value || "").trim();
+    if (!raw || raw.toUpperCase() === "ALL") return "ALL";
+    return categories.includes(raw) ? raw : "ALL";
+  }
+
+  function getCatalog(group) {
+    return state.catalogByGroup[group] || [];
+  }
+
+  function getActiveCatalog() {
+    return getCatalog(state.itemGroup);
+  }
+
+  function getDevotionalCategories() {
+    return [...new Set(
+      getCatalog("PARAPHERNALIA")
+        .map((item) => String(item.category || item.bookType || "").trim())
+        .filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b));
+  }
+
+  function getFilteredItems() {
+    const query = normalizeText(state.search);
+    return getActiveCatalog()
+      .filter((item) => {
+        if (state.itemGroup === "PARAPHERNALIA" && state.devotionalCategory !== "ALL") {
+          const category = String(item.category || item.bookType || "").trim();
+          if (category !== state.devotionalCategory) return false;
+        }
+        if (!query) return true;
+        const haystack = [
+          item.erpCode,
+          item.name,
+          item.category,
+          item.bookType,
+          item.salePrice,
+          item.availableQty
+        ].join(" ").toLowerCase();
+        return haystack.includes(query);
+      })
+      .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")) || String(a.erpCode || "").localeCompare(String(b.erpCode || "")));
+  }
+
+  function getItemByCode(erpCode) {
+    return [...getCatalog("BOOK"), ...getCatalog("PARAPHERNALIA")].find((item) => String(item.erpCode || "") === String(erpCode || ""));
+  }
+
+  function cartTotalQty() {
+    return state.cart.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+  }
+
+  function cartTotalValue() {
+    return state.cart.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.salePrice || 0), 0);
+  }
+
+  function mySalesPendingTotal() {
+    return (state.mySales || []).reduce((sum, row) => sum + Number(row.pendingAmount || 0), 0);
+  }
+
+  function mySalesOrderCount() {
+    return (state.mySales || []).length;
+  }
+
+  function openImageViewer(imageUrl, itemName) {
+    const url = normalizeDriveImageUrl(imageUrl);
+    if (!url) return;
+    state.imageViewer = {
+      imageUrl: url,
+      itemName: String(itemName || "Catalog image").trim()
+    };
+    renderImageViewer();
+  }
+
+  function openImageViewerByCode(erpCode) {
+    const item = getItemByCode(erpCode);
+    if (!item) return;
+    openImageViewer(item.imageUrl, item.name);
+  }
+
+  function closeImageViewer() {
+    state.imageViewer = null;
+    renderImageViewer();
+  }
+
+  function renderImageViewer() {
+    if (!state.imageViewer || !state.imageViewer.imageUrl) {
+      modalRoot.innerHTML = "";
+      return;
+    }
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop image-viewer-backdrop" onclick="window.kkdSalesApp.closeImageViewer()"></div>
+      <section class="image-viewer-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(state.imageViewer.itemName)}">
+        <button class="image-viewer-close" type="button" onclick="window.kkdSalesApp.closeImageViewer()" aria-label="Close image">Close</button>
+        <div class="image-viewer-frame">
+          <img src="${escapeAttr(state.imageViewer.imageUrl)}" alt="${escapeAttr(state.imageViewer.itemName)}">
+        </div>
+      </section>
+    `;
+  }
+
+  async function ensureAuthenticated() {
+    const token = getStoredSessionToken();
+    if (!token) return false;
+    try {
+      const user = await window.erpApi.request("auth.me", { sessionToken: token });
+      if (!user) return false;
+      state.currentUser = user;
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async function login(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const username = String(data.get("username") || "").trim();
+    const password = String(data.get("password") || "");
+    if (!username || !password) {
+      showToast("Enter username and password");
+      return;
+    }
+    setLoading(true, "Signing in...");
+    try {
+      const result = await window.erpApi.request("auth.login", { username, password });
+      setStoredSessionToken(result.sessionToken);
+      state.currentUser = result.user || null;
+      await Promise.all([ensureCatalogLoaded("BOOK"), ensureCatalogLoaded("PARAPHERNALIA"), loadMySales()]);
+      showToast(`Welcome, ${state.currentUser?.name || username}`);
+      render();
+    } catch (error) {
+      showToast(error.message || "Could not log in");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function logout() {
+    const token = getStoredSessionToken();
+    if (token) {
+      try {
+        await window.erpApi.request("auth.logout", { sessionToken: token });
+      } catch (error) {
+        // ignore
+      }
+    }
+    setStoredSessionToken("");
+    state.currentUser = null;
+    state.cart = [];
+    state.view = "login";
+    render();
+  }
+
+  async function ensureCatalogLoaded(group) {
+    if (getCatalog(group).length) return;
+    state.loadingCatalog = true;
+    render();
+    try {
+      const warehouses = await window.erpApi.request("warehouses.list");
+      const activeWarehouses = Array.isArray(warehouses) ? warehouses.filter((row) => row.active !== false) : [];
+      const selectedWarehouse = activeWarehouses.find((row) => normalizeText(row.name) === normalizeText(WAREHOUSE_KEY))
+        || activeWarehouses.find((row) => normalizeText(row.warehouseId) === normalizeText(WAREHOUSE_KEY))
+        || activeWarehouses[0]
+        || null;
+      state.warehouseId = selectedWarehouse ? selectedWarehouse.warehouseId : "";
+      state.warehouseName = selectedWarehouse ? selectedWarehouse.name : WAREHOUSE_KEY;
+      const ref = state.warehouseId || state.warehouseName || WAREHOUSE_KEY;
+      const catalog = await window.erpApi.request("catalog.items", {
+        sourceWarehouseId: ref,
+        warehouseId: ref,
+        warehouseCode: ref,
+        warehouseName: ref,
+        itemGroup: group
+      });
+      state.catalogByGroup[group] = Array.isArray(catalog) ? catalog : [];
+      if (group === "PARAPHERNALIA") {
+        state.devotionalCategory = normalizeCategorySelection(getDevotionalCategories(), state.devotionalCategory);
+      }
+    } finally {
+      state.loadingCatalog = false;
+    }
+  }
+
+  async function loadMySales() {
+    state.mySalesLoading = true;
+    try {
+      const rows = await window.erpApi.request("sales.entriesList", {
+        warehouseId: state.warehouseId || WAREHOUSE_KEY,
+        warehouseName: state.warehouseName || WAREHOUSE_KEY,
+        onlyMine: true
+      });
+      state.mySales = Array.isArray(rows) ? rows : [];
+      state.mySalesLoaded = true;
+      return state.mySales;
+    } finally {
+      state.mySalesLoading = false;
+    }
+  }
+
+  function setView(view) {
+    state.view = view;
+    if (view === "history" && state.currentUser) {
+      loadMySales().then(render).catch((error) => showToast(error.message || "Could not load sale entries"));
+    }
+    render();
+  }
+
+  function setCategory(group) {
+    state.itemGroup = group === "PARAPHERNALIA" ? "PARAPHERNALIA" : "BOOK";
+    if (state.itemGroup === "BOOK") state.devotionalCategory = "ALL";
+    else state.devotionalCategory = normalizeCategorySelection(getDevotionalCategories(), state.devotionalCategory);
+    state.search = "";
+    ensureCatalogLoaded(state.itemGroup).then(render).catch((error) => showToast(error.message || "Could not load catalog"));
+    render();
+  }
+
+  function setField(field, value) {
+    state[field] = value;
+    render();
+  }
+
+  function addWithQty(erpCode) {
+    const item = getItemByCode(erpCode);
+    if (!item) return;
+    const input = document.querySelector(`[data-qty="${selectorSafe(erpCode)}"]`);
+    const qty = Math.max(1, Math.floor(Number(input ? input.value : 1) || 1));
+    const existing = state.cart.find((line) => line.erpCode === erpCode);
+    const currentQty = existing ? Number(existing.quantity || 0) : 0;
+    const availableQty = Number(item.availableQty || 0);
+    if (qty + currentQty > availableQty) {
+      showToast("Requested quantity exceeds available stock");
+      return;
+    }
+    if (existing) {
+      existing.quantity += qty;
+    } else {
+      state.cart.push({
+        erpCode: item.erpCode,
+        itemName: item.name,
+        itemGroup: item.itemGroup,
+        imageUrl: item.imageUrl,
+        salePrice: Number(item.salePrice || 0),
+        availableQty: Number(item.availableQty || 0),
+        quantity: qty
+      });
+    }
+    showToast("Added to cart");
+    render();
+  }
+
+  function updateCartQty(erpCode, value) {
+    const line = state.cart.find((item) => item.erpCode === erpCode);
+    if (!line) return;
+    const nextQty = Math.max(0, Math.floor(Number(value || 0)));
+    const item = getItemByCode(erpCode);
+    const availableQty = Number(item ? item.availableQty : line.availableQty || 0);
+    line.quantity = Math.min(nextQty, availableQty);
+    if (line.quantity <= 0) {
+      state.cart = state.cart.filter((itemRow) => itemRow.erpCode !== erpCode);
+    }
+    render();
+  }
+
+  function removeCartLine(erpCode) {
+    state.cart = state.cart.filter((item) => item.erpCode !== erpCode);
+    render();
+  }
+
+  async function submitSale() {
+    if (!state.cart.length) {
+      showToast("Add at least one item");
+      return;
+    }
+    if (!state.currentUser) {
+      showToast("Please log in first");
+      return;
+    }
+    state.requestSubmitting = true;
+    setLoading(true, "Posting sale entry...");
+    try {
+      const result = await window.erpApi.request("sales.submit", {
+        warehouseId: state.warehouseId || WAREHOUSE_KEY,
+        warehouseName: state.warehouseName || WAREHOUSE_KEY,
+        documentDate: new Date().toISOString().slice(0, 10),
+        notes: String(state.notes || "").trim(),
+        lines: state.cart.map((line) => ({
+          erpCode: line.erpCode,
+          quantity: Number(line.quantity || 0),
+          salePrice: Number(line.salePrice || 0),
+          rate: Number(line.salePrice || 0)
+        }))
+      });
+      state.submittedSaleId = result?.documentId || "";
+      state.cart = [];
+      state.notes = "";
+      state.view = "submitted";
+      state.catalogByGroup = { BOOK: [], PARAPHERNALIA: [] };
+      await Promise.all([ensureCatalogLoaded("BOOK"), ensureCatalogLoaded("PARAPHERNALIA"), loadMySales()]);
+      showToast("Sale entry created");
+      render();
+    } catch (error) {
+      showToast(error.message || "Could not create sale entry");
+    } finally {
+      state.requestSubmitting = false;
+      setLoading(false);
+    }
+  }
+
+  function toggleHistoryDetails(documentId) {
+    state.mySalesExpanded = state.mySalesExpanded === documentId ? "" : documentId;
+    render();
+  }
+
+  async function installPwa() {
+    if (!state.deferredInstallPrompt) {
+      showToast("Install option is not available on this device right now");
+      return;
+    }
+    state.deferredInstallPrompt.prompt();
+    try {
+      await state.deferredInstallPrompt.userChoice;
+    } catch {}
+    state.deferredInstallPrompt = null;
+    state.installReady = false;
+    render();
+  }
+
+  function renderFloatingActions() {
+    if (!state.currentUser) return "";
+    return `
+      <div class="floating-request-actions">
+        ${state.installReady ? `<button class="segment" type="button" onclick="window.kkdSalesApp.installPwa()">Install App</button>` : ""}
+        <button class="segment" type="button" onclick="window.kkdSalesApp.setView('history')">My Sale Entries</button>
+        <button class="segment active" type="button" onclick="window.kkdSalesApp.setView('cart')">Go to Cart (${cartTotalQty()})</button>
+        <button class="segment" type="button" onclick="window.kkdSalesApp.logout()">Logout</button>
+      </div>
+    `;
+  }
+
+  function renderHeader() {
+    return `
+      <header class="public-hero">
+        <div class="public-brand">
+          <div class="public-mark">HKM</div>
+          <div>
+            <div class="public-title">Kakinada Warehouse Sales</div>
+            <div class="public-subtitle">Log in, build a cart from live stock, and post direct sale entries for Kakinada.</div>
+          </div>
+        </div>
+      </header>
+      <section class="public-card category-switch-card">
+        <div class="public-card-header compact-header">
+          <h2>Select Category</h2>
+          <div class="public-tag">${escapeHtml(state.currentUser ? `${state.warehouseName} · ${state.currentUser.name || state.currentUser.username || "User"}` : state.warehouseName)}</div>
+        </div>
+        <div class="segmented category-segmented">
+          <button class="segment ${state.itemGroup === "BOOK" ? "active" : ""}" type="button" onclick="window.kkdSalesApp.setCategory('BOOK')">Books</button>
+          <button class="segment ${state.itemGroup === "PARAPHERNALIA" ? "active" : ""}" type="button" onclick="window.kkdSalesApp.setCategory('PARAPHERNALIA')">Devotional Items</button>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderCatalogCard(item) {
+    const imageUrl = normalizeDriveImageUrl(item.imageUrl);
+    const qty = Number(item.availableQty || 0);
+    const metaParts = [];
+    if (item.category || item.bookType) metaParts.push(item.category || item.bookType);
+    return `
+      <article class="catalog-card compact-card ${qty > 0 ? "" : "sold-out"}">
+        <div class="catalog-image compact-image">
+          ${imageUrl ? `
+            <button class="catalog-image-button" type="button" onclick="window.kkdSalesApp.openImageViewerByCode('${escapeAttr(item.erpCode)}')" aria-label="View ${escapeAttr(item.name)} image">
+              <img src="${escapeAttr(imageUrl)}" alt="${escapeAttr(item.name)}" loading="lazy" onerror="this.style.display='none';this.parentElement.nextElementSibling?.classList.remove('hidden')">
+            </button>
+          ` : ""}
+          <div class="catalog-fallback ${imageUrl ? "hidden" : ""}">
+            ${escapeHtml((item.name || "Item").split(" ").slice(0, 2).map((part) => part[0] || "").join("").toUpperCase())}
+          </div>
+        </div>
+        <div class="catalog-body">
+          <div class="catalog-name small-name">${escapeHtml(item.name || "-")}</div>
+          <div class="catalog-meta">${escapeHtml(metaParts.join(" · "))}</div>
+          <div class="catalog-stats compact-stats">
+            <span>${money(Number(item.salePrice || 0))}</span>
+            <span>${qty} in stock</span>
+          </div>
+          <div class="catalog-actions compact-actions">
+            <input type="number" min="1" step="1" value="1" data-qty="${escapeAttr(item.erpCode)}">
+            <button class="button small-button" type="button" ${qty > 0 ? `onclick="window.kkdSalesApp.addWithQty('${escapeAttr(item.erpCode)}')"` : "disabled"}>Add</button>
+          </div>
+        </div>
+      </article>
+    `;
+  }
+
+  function renderCatalog() {
+    const items = getFilteredItems();
+    const devotionalCategories = getDevotionalCategories();
+    return `
+      <section class="public-card request-main">
+        <div class="public-card-header compact-header">
+          <h2>${state.itemGroup === "PARAPHERNALIA" ? "Devotional Items" : "Books"}</h2>
+          <div class="public-tag">${escapeHtml(state.warehouseName)}</div>
+        </div>
+        <div class="catalog-toolbar">
+          <label class="field compact-field catalog-search">
+            <span>${state.itemGroup === "PARAPHERNALIA" ? "Search devotional item" : "Search books"}</span>
+            <input type="search" value="${escapeAttr(state.search)}" placeholder="${state.itemGroup === "PARAPHERNALIA" ? "Search item name" : "Search book name"}" oninput="window.kkdSalesApp.setField('search', this.value)">
+          </label>
+          ${state.itemGroup === "PARAPHERNALIA" ? `
+            <label class="field compact-field">
+              <span>Devotional Category</span>
+              <select onchange="window.kkdSalesApp.setField('devotionalCategory', this.value)">
+                <option value="ALL"${state.devotionalCategory === "ALL" ? " selected" : ""}>All categories</option>
+                ${devotionalCategories.map((category) => `<option value="${escapeAttr(category)}"${state.devotionalCategory === category ? " selected" : ""}>${escapeHtml(category)}</option>`).join("")}
+              </select>
+            </label>
+          ` : ""}
+        </div>
+        ${state.loadingCatalog ? `<div class="empty-note">Loading catalog...</div>` : ""}
+        ${!state.loadingCatalog && !items.length ? `<div class="empty-note">No matching ${state.itemGroup === "PARAPHERNALIA" ? "items" : "books"} found.</div>` : ""}
+        ${!state.loadingCatalog ? `<div class="catalog-grid compact-grid">${items.map(renderCatalogCard).join("")}</div>` : ""}
+      </section>
+    `;
+  }
+
+  function renderCartLine(line) {
+    return `
+      <div class="cart-row">
+        <div>
+          <strong>${escapeHtml(line.itemName)}</strong>
+          <div class="catalog-meta">${escapeHtml(line.itemGroup === "PARAPHERNALIA" ? "Devotional Item" : "Book")} · ${money(line.salePrice)}</div>
+        </div>
+        <div class="cart-row-actions">
+          <input type="number" min="0" step="1" value="${escapeAttr(line.quantity)}" onchange="window.kkdSalesApp.updateCartQty('${escapeAttr(line.erpCode)}', this.value)">
+          <button class="small-button danger" type="button" onclick="window.kkdSalesApp.removeCartLine('${escapeAttr(line.erpCode)}')">Remove</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderCartView() {
+    return `
+      <section class="public-card request-main">
+        <div class="public-card-header">
+          <h2>Your Cart</h2>
+          <div class="public-tag">${cartTotalQty()} items</div>
+        </div>
+        <div class="cart-summary">
+          <div><strong>Total Qty:</strong> ${cartTotalQty()}</div>
+          <div><strong>Total Worth:</strong> ${money(cartTotalValue())}</div>
+        </div>
+        <div class="cart-items">
+          ${state.cart.length ? state.cart.map(renderCartLine).join("") : `<div class="empty-note">Your cart is empty. Start by adding books or devotional items.</div>`}
+        </div>
+        <label class="field">
+          <span>Notes</span>
+          <input type="text" value="${escapeAttr(state.notes)}" placeholder="Optional note for this sale entry" oninput="window.kkdSalesApp.setField('notes', this.value)">
+        </label>
+        <div class="public-actions checkout-actions">
+          <button class="button secondary" type="button" onclick="window.kkdSalesApp.setView('catalog')">Continue picking books / items</button>
+          <button class="button" type="button" onclick="window.kkdSalesApp.submitSale()" ${state.cart.length && !state.requestSubmitting ? "" : "disabled"}>${state.requestSubmitting ? "Posting..." : "Post Sale Entry"}</button>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderHistoryView() {
+    return `
+      <section class="public-card request-main">
+        <div class="public-card-header">
+          <h2>My Sale Entries</h2>
+          <div class="public-tag">${escapeHtml(state.warehouseName)}</div>
+        </div>
+        <div class="grid metrics reports-metrics activity-report-metrics">
+          <article class="card metric-card">
+            <div class="metric-label">My Sale Orders</div>
+            <div class="metric-value">${mySalesOrderCount()}</div>
+            <div class="metric-note">Total sale entries posted by you</div>
+          </article>
+          <article class="card metric-card">
+            <div class="metric-label">Pending Settlement</div>
+            <div class="metric-value">${money(mySalesPendingTotal())}</div>
+            <div class="metric-note">Amount still to settle to backend</div>
+          </article>
+        </div>
+        ${state.mySalesLoading ? `<div class="empty-note">Loading sale entries...</div>` : ""}
+        ${!state.mySalesLoading && !state.mySales.length ? `<div class="empty-note">You have not posted any sale entries yet.</div>` : ""}
+        ${!state.mySalesLoading && state.mySales.length ? `
+          <div class="history-table-wrap">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>Sale Date</th>
+                  <th>Sale ID</th>
+                  <th>Status</th>
+                  <th>Worth</th>
+                  <th>Cash</th>
+                  <th>Online</th>
+                  <th>Pending</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${state.mySales.map((row) => `
+                  <tr>
+                    <td>${escapeHtml(formatDateTime(row.createdAt || row.documentDate))}</td>
+                    <td>${escapeHtml(row.documentId || "-")}</td>
+                    <td>${escapeHtml(Number(row.pendingAmount || 0) > 0 ? "Settlement Pending" : "Settled")}</td>
+                    <td>${escapeHtml(money(row.totalAmount || 0))}</td>
+                    <td>${escapeHtml(money(row.paidCashAmount || 0))}</td>
+                    <td>${escapeHtml(money(row.paidOnlineAmount || 0))}</td>
+                    <td>${escapeHtml(money(row.pendingAmount || 0))}</td>
+                    <td><button class="small-button" type="button" onclick="window.kkdSalesApp.toggleHistoryDetails('${escapeAttr(row.documentId)}')">${state.mySalesExpanded === row.documentId ? "Hide" : "Show"} Details</button></td>
+                  </tr>
+                  ${state.mySalesExpanded === row.documentId ? `
+                    <tr class="history-detail-row">
+                      <td colspan="8">
+                        <div class="history-detail-card">
+                          <div class="detail-meta">
+                            <div><strong>Warehouse:</strong> ${escapeHtml(row.warehouseName || "-")}</div>
+                            <div><strong>Notes:</strong> ${escapeHtml(row.notes || "-")}</div>
+                          </div>
+                          <div class="history-detail-table-wrap">
+                            <table class="history-detail-table">
+                              <thead>
+                                <tr>
+                                  <th>ERP Code</th>
+                                  <th>Item</th>
+                                  <th>Category</th>
+                                  <th>Qty</th>
+                                  <th>Rate</th>
+                                  <th>Amount</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                ${(row.lines || []).map((line) => `
+                                  <tr>
+                                    <td>${escapeHtml(line.erpCode || "-")}</td>
+                                    <td>${escapeHtml(line.itemName || "-")}</td>
+                                    <td>${escapeHtml(line.itemGroup === "PARAPHERNALIA" ? "Devotional" : "Books")}</td>
+                                    <td>${escapeHtml(String(line.quantity || 0))}</td>
+                                    <td>${escapeHtml(money(line.rate || 0))}</td>
+                                    <td>${escapeHtml(money(line.amount || 0))}</td>
+                                  </tr>
+                                `).join("")}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ` : ""}
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        ` : ""}
+      </section>
+    `;
+  }
+
+  function renderSubmittedView() {
+    return `
+      <section class="public-card success-card">
+        <div class="success-badge">HKM</div>
+        <h1>Sale Entry Posted</h1>
+        <p>Your cart has been posted as a sale entry for the ${escapeHtml(state.warehouseName)} warehouse.</p>
+        <div class="success-meta">${state.submittedSaleId ? `Sale Entry ${escapeHtml(state.submittedSaleId)} was created successfully.` : "Sale entry created successfully."}</div>
+        <div class="public-actions centered-actions">
+          <button class="button secondary" type="button" onclick="window.kkdSalesApp.setView('history')">My Sale Entries</button>
+          <button class="button" type="button" onclick="window.kkdSalesApp.setView('catalog')">Post Another Sale</button>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderLoginView() {
+    return `
+      <section class="public-card success-card">
+        <div class="success-badge">HKM</div>
+        <h1>Kakinada Sales Login</h1>
+        <p>Sign in with the warehouse incharge account to post live sales from Kakinada stock.</p>
+        <form class="public-form" onsubmit="window.kkdSalesApp.login(event)">
+          <label class="field">
+            <span>Username</span>
+            <input name="username" type="text" required placeholder="Username" autocomplete="username">
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input name="password" type="password" required placeholder="Password" autocomplete="current-password">
+          </label>
+          <div class="public-actions centered-actions">
+            <button class="button" type="submit">Login</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  function renderBody() {
+    if (!state.currentUser) return renderLoginView();
+    if (state.view === "cart") return renderCartView();
+    if (state.view === "history") return renderHistoryView();
+    if (state.view === "submitted") return renderSubmittedView();
+    return renderCatalog();
+  }
+
+  function renderPage() {
+    return `
+      <div class="public-shell pwa-shell">
+        ${renderFloatingActions()}
+        ${state.currentUser ? renderHeader() : ""}
+        ${renderBody()}
+      </div>
+    `;
+  }
+
+  function render() {
+    root.innerHTML = renderPage();
+    renderImageViewer();
+    document.title = state.currentUser ? "Kakinada Sales" : "Kakinada Sales Login";
+  }
+
+  function registerServiceWorker() {
+    if (!("serviceWorker" in navigator)) return;
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/sales-kakinada-sw.js").catch(() => {});
+    });
+  }
+
+  function setupInstallPrompt() {
+    window.addEventListener("beforeinstallprompt", (event) => {
+      event.preventDefault();
+      state.deferredInstallPrompt = event;
+      state.installReady = true;
+      render();
+    });
+    window.addEventListener("appinstalled", () => {
+      state.deferredInstallPrompt = null;
+      state.installReady = false;
+      render();
+    });
+  }
+
+  window.kkdSalesApp = {
+    login,
+    logout,
+    setView,
+    setCategory,
+    setField,
+    addWithQty,
+    updateCartQty,
+    removeCartLine,
+    submitSale,
+    toggleHistoryDetails,
+    openImageViewer,
+    openImageViewerByCode,
+    closeImageViewer,
+    installPwa
+  };
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.imageViewer) {
+      closeImageViewer();
+    }
+  });
+
+  async function init() {
+    try {
+      setLoading(true, "Loading page...");
+      const loggedIn = await ensureAuthenticated();
+      if (loggedIn) {
+        await Promise.all([ensureCatalogLoaded("BOOK"), ensureCatalogLoaded("PARAPHERNALIA"), loadMySales()]);
+      }
+      render();
+    } catch (error) {
+      root.innerHTML = `
+        <section class="public-card success-card">
+          <h1>Could not load the sales page</h1>
+          <p>${escapeHtml(error.message || "Something went wrong")}</p>
+        </section>
+      `;
+      showToast(error.message || "Could not load data");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  registerServiceWorker();
+  setupInstallPrompt();
+  init();
+})();

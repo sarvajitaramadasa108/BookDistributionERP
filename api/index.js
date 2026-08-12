@@ -1081,7 +1081,7 @@ async function documentDetail(supabase, payload) {
 }
 
 function documentTypeRequiresActivity(documentType) {
-  return ["ISSUE", "COMPLIMENTARY", "RETURN", "UNSETTLED_OPENING", "SALE", "ADJUSTMENT"].includes(documentType);
+  return ["ISSUE", "COMPLIMENTARY", "RETURN", "UNSETTLED_OPENING", "ADJUSTMENT"].includes(documentType);
 }
 
 function parseSettlementEditNote(note) {
@@ -2001,6 +2001,166 @@ async function approveCatalogRequest(supabase, payload, currentUser) {
     documentId: createdIssue.documentId || "",
     acceptedAt: nowIso()
   };
+}
+
+async function getSaleEntriesContext(supabase) {
+  const [documentsResult, linesResult, itemsResult, warehousesResult, usersResult, paymentsResult] = await Promise.all([
+    supabase.from("documents").select("*").eq("document_type", "SALE").order("created_at", { ascending: false }),
+    supabase.from("document_lines").select("*"),
+    supabase.from("items").select("*"),
+    supabase.from("warehouses").select("*"),
+    supabase.from("users").select("*"),
+    supabase.from("sale_entry_payments").select("*").order("payment_date", { ascending: true }).order("created_at", { ascending: true })
+  ]);
+  if (documentsResult.error) throw documentsResult.error;
+  if (linesResult.error) throw linesResult.error;
+  if (itemsResult.error) throw itemsResult.error;
+  if (warehousesResult.error) throw warehousesResult.error;
+  if (usersResult.error) throw usersResult.error;
+  if (paymentsResult.error) throw paymentsResult.error;
+  return {
+    documents: documentsResult.data || [],
+    lines: linesResult.data || [],
+    items: itemsResult.data || [],
+    warehouses: warehousesResult.data || [],
+    users: usersResult.data || [],
+    payments: paymentsResult.data || []
+  };
+}
+
+function buildSaleEntrySummary(doc, context) {
+  const itemById = Object.fromEntries((context.items || []).map((row) => [row.id, row]));
+  const warehouseById = Object.fromEntries((context.warehouses || []).map((row) => [row.id, row]));
+  const userById = Object.fromEntries((context.users || []).map((row) => [row.id, row]));
+  const docLines = (context.lines || []).filter((line) => line.document_id === doc.id).sort((a, b) => Number(a.line_no || 0) - Number(b.line_no || 0));
+  const paymentRows = (context.payments || []).filter((row) => row.document_id === doc.id);
+  const lines = docLines.map((line, index) => {
+    const item = itemById[line.item_id] || {};
+    return {
+      lineId: line.id,
+      lineNo: Number(line.line_no || index + 1),
+      erpCode: item.erp_code || "",
+      itemName: item.item_name || "",
+      itemGroup: item.item_group || "BOOK",
+      itemType: item.item_type || "",
+      quantity: Number(line.quantity || 0),
+      rate: Number(line.rate || 0),
+      amount: Number(line.amount || 0)
+    };
+  });
+  const totalQty = lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+  const totalAmount = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+  const paidCashAmount = paymentRows.reduce((sum, row) => sum + Number(row.cash_amount || 0), 0);
+  const paidOnlineAmount = paymentRows.reduce((sum, row) => sum + Number(row.online_amount || 0), 0);
+  const paidTotalAmount = paidCashAmount + paidOnlineAmount;
+  const pendingAmount = Math.max(totalAmount - paidTotalAmount, 0);
+  return {
+    documentRowId: doc.id,
+    documentId: doc.document_code,
+    documentType: doc.document_type,
+    documentDate: doc.document_date,
+    status: doc.status || "Posted",
+    notes: doc.notes || "",
+    warehouseId: doc.from_warehouse_id || doc.to_warehouse_id || "",
+    warehouseCode: warehouseById[doc.from_warehouse_id || doc.to_warehouse_id || ""]?.warehouse_code || "",
+    warehouseName: warehouseById[doc.from_warehouse_id || doc.to_warehouse_id || ""]?.warehouse_name || "",
+    createdByUserId: doc.created_by_user_id || "",
+    createdByName: userById[doc.created_by_user_id || ""]?.name || "",
+    createdByUsername: userById[doc.created_by_user_id || ""]?.username || "",
+    createdAt: doc.created_at,
+    updatedAt: doc.updated_at,
+    totalQty,
+    totalAmount,
+    paidCashAmount,
+    paidOnlineAmount,
+    paidTotalAmount,
+    pendingAmount,
+    lines,
+    payments: paymentRows.map((row) => ({
+      paymentId: row.id,
+      paymentDate: row.payment_date,
+      cashAmount: Number(row.cash_amount || 0),
+      onlineAmount: Number(row.online_amount || 0),
+      totalAmount: Number(row.cash_amount || 0) + Number(row.online_amount || 0),
+      notes: row.notes || "",
+      createdAt: row.created_at
+    }))
+  };
+}
+
+async function saleEntriesList(supabase, payload, currentUser) {
+  const context = await getSaleEntriesContext(supabase);
+  const warehouseFilter = String(payload.warehouseId || payload.warehouseCode || payload.warehouseName || "").trim();
+  const onlyMine = Boolean(payload.onlyMine);
+  let rows = (context.documents || []).map((doc) => buildSaleEntrySummary(doc, context));
+  if (warehouseFilter) {
+    rows = rows.filter((row) => [row.warehouseId, row.warehouseCode, row.warehouseName].some((value) => String(value || "").trim() === warehouseFilter));
+  }
+  if (onlyMine && currentUser && currentUser.userId) {
+    rows = rows.filter((row) => String(row.createdByUserId || "") === String(currentUser.userId || ""));
+  }
+  return rows.sort((a, b) => String(b.createdAt || b.documentDate || "").localeCompare(String(a.createdAt || a.documentDate || "")) || String(b.documentId || "").localeCompare(String(a.documentId || "")));
+}
+
+async function saleEntryDetail(supabase, payload) {
+  const documentRef = String(payload.documentId || payload.documentCode || "").trim();
+  if (!documentRef) throw new Error("Sale entry is required");
+  const context = await getSaleEntriesContext(supabase);
+  const doc = (context.documents || []).find((row) => row.id === documentRef || row.document_code === documentRef);
+  if (!doc) throw new Error("Sale entry not found");
+  return buildSaleEntrySummary(doc, context);
+}
+
+async function createSaleEntryPayment(supabase, payload, currentUser) {
+  const documentRef = String(payload.documentId || payload.documentCode || "").trim();
+  if (!documentRef) throw new Error("Sale entry is required");
+  const cashAmount = Number(payload.cashAmount || 0);
+  const onlineAmount = Number(payload.onlineAmount || 0);
+  if (cashAmount <= 0 && onlineAmount <= 0) throw new Error("Enter cash or online amount");
+  const { data: documentRow, error: documentError } = await supabase
+    .from("documents")
+    .select("id, document_type")
+    .or(`id.eq.${documentRef},document_code.eq.${documentRef}`)
+    .maybeSingle();
+  if (documentError) throw documentError;
+  if (!documentRow || String(documentRow.document_type || "").toUpperCase() !== "SALE") {
+    throw new Error("Sale entry not found");
+  }
+  const paymentDate = toDateOnly(payload.paymentDate || nowIso());
+  const { error } = await supabase.from("sale_entry_payments").insert({
+    document_id: documentRow.id,
+    payment_date: paymentDate,
+    cash_amount: cashAmount,
+    online_amount: onlineAmount,
+    notes: String(payload.notes || "").trim(),
+    created_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null
+  });
+  if (error) throw error;
+  return saleEntryDetail(supabase, { documentId: documentRow.id });
+}
+
+async function submitWarehouseSale(supabase, payload, currentUser) {
+  if (!currentUser || !currentUser.userId) throw new Error("Login is required");
+  const warehouseRow = await resolveWarehouseRow(supabase, payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
+  if (!warehouseRow) throw new Error("Warehouse is required");
+  const rawLines = Array.isArray(payload.lines) ? payload.lines : [];
+  const lines = rawLines
+    .map((line) => ({
+      bookId: String(line.bookId || line.erpCode || "").trim(),
+      quantity: Number(line.quantity || 0),
+      rate: Number(line.rate !== undefined ? line.rate : line.salePrice || 0)
+    }))
+    .filter((line) => line.bookId && line.quantity > 0);
+  if (!lines.length) throw new Error("Add at least one item");
+  const created = await createDocument(supabase, {
+    documentType: "SALE",
+    documentDate: payload.documentDate || nowIso(),
+    fromWarehouseId: warehouseRow.id,
+    status: "Posted",
+    notes: String(payload.notes || "").trim(),
+    lines
+  }, currentUser);
+  return saleEntryDetail(supabase, { documentId: created.documentId });
 }
 
 async function getActivityUnsettled(supabase) {
@@ -3104,6 +3264,14 @@ async function main(request) {
         return json(200, { ok: true, data: await catalogRequestsList(supabase) });
       case "requests.approve":
         return json(200, { ok: true, data: await approveCatalogRequest(supabase, payload, currentUser) });
+      case "sales.entriesList":
+        return json(200, { ok: true, data: await saleEntriesList(supabase, payload, currentUser) });
+      case "sales.entryDetail":
+        return json(200, { ok: true, data: await saleEntryDetail(supabase, payload) });
+      case "sales.entryPaymentCreate":
+        return json(200, { ok: true, data: await createSaleEntryPayment(supabase, payload, currentUser) });
+      case "sales.submit":
+        return json(200, { ok: true, data: await submitWarehouseSale(supabase, payload, currentUser) });
       case "reports.activityLedger":
         return json(200, { ok: true, data: await getActivityLedger(supabase, payload) });
       case "reports.activityMonthly":

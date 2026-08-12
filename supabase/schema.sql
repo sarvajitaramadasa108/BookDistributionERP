@@ -164,6 +164,17 @@ create table if not exists public.activity_settlement_payments (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.sale_entry_payments (
+  id uuid primary key default gen_random_uuid(),
+  document_id uuid not null references public.documents(id) on update cascade on delete cascade,
+  payment_date date not null default current_date,
+  cash_amount numeric(14,2) not null default 0,
+  online_amount numeric(14,2) not null default 0,
+  notes text not null default '',
+  created_by_user_id uuid references public.users(id) on update cascade on delete set null,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.online_class_registrations (
   id uuid primary key default gen_random_uuid(),
   language text not null default 'English' check (language in ('English', 'Telugu')),
@@ -257,6 +268,7 @@ create index if not exists idx_document_lines_item_id on public.document_lines (
 create index if not exists idx_stock_ledger_warehouse_date on public.stock_ledger (warehouse_id, ledger_date);
 create index if not exists idx_stock_ledger_activity_item on public.stock_ledger (activity_id, item_id);
 create index if not exists idx_activity_settlement_payments_activity_date on public.activity_settlement_payments (activity_id, payment_date);
+create index if not exists idx_sale_entry_payments_document_date on public.sale_entry_payments (document_id, payment_date);
 create index if not exists idx_user_sessions_user_id on public.user_sessions (user_id);
 create index if not exists idx_activity_settlement_payments_created_at on public.activity_settlement_payments (created_at desc);
 create index if not exists idx_online_class_registrations_created_at on public.online_class_registrations (created_at desc);

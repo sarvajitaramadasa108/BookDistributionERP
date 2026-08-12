@@ -1,0 +1,12 @@
+{
+  "name": "HKM Kakinada Sales",
+  "short_name": "KKD Sales",
+  "description": "Kakinada warehouse sales catalog for books and devotional items.",
+  "start_url": "/sales/kakinada",
+  "display": "standalone",
+  "background_color": "#f5e3c7",
+  "theme_color": "#7b3f1d",
+  "scope": "/sales/",
+  "orientation": "portrait",
+  "icons": []
+}
