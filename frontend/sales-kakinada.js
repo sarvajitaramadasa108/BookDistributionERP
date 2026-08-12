@@ -849,10 +849,12 @@
       width: 100%;
       border-collapse: collapse;
       margin-top: 6px;
+      table-layout: fixed;
+      font-size: 12px;
     }
     th, td {
       vertical-align: top;
-      padding: 3px 0;
+      padding: 4px 3px;
     }
     th {
       text-align: left;
@@ -863,8 +865,17 @@
       text-align: right;
       white-space: nowrap;
     }
+    th + th,
+    td + td {
+      border-left: 1px solid #d2c3ae;
+    }
+    th.num,
+    td.num {
+      padding-left: 6px;
+    }
     .item-name {
       word-break: break-word;
+      padding-right: 6px;
     }
     .actions {
       width: min(100%, 420px);
@@ -898,6 +909,16 @@
         border-radius: 0;
         box-shadow: none;
       }
+      table {
+        font-size: 11px;
+      }
+      th, td {
+        padding: 4px 2px;
+      }
+      th.num,
+      td.num {
+        padding-left: 4px;
+      }
       @page { margin: 4mm; size: 58mm auto; }
     }
   </style>
@@ -920,6 +941,12 @@
     ${detail?.notes ? `<div class="meta-row"><span>Notes</span><span style="text-align:right;">${escapeHtml(detail.notes)}</span></div>` : ""}
     <div class="divider"></div>
     <table>
+      <colgroup>
+        <col style="width:52%">
+        <col style="width:12%">
+        <col style="width:18%">
+        <col style="width:18%">
+      </colgroup>
       <thead>
         <tr>
           <th>Item</th>
