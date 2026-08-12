@@ -4890,8 +4890,15 @@
     const query = String(state.saleEntrySearch || "").trim().toLowerCase();
     const warehouseFilter = String(state.saleEntryWarehouseFilter || "all");
     return (state.saleEntries || []).filter((row) => {
-      if (warehouseFilter !== "all" && String(row.warehouseId || "") !== warehouseFilter) {
-        return false;
+      if (warehouseFilter !== "all") {
+        const warehouseMatches = [
+          row.warehouseId,
+          row.warehouseCode,
+          row.warehouseName
+        ].some((value) => String(value || "").trim() === warehouseFilter);
+        if (!warehouseMatches) {
+          return false;
+        }
       }
       if (!query) return true;
       const haystack = [
