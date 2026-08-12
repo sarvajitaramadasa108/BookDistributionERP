@@ -97,6 +97,28 @@
     return new TextEncoder().encode(String(value || ""));
   }
 
+  function uint8ToBase64(bytes) {
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      const slice = bytes.subarray(i, i + chunk);
+      binary += String.fromCharCode(...slice);
+    }
+    return btoa(binary);
+  }
+
+  function hasAndroidPrinterBridge() {
+    return typeof window !== "undefined" && !!window.AndroidPosPrinter;
+  }
+
+  function parseNativeResponse(raw) {
+    try {
+      return typeof raw === "string" ? JSON.parse(raw) : raw;
+    } catch (error) {
+      return { ok: false, message: "Invalid printer response" };
+    }
+  }
+
   function formatDateTime(value) {
     if (!value) return "-";
     const date = new Date(value);
@@ -409,6 +431,26 @@
     render();
   }
 
+  function syncNativePrinterStatus() {
+    if (!hasAndroidPrinterBridge()) return;
+    try {
+      const response = parseNativeResponse(window.AndroidPosPrinter.getStatus());
+      if (response && response.ok) {
+        updatePrinterState({
+          printerTransport: String(response.transport || ""),
+          printerReady: Boolean(response.ready),
+          printerLabel: String(response.label || (response.ready ? "Printer connected" : "Not connected")),
+          printerPort: null,
+          printerDevice: null,
+          printerUsbInterfaceNumber: null,
+          printerUsbEndpointOut: null
+        });
+      }
+    } catch (error) {
+      // ignore native status issues
+    }
+  }
+
   async function connectUsbPrinterDirect() {
     if (!navigator.usb) {
       throw new Error("WebUSB is not available in this browser");
@@ -468,6 +510,26 @@
   }
 
   async function connectPrinter() {
+    if (hasAndroidPrinterBridge()) {
+      setLoading(true, "Connecting USB printer...");
+      try {
+        const response = parseNativeResponse(window.AndroidPosPrinter.connectUsbPrinter());
+        if (!response.ok) {
+          throw new Error(response.message || "Could not connect USB printer");
+        }
+        updatePrinterState({
+          printerTransport: String(response.transport || "usb"),
+          printerReady: true,
+          printerLabel: String(response.label || "USB printer connected")
+        });
+        showToast(response.message || "USB printer connected");
+      } catch (error) {
+        showToast(error.message || "Could not connect USB printer");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     setLoading(true, "Connecting printer...");
     try {
       try {
@@ -493,6 +555,30 @@
         printerUsbEndpointOut: null
       });
       showToast(error.message || "Could not connect printer");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function connectBluetoothPrinter() {
+    if (!hasAndroidPrinterBridge()) {
+      showToast("Bluetooth printer connection is available in the Android wrapper app");
+      return;
+    }
+    setLoading(true, "Connecting Bluetooth printer...");
+    try {
+      const response = parseNativeResponse(window.AndroidPosPrinter.connectBluetoothPrinter(""));
+      if (!response.ok) {
+        throw new Error(response.message || "Could not connect Bluetooth printer");
+      }
+      updatePrinterState({
+        printerTransport: String(response.transport || "bluetooth"),
+        printerReady: true,
+        printerLabel: String(response.label || "Bluetooth printer connected")
+      });
+      showToast(response.message || "Bluetooth printer connected");
+    } catch (error) {
+      showToast(error.message || "Could not connect Bluetooth printer");
     } finally {
       setLoading(false);
     }
@@ -526,6 +612,21 @@
       showToast("Connect the printer first");
       return;
     }
+    if (hasAndroidPrinterBridge()) {
+      setLoading(true, "Sending test print...");
+      try {
+        const response = parseNativeResponse(window.AndroidPosPrinter.testPrint());
+        if (!response.ok) {
+          throw new Error(response.message || "Test print failed");
+        }
+        showToast(response.message || "Test print sent");
+      } catch (error) {
+        showToast(error.message || "Test print failed");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     setLoading(true, "Sending test print...");
     try {
       await sendBytesToPrinter(buildTestPrintBytes());
@@ -554,6 +655,14 @@
         : await loadSaleDetail(targetId);
       if (!detail) {
         throw new Error("Sale entry not found");
+      }
+      if (hasAndroidPrinterBridge()) {
+        const response = parseNativeResponse(window.AndroidPosPrinter.printBase64(uint8ToBase64(buildEscPosReceiptBytes(detail))));
+        if (!response.ok) {
+          throw new Error(response.message || "Could not print bill");
+        }
+        showToast(response.message || "Bill sent to printer");
+        return;
       }
       await sendBytesToPrinter(buildEscPosReceiptBytes(detail));
       showToast("Bill sent to printer");
@@ -910,7 +1019,8 @@
           </div>
         </div>
         <div class="public-actions checkout-actions">
-          <button class="button secondary" type="button" onclick="window.kkdSalesApp.connectPrinter()">Connect Printer</button>
+          <button class="button secondary" type="button" onclick="window.kkdSalesApp.connectPrinter()">Connect USB Printer</button>
+          <button class="button secondary" type="button" onclick="window.kkdSalesApp.connectBluetoothPrinter()">Connect Bluetooth Printer</button>
           <button class="button secondary" type="button" onclick="window.kkdSalesApp.testPrint()" ${state.printerReady ? "" : "disabled"}>Test Print</button>
           <button class="button secondary" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(state.submittedSaleId || "")}')" ${(state.printerReady && state.submittedSaleId) ? "" : "disabled"}>Print Last Bill</button>
         </div>
@@ -1216,7 +1326,7 @@
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sales-kakinada-sw.js?v=3").catch(() => {});
+      navigator.serviceWorker.register("/sales-kakinada-sw.js?v=4").catch(() => {});
     });
   }
 
@@ -1246,6 +1356,7 @@
     submitSale,
     openReceipt,
     connectPrinter,
+    connectBluetoothPrinter,
     testPrint,
     printReceiptToPrinter,
     toggleHistoryDetails,
@@ -1265,6 +1376,7 @@
     try {
       setLoading(true, "Loading page...");
       const loggedIn = await ensureAuthenticated();
+      syncNativePrinterStatus();
       if (loggedIn) {
         await Promise.all([ensureCatalogLoaded("BOOK"), ensureCatalogLoaded("PARAPHERNALIA"), loadMySales()]);
       }
