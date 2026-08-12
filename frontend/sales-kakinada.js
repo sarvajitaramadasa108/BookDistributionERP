@@ -924,7 +924,7 @@
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sales-kakinada-sw.js").catch(() => {});
+      navigator.serviceWorker.register("/sales-kakinada-sw.js?v=2").catch(() => {});
     });
   }
 
