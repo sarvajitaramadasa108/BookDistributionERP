@@ -431,6 +431,9 @@
       await Promise.all([ensureCatalogLoaded("BOOK"), ensureCatalogLoaded("PARAPHERNALIA"), loadMySales()]);
       showToast("Sale entry created");
       render();
+      setTimeout(() => {
+        openReceipt(state.submittedSaleId);
+      }, 250);
     } catch (error) {
       showToast(error.message || "Could not create sale entry");
     } finally {
