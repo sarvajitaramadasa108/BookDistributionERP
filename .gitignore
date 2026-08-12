@@ -1,2 +1,7 @@
 outputs/
 work/
+android-wrapper/.gradle/
+android-wrapper/.idea/
+android-wrapper/.kotlin/
+android-wrapper/app/build/
+android-wrapper/local.properties

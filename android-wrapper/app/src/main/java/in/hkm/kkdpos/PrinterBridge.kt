@@ -1,8 +1,10 @@
-package in.hkm.kkdpos
+package org.hkm.kkdpos
 
 import android.Manifest
 import android.app.PendingIntent
+import android.app.Activity
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -18,6 +20,10 @@ import android.hardware.usb.UsbManager
 import android.os.Build
 import android.util.Base64
 import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.print.PrintAttributes
+import android.print.PrintManager
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import java.io.OutputStream
@@ -27,7 +33,7 @@ class PrinterBridge(private val context: Context) {
 
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
-    private val usbPermissionAction = "in.hkm.kkdpos.USB_PERMISSION"
+    private val usbPermissionAction = "org.hkm.kkdpos.USB_PERMISSION"
 
     private var usbConnection: UsbDeviceConnection? = null
     private var usbInterface: UsbInterface? = null
@@ -71,9 +77,50 @@ class PrinterBridge(private val context: Context) {
             extra = mapOf(
                 "ready" to isReady(),
                 "label" to lastLabel,
-                "transport" to lastTransport
+                "transport" to lastTransport,
+                "nativePrint" to true
             )
         )
+    }
+
+    @JavascriptInterface
+    fun canNativePrint(): String {
+        return response(true, "Native print available", mapOf("nativePrint" to true))
+    }
+
+    @JavascriptInterface
+    fun printHtml(title: String?, html: String?): String {
+        val activity = context as? Activity
+            ?: return response(false, "Activity context is not available for printing")
+        val safeHtml = String(html ?: "").trim()
+        if (safeHtml.isEmpty()) {
+            return response(false, "Nothing to print")
+        }
+        val jobTitle = String(title ?: "HKM Receipt").ifBlank { "HKM Receipt" }
+        activity.runOnUiThread {
+            try {
+                val printWebView = WebView(activity)
+                printWebView.settings.javaScriptEnabled = false
+                printWebView.settings.domStorageEnabled = false
+                printWebView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        val printManager = activity.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+                        if (printManager != null && view != null) {
+                            val adapter = view.createPrintDocumentAdapter(jobTitle)
+                            printManager.print(
+                                jobTitle,
+                                adapter,
+                                PrintAttributes.Builder().build()
+                            )
+                        }
+                    }
+                }
+                printWebView.loadDataWithBaseURL(null, safeHtml, "text/html", "UTF-8", null)
+            } catch (_: Exception) {
+                // native print dialog errors are surfaced by missing dialog / service
+            }
+        }
+        return response(true, "Print dialog opened", mapOf("nativePrint" to true))
     }
 
     @JavascriptInterface
@@ -129,27 +176,72 @@ class PrinterBridge(private val context: Context) {
         if (bonded.isEmpty()) {
             return response(false, "No paired Bluetooth printer found")
         }
-        val hint = String(nameHint ?: "").trim().lowercase()
+        val hint = (nameHint ?: "").trim().lowercase()
         val device = bonded.firstOrNull { hint.isNotEmpty() && (it.name ?: "").lowercase().contains(hint) }
             ?: bonded.firstOrNull { (it.name ?: "").contains("printer", ignoreCase = true) }
             ?: bonded.firstOrNull()
             ?: return response(false, "No paired Bluetooth printer found")
 
-        return try {
-            closeBluetoothOnly()
-            val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-            val socket = device.createRfcommSocketToServiceRecord(uuid)
-            bluetoothAdapter.cancelDiscovery()
-            socket.connect()
-            bluetoothSocket = socket
-            bluetoothOutput = socket.outputStream
+        val connectResult = connectBluetoothSocket(device)
+        return if (connectResult != null) {
+            bluetoothSocket = connectResult
+            bluetoothOutput = connectResult.outputStream
             bluetoothLabel = "Bluetooth: ${device.name ?: "Printer"}"
             lastTransport = "bluetooth"
             lastLabel = bluetoothLabel
             response(true, "Bluetooth printer connected", mapOf("transport" to "bluetooth", "label" to bluetoothLabel))
-        } catch (error: Exception) {
-            response(false, error.message ?: "Could not connect Bluetooth printer")
+        } else {
+            response(false, lastLabel.ifBlank { "Could not connect Bluetooth printer" })
         }
+    }
+
+    private fun connectBluetoothSocket(device: BluetoothDevice): BluetoothSocket? {
+        closeBluetoothOnly()
+        bluetoothAdapter?.cancelDiscovery()
+        val defaultUuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+        val advertisedUuids = device.uuids?.mapNotNull { it?.uuid }?.distinct().orEmpty()
+
+        var lastError: Exception? = null
+        for (uuid in (advertisedUuids + defaultUuid).distinct()) {
+            try {
+                val socket = device.createRfcommSocketToServiceRecord(uuid)
+                socket.connect()
+                return socket
+            } catch (error: Exception) {
+                lastError = error
+                try {
+                    // ignore
+                } catch (_: Exception) {
+                    // ignore
+                }
+            }
+            try {
+                val insecureSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
+                insecureSocket.connect()
+                return insecureSocket
+            } catch (error: Exception) {
+                lastError = error
+            }
+        }
+
+        try {
+            @Suppress("UNCHECKED_CAST")
+            val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+            val legacySocket = method.invoke(device, 1) as BluetoothSocket
+            legacySocket.connect()
+            return legacySocket
+        } catch (error: Exception) {
+            lastError = error
+        }
+
+        lastLabel = buildString {
+            append(lastError?.message ?: "Could not connect Bluetooth printer")
+            if (advertisedUuids.isNotEmpty()) {
+                append(" | UUIDs tried: ")
+                append(advertisedUuids.joinToString(", "))
+            }
+        }
+        return null
     }
 
     @JavascriptInterface

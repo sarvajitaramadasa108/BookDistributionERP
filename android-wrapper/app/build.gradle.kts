@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "in.hkm.kkdpos"
+    namespace = "org.hkm.kkdpos"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "in.hkm.kkdpos"
+        applicationId = "org.hkm.kkdpos"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

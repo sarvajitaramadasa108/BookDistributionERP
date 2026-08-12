@@ -1,4 +1,4 @@
-package in.hkm.kkdpos
+package org.hkm.kkdpos
 
 import android.Manifest
 import android.annotation.SuppressLint

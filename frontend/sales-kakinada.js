@@ -111,6 +111,10 @@
     return typeof window !== "undefined" && !!window.AndroidPosPrinter;
   }
 
+  function canUseAndroidNativePrint() {
+    return hasAndroidPrinterBridge() && typeof window.AndroidPosPrinter.printHtml === "function";
+  }
+
   function parseNativeResponse(raw) {
     try {
       return typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -644,17 +648,30 @@
       showToast("No sale entry available to print");
       return;
     }
-    if (!state.printerReady) {
+    if (!canUseAndroidNativePrint() && !state.printerReady) {
       showToast("Connect the printer first");
       return;
     }
-    setLoading(true, "Sending bill to printer...");
+    setLoading(true, canUseAndroidNativePrint() ? "Opening print dialog..." : "Sending bill to printer...");
     try {
       const detail = state.lastSubmittedSale && String(state.lastSubmittedSale.documentId || "") === targetId
         ? state.lastSubmittedSale
         : await loadSaleDetail(targetId);
       if (!detail) {
         throw new Error("Sale entry not found");
+      }
+      if (canUseAndroidNativePrint()) {
+        const response = parseNativeResponse(
+          window.AndroidPosPrinter.printHtml(
+            detail?.documentId || "Sale Receipt",
+            buildReceiptHtml(detail, true)
+          )
+        );
+        if (!response.ok) {
+          throw new Error(response.message || "Could not open print dialog");
+        }
+        showToast(response.message || "Print dialog opened");
+        return;
       }
       if (hasAndroidPrinterBridge()) {
         const response = parseNativeResponse(window.AndroidPosPrinter.printBase64(uint8ToBase64(buildEscPosReceiptBytes(detail))));
@@ -786,11 +803,12 @@
     }
   }
 
-  function buildReceiptHtml(detail) {
+  function buildReceiptHtml(detail, printOnly) {
     const lines = Array.isArray(detail?.lines) ? detail.lines : [];
     const createdAt = detail?.createdAt || detail?.documentDate || new Date().toISOString();
     const totalQty = lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
     const totalAmount = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+    const isPrintOnly = Boolean(printOnly);
     return `
 <!doctype html>
 <html lang="en">
@@ -888,10 +906,11 @@
   </style>
 </head>
 <body>
+  ${isPrintOnly ? "" : `
   <div class="actions">
     <button onclick="window.print()">Print Bill</button>
     <button onclick="window.close()">Close</button>
-  </div>
+  </div>`}
   <div class="receipt">
     <div class="center strong">HARE KRISHNA MOVEMENT</div>
     <div class="center strong">VISAKHAPATNAM</div>
@@ -947,6 +966,19 @@
         : await loadSaleDetail(targetId);
       if (!detail) {
         throw new Error("Sale entry not found");
+      }
+      if (canUseAndroidNativePrint()) {
+        const response = parseNativeResponse(
+          window.AndroidPosPrinter.printHtml(
+            detail?.documentId || "Sale Receipt",
+            buildReceiptHtml(detail, true)
+          )
+        );
+        if (!response.ok) {
+          throw new Error(response.message || "Could not open print dialog");
+        }
+        showToast(response.message || "Print dialog opened");
+        return;
       }
       const receiptWindow = window.open("", "_blank");
       if (!receiptWindow) {
@@ -1018,12 +1050,19 @@
             <div class="public-tag">${escapeHtml(state.printerReady ? `Connected via ${state.printerTransport.toUpperCase()}` : "Not connected")}</div>
           </div>
         </div>
-        <div class="public-actions checkout-actions">
-          <button class="button secondary" type="button" onclick="window.kkdSalesApp.connectPrinter()">Connect USB Printer</button>
-          <button class="button secondary" type="button" onclick="window.kkdSalesApp.connectBluetoothPrinter()">Connect Bluetooth Printer</button>
-          <button class="button secondary" type="button" onclick="window.kkdSalesApp.testPrint()" ${state.printerReady ? "" : "disabled"}>Test Print</button>
-          <button class="button secondary" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(state.submittedSaleId || "")}')" ${(state.printerReady && state.submittedSaleId) ? "" : "disabled"}>Print Last Bill</button>
-        </div>
+        ${canUseAndroidNativePrint() ? `
+          <div class="empty-note">Android print service detected. Use Print Bill or Open Print Dialog to print through your working printer service.</div>
+          <div class="public-actions checkout-actions">
+            <button class="button secondary" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(state.submittedSaleId || "")}')" ${state.submittedSaleId ? "" : "disabled"}>Open Print Dialog</button>
+          </div>
+        ` : `
+          <div class="public-actions checkout-actions">
+            <button class="button secondary" type="button" onclick="window.kkdSalesApp.connectPrinter()">Connect USB Printer</button>
+            <button class="button secondary" type="button" onclick="window.kkdSalesApp.connectBluetoothPrinter()">Connect Bluetooth Printer</button>
+            <button class="button secondary" type="button" onclick="window.kkdSalesApp.testPrint()" ${state.printerReady ? "" : "disabled"}>Test Print</button>
+            <button class="button secondary" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(state.submittedSaleId || "")}')" ${(state.printerReady && state.submittedSaleId) ? "" : "disabled"}>Print Last Bill</button>
+          </div>
+        `}
       </section>
     `;
   }
