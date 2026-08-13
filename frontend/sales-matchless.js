@@ -4,6 +4,7 @@
   const overlay = document.getElementById("loadingOverlay");
   const toastStack = document.getElementById("toastStack");
   const WAREHOUSE_KEY = "Matchless Gift Store";
+  const PRINTER_HINT_KEY = "hkm-matchless-printer-hint";
 
   const state = {
     currentUser: null,
@@ -115,6 +116,10 @@
     return hasAndroidPrinterBridge() && typeof window.AndroidPosPrinter.printHtml === "function";
   }
 
+  function isAndroidWrapperMode() {
+    return hasAndroidPrinterBridge();
+  }
+
   function parseNativeResponse(raw) {
     try {
       return typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -171,6 +176,33 @@
     } catch (error) {
       // ignore storage issues
     }
+  }
+
+  function getStoredPrinterHint() {
+    try {
+      return window.localStorage.getItem(PRINTER_HINT_KEY) || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function setStoredPrinterHint(value) {
+    try {
+      const hint = String(value || "").trim();
+      if (hint) {
+        window.localStorage.setItem(PRINTER_HINT_KEY, hint);
+      } else {
+        window.localStorage.removeItem(PRINTER_HINT_KEY);
+      }
+    } catch (error) {
+      // ignore storage issues
+    }
+  }
+
+  function extractPrinterHint(label) {
+    const raw = String(label || "").trim();
+    if (!raw) return "";
+    return raw.replace(/^Bluetooth:\s*/i, "").trim();
   }
 
   function normalizeCategorySelection(categories, value) {
@@ -571,7 +603,7 @@
     }
     setLoading(true, "Connecting Bluetooth printer...");
     try {
-      const response = parseNativeResponse(window.AndroidPosPrinter.connectBluetoothPrinter(""));
+      const response = parseNativeResponse(window.AndroidPosPrinter.connectBluetoothPrinter(getStoredPrinterHint()));
       if (!response.ok) {
         throw new Error(response.message || "Could not connect Bluetooth printer");
       }
@@ -580,12 +612,49 @@
         printerReady: true,
         printerLabel: String(response.label || "Bluetooth printer connected")
       });
+      setStoredPrinterHint(extractPrinterHint(response.label));
       showToast(response.message || "Bluetooth printer connected");
     } catch (error) {
       showToast(error.message || "Could not connect Bluetooth printer");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function ensureAndroidBluetoothPrinterReady(options) {
+    const settings = options || {};
+    const silent = Boolean(settings.silent);
+    if (!hasAndroidPrinterBridge()) {
+      throw new Error("Bluetooth printing is available only in the Matchless Android app");
+    }
+
+    const status = parseNativeResponse(window.AndroidPosPrinter.getStatus());
+    if (status?.ok && status.ready && String(status.transport || "").toLowerCase() === "bluetooth") {
+      updatePrinterState({
+        printerTransport: "bluetooth",
+        printerReady: true,
+        printerLabel: String(status.label || "Bluetooth printer connected")
+      });
+      setStoredPrinterHint(extractPrinterHint(status.label));
+      return status;
+    }
+
+    const response = parseNativeResponse(window.AndroidPosPrinter.connectBluetoothPrinter(getStoredPrinterHint()));
+    if (!response.ok) {
+      throw new Error(response.message || "Could not connect paired Bluetooth printer");
+    }
+
+    updatePrinterState({
+      printerTransport: String(response.transport || "bluetooth"),
+      printerReady: true,
+      printerLabel: String(response.label || "Bluetooth printer connected")
+    });
+    setStoredPrinterHint(extractPrinterHint(response.label));
+
+    if (!silent) {
+      showToast(response.message || "Bluetooth printer connected");
+    }
+    return response;
   }
 
   async function sendBytesToPrinter(bytes) {
@@ -648,11 +717,11 @@
       showToast("No sale entry available to print");
       return;
     }
-    if (!canUseAndroidNativePrint() && !state.printerReady) {
-      showToast("Connect the printer first");
+    if (!hasAndroidPrinterBridge() && !state.printerReady) {
+      showToast("Print from the Matchless Android app");
       return;
     }
-    setLoading(true, canUseAndroidNativePrint() ? "Opening print dialog..." : "Sending bill to printer...");
+    setLoading(true, hasAndroidPrinterBridge() ? "Printing bill..." : "Sending bill to printer...");
     try {
       const detail = state.lastSubmittedSale && String(state.lastSubmittedSale.documentId || "") === targetId
         ? state.lastSubmittedSale
@@ -660,34 +729,46 @@
       if (!detail) {
         throw new Error("Sale entry not found");
       }
-      if (canUseAndroidNativePrint()) {
-        const response = parseNativeResponse(
-          window.AndroidPosPrinter.printHtml(
-            detail?.documentId || "Sale Receipt",
-            buildReceiptHtml(detail, true)
-          )
-        );
-        if (!response.ok) {
-          throw new Error(response.message || "Could not open print dialog");
-        }
-        showToast(response.message || "Print dialog opened");
-        return;
-      }
       if (hasAndroidPrinterBridge()) {
+        await ensureAndroidBluetoothPrinterReady({ silent: true });
         const response = parseNativeResponse(window.AndroidPosPrinter.printBase64(uint8ToBase64(buildEscPosReceiptBytes(detail))));
         if (!response.ok) {
           throw new Error(response.message || "Could not print bill");
         }
-        showToast(response.message || "Bill sent to printer");
+        showToast("Bill printed");
         return;
       }
       await sendBytesToPrinter(buildEscPosReceiptBytes(detail));
-      showToast("Bill sent to printer");
+      showToast("Bill printed");
     } catch (error) {
       showToast(error.message || "Could not print bill");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function autoPrintSubmittedSale(detailOrId) {
+    if (!hasAndroidPrinterBridge()) {
+      return false;
+    }
+    const targetId = typeof detailOrId === "string"
+      ? String(detailOrId || "").trim()
+      : String(detailOrId?.documentId || "").trim();
+    if (!targetId) {
+      return false;
+    }
+    const detail = typeof detailOrId === "object" && detailOrId
+      ? detailOrId
+      : await loadSaleDetail(targetId);
+    if (!detail) {
+      return false;
+    }
+    await ensureAndroidBluetoothPrinterReady({ silent: true });
+    const response = parseNativeResponse(window.AndroidPosPrinter.printBase64(uint8ToBase64(buildEscPosReceiptBytes(detail))));
+    if (!response.ok) {
+      throw new Error(response.message || "Auto print failed");
+    }
+    return true;
   }
 
   function setView(view) {
@@ -790,7 +871,16 @@
       state.view = "submitted";
       state.catalogByGroup = { BOOK: [], PARAPHERNALIA: [] };
       await Promise.all([ensureCatalogLoaded("BOOK"), ensureCatalogLoaded("PARAPHERNALIA"), loadMySales()]);
-      showToast("Sale entry created");
+      if (hasAndroidPrinterBridge()) {
+        try {
+          await autoPrintSubmittedSale(result || state.submittedSaleId);
+          showToast("Sale entry created and bill printed");
+        } catch (printError) {
+          showToast(`Sale entry created. Auto print skipped: ${printError.message || "Printer not ready"}`);
+        }
+      } else {
+        showToast("Sale entry created");
+      }
       render();
     } catch (error) {
       showToast(error.message || "Could not create sale entry");
@@ -1056,9 +1146,13 @@
       <section class="public-card category-switch-card">
         <div class="public-card-header compact-header">
           <h2>Printing</h2>
-          <div class="public-tag">${escapeHtml(canUseAndroidNativePrint() ? "Android Print Ready" : "Web Preview Mode")}</div>
+          <div class="public-tag">${escapeHtml(isAndroidWrapperMode() ? "Android Wrapper" : "Web Only")}</div>
         </div>
-        <div class="empty-note">Use the single <strong>Print Bill</strong> button in each sale entry. That is the only print action now.</div>
+        <div class="empty-note">
+          ${isAndroidWrapperMode()
+            ? `After a sale entry is posted, the app will try to auto-print through the paired Bluetooth printer. You can also reprint later from <strong>My Sale Entries</strong>.`
+            : `Printing is available only in the Matchless Android app. The web page can still post sale entries.`}
+        </div>
       </section>
     `;
   }
@@ -1241,7 +1335,7 @@
                     <td>
                       <div class="row-actions">
                         <button class="small-button" type="button" onclick="window.kkdSalesApp.toggleHistoryDetails('${escapeAttr(row.documentId)}')">${state.mySalesExpanded === row.documentId ? "Hide" : "Show"} Details</button>
-                        <button class="small-button" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(row.documentId)}')">Print Bill</button>
+                        ${isAndroidWrapperMode() ? `<button class="small-button" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(row.documentId)}')">Print Bill</button>` : ""}
                       </div>
                     </td>
                   </tr>
@@ -1300,7 +1394,7 @@
         <p>Your cart has been posted as a sale entry for the ${escapeHtml(state.warehouseName)} warehouse.</p>
         <div class="success-meta">${state.submittedSaleId ? `Sale Entry ${escapeHtml(state.submittedSaleId)} was created successfully.` : "Sale entry created successfully."}</div>
         <div class="public-actions centered-actions">
-          <button class="button secondary" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(state.submittedSaleId)}')">Print Bill</button>
+          ${isAndroidWrapperMode() ? `<button class="button secondary" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(state.submittedSaleId)}')">Print Bill</button>` : ""}
           <button class="button secondary" type="button" onclick="window.kkdSalesApp.setView('history')">My Sale Entries</button>
           <button class="button" type="button" onclick="window.kkdSalesApp.setView('catalog')">Post Another Sale</button>
         </div>
