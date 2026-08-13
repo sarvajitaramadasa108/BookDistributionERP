@@ -4,7 +4,6 @@
   const overlay = document.getElementById("loadingOverlay");
   const toastStack = document.getElementById("toastStack");
   const WAREHOUSE_KEY = "Matchless Gift Store";
-  const PRINTER_HINT_KEY = "hkm-matchless-printer-hint";
 
   const state = {
     currentUser: null,
@@ -176,33 +175,6 @@
     } catch (error) {
       // ignore storage issues
     }
-  }
-
-  function getStoredPrinterHint() {
-    try {
-      return window.localStorage.getItem(PRINTER_HINT_KEY) || "";
-    } catch (error) {
-      return "";
-    }
-  }
-
-  function setStoredPrinterHint(value) {
-    try {
-      const hint = String(value || "").trim();
-      if (hint) {
-        window.localStorage.setItem(PRINTER_HINT_KEY, hint);
-      } else {
-        window.localStorage.removeItem(PRINTER_HINT_KEY);
-      }
-    } catch (error) {
-      // ignore storage issues
-    }
-  }
-
-  function extractPrinterHint(label) {
-    const raw = String(label || "").trim();
-    if (!raw) return "";
-    return raw.replace(/^Bluetooth:\s*/i, "").trim();
   }
 
   function normalizeCategorySelection(categories, value) {
@@ -603,7 +575,7 @@
     }
     setLoading(true, "Connecting Bluetooth printer...");
     try {
-      const response = parseNativeResponse(window.AndroidPosPrinter.connectBluetoothPrinter(getStoredPrinterHint()));
+      const response = parseNativeResponse(window.AndroidPosPrinter.connectBluetoothPrinter(""));
       if (!response.ok) {
         throw new Error(response.message || "Could not connect Bluetooth printer");
       }
@@ -612,49 +584,12 @@
         printerReady: true,
         printerLabel: String(response.label || "Bluetooth printer connected")
       });
-      setStoredPrinterHint(extractPrinterHint(response.label));
       showToast(response.message || "Bluetooth printer connected");
     } catch (error) {
       showToast(error.message || "Could not connect Bluetooth printer");
     } finally {
       setLoading(false);
     }
-  }
-
-  async function ensureAndroidBluetoothPrinterReady(options) {
-    const settings = options || {};
-    const silent = Boolean(settings.silent);
-    if (!hasAndroidPrinterBridge()) {
-      throw new Error("Bluetooth printing is available only in the Matchless Android app");
-    }
-
-    const status = parseNativeResponse(window.AndroidPosPrinter.getStatus());
-    if (status?.ok && status.ready && String(status.transport || "").toLowerCase() === "bluetooth") {
-      updatePrinterState({
-        printerTransport: "bluetooth",
-        printerReady: true,
-        printerLabel: String(status.label || "Bluetooth printer connected")
-      });
-      setStoredPrinterHint(extractPrinterHint(status.label));
-      return status;
-    }
-
-    const response = parseNativeResponse(window.AndroidPosPrinter.connectBluetoothPrinter(getStoredPrinterHint()));
-    if (!response.ok) {
-      throw new Error(response.message || "Could not connect paired Bluetooth printer");
-    }
-
-    updatePrinterState({
-      printerTransport: String(response.transport || "bluetooth"),
-      printerReady: true,
-      printerLabel: String(response.label || "Bluetooth printer connected")
-    });
-    setStoredPrinterHint(extractPrinterHint(response.label));
-
-    if (!silent) {
-      showToast(response.message || "Bluetooth printer connected");
-    }
-    return response;
   }
 
   async function sendBytesToPrinter(bytes) {
@@ -721,7 +656,7 @@
       showToast("Print from the Matchless Android app");
       return;
     }
-    setLoading(true, hasAndroidPrinterBridge() ? "Printing bill..." : "Sending bill to printer...");
+    setLoading(true, hasAndroidPrinterBridge() ? "Opening print..." : "Sending bill to printer...");
     try {
       const detail = state.lastSubmittedSale && String(state.lastSubmittedSale.documentId || "") === targetId
         ? state.lastSubmittedSale
@@ -730,12 +665,16 @@
         throw new Error("Sale entry not found");
       }
       if (hasAndroidPrinterBridge()) {
-        await ensureAndroidBluetoothPrinterReady({ silent: true });
-        const response = parseNativeResponse(window.AndroidPosPrinter.printBase64(uint8ToBase64(buildEscPosReceiptBytes(detail))));
+        const response = parseNativeResponse(
+          window.AndroidPosPrinter.printHtml(
+            detail?.documentId || "Sale Receipt",
+            buildReceiptHtml(detail, true)
+          )
+        );
         if (!response.ok) {
-          throw new Error(response.message || "Could not print bill");
+          throw new Error(response.message || "Could not open print");
         }
-        showToast("Bill printed");
+        showToast(response.message || "Print opened");
         return;
       }
       await sendBytesToPrinter(buildEscPosReceiptBytes(detail));
@@ -763,10 +702,14 @@
     if (!detail) {
       return false;
     }
-    await ensureAndroidBluetoothPrinterReady({ silent: true });
-    const response = parseNativeResponse(window.AndroidPosPrinter.printBase64(uint8ToBase64(buildEscPosReceiptBytes(detail))));
+    const response = parseNativeResponse(
+      window.AndroidPosPrinter.printHtml(
+        detail?.documentId || "Sale Receipt",
+        buildReceiptHtml(detail, true)
+      )
+    );
     if (!response.ok) {
-      throw new Error(response.message || "Auto print failed");
+      throw new Error(response.message || "Could not open print");
     }
     return true;
   }
