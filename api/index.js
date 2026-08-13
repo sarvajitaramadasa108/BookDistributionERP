@@ -2057,13 +2057,14 @@ async function approveCatalogRequest(supabase, payload, currentUser) {
 }
 
 async function getSaleEntriesContext(supabase) {
-  const [documentsResult, linesResult, itemsResult, warehousesResult, usersResult, paymentsResult] = await Promise.all([
+  const [documentsResult, linesResult, itemsResult, warehousesResult, usersResult, paymentsResult, dayPaymentsResult] = await Promise.all([
     supabase.from("documents").select("*").eq("document_type", "SALE").order("created_at", { ascending: false }),
     supabase.from("document_lines").select("*"),
     supabase.from("items").select("*"),
     supabase.from("warehouses").select("*"),
     supabase.from("users").select("*"),
-    supabase.from("sale_entry_payments").select("*").order("payment_date", { ascending: true }).order("created_at", { ascending: true })
+    supabase.from("sale_entry_payments").select("*").order("payment_date", { ascending: true }).order("created_at", { ascending: true }),
+    supabase.from("sale_day_payments").select("*").order("sale_date", { ascending: true }).order("created_at", { ascending: true })
   ]);
   if (documentsResult.error) throw documentsResult.error;
   if (linesResult.error) throw linesResult.error;
@@ -2071,13 +2072,20 @@ async function getSaleEntriesContext(supabase) {
   if (warehousesResult.error) throw warehousesResult.error;
   if (usersResult.error) throw usersResult.error;
   if (paymentsResult.error) throw paymentsResult.error;
+  if (dayPaymentsResult.error) {
+    const message = String(dayPaymentsResult.error.message || "").toLowerCase();
+    if (!message.includes("sale_day_payments") && !message.includes("schema cache") && !message.includes("does not exist")) {
+      throw dayPaymentsResult.error;
+    }
+  }
   return {
     documents: documentsResult.data || [],
     lines: linesResult.data || [],
     items: itemsResult.data || [],
     warehouses: warehousesResult.data || [],
     users: usersResult.data || [],
-    payments: paymentsResult.data || []
+    payments: paymentsResult.data || [],
+    dayPayments: dayPaymentsResult.data || []
   };
 }
 
@@ -2141,6 +2149,28 @@ function buildSaleEntrySummary(doc, context) {
   };
 }
 
+function buildSaleDayPaymentSummary(row, context) {
+  const warehouseById = Object.fromEntries((context.warehouses || []).map((item) => [item.id, item]));
+  const userById = Object.fromEntries((context.users || []).map((item) => [item.id, item]));
+  const warehouse = warehouseById[row.warehouse_id] || {};
+  const user = userById[row.created_by_user_id] || {};
+  return {
+    dayPaymentId: row.id,
+    warehouseId: row.warehouse_id || "",
+    warehouseCode: warehouse.warehouse_code || "",
+    warehouseName: warehouse.warehouse_name || "",
+    saleDate: row.sale_date || "",
+    cashAmount: Number(row.cash_amount || 0),
+    onlineAmount: Number(row.online_amount || 0),
+    totalAmount: Number(row.cash_amount || 0) + Number(row.online_amount || 0),
+    notes: row.notes || "",
+    createdByUserId: row.created_by_user_id || "",
+    createdByName: user.name || "",
+    createdByUsername: user.username || "",
+    createdAt: row.created_at || ""
+  };
+}
+
 async function saleEntriesList(supabase, payload, currentUser) {
   const context = await getSaleEntriesContext(supabase);
   const boundWarehouseFilter = getBoundWarehouseFilter(currentUser);
@@ -2153,7 +2183,19 @@ async function saleEntriesList(supabase, payload, currentUser) {
   if (onlyMine && currentUser && currentUser.userId) {
     rows = rows.filter((row) => String(row.createdByUserId || "") === String(currentUser.userId || ""));
   }
-  return rows.sort((a, b) => String(b.createdAt || b.documentDate || "").localeCompare(String(a.createdAt || a.documentDate || "")) || String(b.documentId || "").localeCompare(String(a.documentId || "")));
+  const sortedRows = rows.sort((a, b) => String(b.createdAt || b.documentDate || "").localeCompare(String(a.createdAt || a.documentDate || "")) || String(b.documentId || "").localeCompare(String(a.documentId || "")));
+  let dayPayments = (context.dayPayments || []).map((row) => buildSaleDayPaymentSummary(row, context));
+  if (warehouseFilter) {
+    dayPayments = dayPayments.filter((row) => [row.warehouseId, row.warehouseCode, row.warehouseName].some((value) => String(value || "").trim() === warehouseFilter));
+  }
+  if (onlyMine && currentUser && currentUser.userId) {
+    dayPayments = dayPayments.filter((row) => String(row.createdByUserId || "") === String(currentUser.userId || ""));
+  }
+  dayPayments = dayPayments.sort((a, b) => String(b.saleDate || "").localeCompare(String(a.saleDate || "")) || String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  return {
+    rows: sortedRows,
+    dayPayments
+  };
 }
 
 async function saleEntryDetail(supabase, payload) {
@@ -2191,6 +2233,27 @@ async function createSaleEntryPayment(supabase, payload, currentUser) {
   });
   if (error) throw error;
   return saleEntryDetail(supabase, { documentId: documentRow.id });
+}
+
+async function createSaleDayPayment(supabase, payload, currentUser) {
+  const warehouseRef = String(payload.warehouseId || payload.warehouseCode || payload.warehouseName || "").trim();
+  if (!warehouseRef) throw new Error("Warehouse is required");
+  const saleDate = toDateOnly(payload.saleDate || payload.paymentDate || nowIso());
+  const cashAmount = Number(payload.cashAmount || 0);
+  const onlineAmount = Number(payload.onlineAmount || 0);
+  if (cashAmount <= 0 && onlineAmount <= 0) throw new Error("Enter cash or online amount");
+  const warehouseRow = await resolveWarehouseRow(supabase, warehouseRef);
+  if (!warehouseRow) throw new Error("Warehouse not found");
+  const { error } = await supabase.from("sale_day_payments").insert({
+    warehouse_id: warehouseRow.id,
+    sale_date: saleDate,
+    cash_amount: cashAmount,
+    online_amount: onlineAmount,
+    notes: String(payload.notes || "").trim(),
+    created_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null
+  });
+  if (error) throw error;
+  return saleEntriesList(supabase, { warehouseId: warehouseRow.id }, currentUser);
 }
 
 async function submitWarehouseSale(supabase, payload, currentUser) {
@@ -3328,6 +3391,8 @@ async function main(request) {
         return json(200, { ok: true, data: await saleEntryDetail(supabase, payload) });
       case "sales.entryPaymentCreate":
         return json(200, { ok: true, data: await createSaleEntryPayment(supabase, payload, currentUser) });
+      case "sales.dayPaymentCreate":
+        return json(200, { ok: true, data: await createSaleDayPayment(supabase, payload, currentUser) });
       case "sales.submit":
         return json(200, { ok: true, data: await submitWarehouseSale(supabase, payload, currentUser) });
       case "reports.activityLedger":

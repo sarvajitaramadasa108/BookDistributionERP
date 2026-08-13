@@ -11,6 +11,7 @@ alter table public.document_lines enable row level security;
 alter table public.stock_ledger enable row level security;
 alter table public.activity_settlement_payments enable row level security;
 alter table public.sale_entry_payments enable row level security;
+alter table public.sale_day_payments enable row level security;
 alter table public.online_class_registrations enable row level security;
 alter table public.catalog_requests enable row level security;
 alter table public.catalog_request_lines enable row level security;
@@ -82,6 +83,13 @@ with check (true);
 drop policy if exists "sale_entry_payments_all_access" on public.sale_entry_payments;
 create policy "sale_entry_payments_all_access"
 on public.sale_entry_payments
+for all
+using (true)
+with check (true);
+
+drop policy if exists "sale_day_payments_all_access" on public.sale_day_payments;
+create policy "sale_day_payments_all_access"
+on public.sale_day_payments
 for all
 using (true)
 with check (true);

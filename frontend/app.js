@@ -30,6 +30,7 @@
     documents: [],
     requests: [],
     saleEntries: [],
+    saleEntryDayPayments: [],
     saleEntrySearch: "",
     saleEntryWarehouseFilter: "all",
     saleEntryMonthFilter: new Date().toISOString().slice(0, 7),
@@ -3037,6 +3038,24 @@
     };
   }
 
+  function normalizeSaleDayPayment(row) {
+    return {
+      dayPaymentId: row.dayPaymentId || row.id || "",
+      warehouseId: row.warehouseId || "",
+      warehouseCode: row.warehouseCode || "",
+      warehouseName: row.warehouseName || "",
+      saleDate: row.saleDate || row.paymentDate || "",
+      cashAmount: Number(row.cashAmount || 0),
+      onlineAmount: Number(row.onlineAmount || 0),
+      totalAmount: Number(row.totalAmount || 0),
+      notes: row.notes || "",
+      createdByUserId: row.createdByUserId || "",
+      createdByName: row.createdByName || "",
+      createdByUsername: row.createdByUsername || "",
+      createdAt: row.createdAt || ""
+    };
+  }
+
   function getDocumentActivityMeta(activityId) {
     const activity = state.activities.find((item) => item.activityId === activityId || item.activityRowId === activityId);
     if (!activity) {
@@ -4869,11 +4888,40 @@
         notes
       });
       state.saleEntryDetail = normalizeSaleEntrySummary(detail || {});
-      state.saleEntries = state.saleEntries.map((row) => row.documentId === state.saleEntryDetail.documentId ? state.saleEntryDetail : row);
+      await refreshSaleEntriesData();
+      state.saleEntryDetail = normalizeSaleEntrySummary(detail || {});
       content.innerHTML = renderSaleEntriesMarkup();
       showToast("Payment saved");
     } catch (error) {
       showToast(error.message || "Could not save payment");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveSaleDayPayment(event, warehouseId, saleDate) {
+    if (event) event.preventDefault();
+    const cashAmount = Number(document.getElementById(`saleDayCashAmount-${saleDate}`)?.value || 0);
+    const onlineAmount = Number(document.getElementById(`saleDayOnlineAmount-${saleDate}`)?.value || 0);
+    const notes = String(document.getElementById(`saleDayPaymentNotes-${saleDate}`)?.value || "").trim();
+    if (cashAmount <= 0 && onlineAmount <= 0) {
+      showToast("Enter cash or online amount");
+      return;
+    }
+    setLoading(true, "Saving day payment...");
+    try {
+      await window.erpApi.request("sales.dayPaymentCreate", {
+        warehouseId,
+        saleDate,
+        cashAmount,
+        onlineAmount,
+        notes
+      });
+      await refreshSaleEntriesData();
+      content.innerHTML = renderSaleEntriesMarkup();
+      showToast("Day payment saved");
+    } catch (error) {
+      showToast(error.message || "Could not save day payment");
     } finally {
       setLoading(false);
     }
@@ -4894,15 +4942,20 @@
     return state.requests;
   }
 
-  async function renderSaleEntries() {
-    const [rows, warehouses] = await Promise.all([
+  async function refreshSaleEntriesData() {
+    const [result, warehouses] = await Promise.all([
       window.erpApi.request("sales.entriesList"),
       state.warehouses.length ? Promise.resolve(state.warehouses) : window.erpApi.request("warehouses.list")
     ]);
-    state.saleEntries = Array.isArray(rows) ? rows.map(normalizeSaleEntrySummary) : [];
+    state.saleEntries = Array.isArray(result) ? result.map(normalizeSaleEntrySummary) : Array.isArray(result && result.rows) ? result.rows.map(normalizeSaleEntrySummary) : [];
+    state.saleEntryDayPayments = Array.isArray(result && result.dayPayments) ? result.dayPayments.map(normalizeSaleDayPayment) : [];
     if (!state.warehouses.length) {
       state.warehouses = Array.isArray(warehouses) ? warehouses.map(normalizeWarehouse) : [];
     }
+  }
+
+  async function renderSaleEntries() {
+    await refreshSaleEntriesData();
     return renderSaleEntriesMarkup();
   }
 
@@ -4941,11 +4994,10 @@
   }
 
   function saleEntriesOverview(rows) {
-    return rows.reduce((acc, row) => {
+    const value = rows.reduce((acc, row) => {
       acc.saleAmount += Number(row.totalAmount || 0);
       acc.cashAmount += Number(row.paidCashAmount || 0);
       acc.onlineAmount += Number(row.paidOnlineAmount || 0);
-      acc.pendingAmount += Number(row.pendingAmount || 0);
       acc.totalQty += Number(row.totalQty || 0);
       acc.entryCount += 1;
       return acc;
@@ -4957,36 +5009,79 @@
       totalQty: 0,
       entryCount: 0
     });
+    const monthFilter = String(state.saleEntryMonthFilter || "").trim();
+    const warehouseFilter = String(state.saleEntryWarehouseFilter || "all");
+    const dayPayments = (state.saleEntryDayPayments || []).filter((row) => {
+      if (warehouseFilter !== "all") {
+        const warehouseMatches = [row.warehouseId, row.warehouseCode, row.warehouseName].some((value) => String(value || "").trim() === warehouseFilter);
+        if (!warehouseMatches) return false;
+      }
+      if (monthFilter) {
+        const rowMonth = String(row.saleDate || "").slice(0, 7);
+        if (rowMonth !== monthFilter) return false;
+      }
+      return true;
+    });
+    value.dayCashAmount = dayPayments.reduce((sum, row) => sum + Number(row.cashAmount || 0), 0);
+    value.dayOnlineAmount = dayPayments.reduce((sum, row) => sum + Number(row.onlineAmount || 0), 0);
+    value.totalCashAmount = value.cashAmount + value.dayCashAmount;
+    value.totalOnlineAmount = value.onlineAmount + value.dayOnlineAmount;
+    value.pendingAmount = Math.max(value.saleAmount - value.totalCashAmount - value.totalOnlineAmount, 0);
+    return value;
   }
 
   function saleEntriesGroupedByDate(rows) {
     const groups = new Map();
     rows.forEach((row) => {
-      const key = toInputDate(row.createdAt || row.documentDate) || "Undated";
+      const dateKey = toInputDate(row.createdAt || row.documentDate) || "Undated";
+      const warehouseKey = String(row.warehouseId || row.warehouseCode || row.warehouseName || "unknown");
+      const key = `${dateKey}::${warehouseKey}`;
       if (!groups.has(key)) {
         groups.set(key, {
-          date: key,
+          date: dateKey,
           rows: [],
           totals: {
             saleAmount: 0,
-            cashAmount: 0,
-            onlineAmount: 0,
+            entryCashAmount: 0,
+            entryOnlineAmount: 0,
+            dayCashAmount: 0,
+            dayOnlineAmount: 0,
+            totalCashAmount: 0,
+            totalOnlineAmount: 0,
             pendingAmount: 0,
             totalQty: 0,
             entryCount: 0
-          }
+          },
+          dayPayments: [],
+          warehouseId: row.warehouseId || "",
+          warehouseCode: row.warehouseCode || "",
+          warehouseName: row.warehouseName || ""
         });
       }
       const group = groups.get(key);
       group.rows.push(row);
       group.totals.saleAmount += Number(row.totalAmount || 0);
-      group.totals.cashAmount += Number(row.paidCashAmount || 0);
-      group.totals.onlineAmount += Number(row.paidOnlineAmount || 0);
-      group.totals.pendingAmount += Number(row.pendingAmount || 0);
+      group.totals.entryCashAmount += Number(row.paidCashAmount || 0);
+      group.totals.entryOnlineAmount += Number(row.paidOnlineAmount || 0);
       group.totals.totalQty += Number(row.totalQty || 0);
       group.totals.entryCount += 1;
     });
-    return [...groups.values()].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    (state.saleEntryDayPayments || []).forEach((payment) => {
+      const dateKey = toInputDate(payment.saleDate) || "Undated";
+      const warehouseKey = String(payment.warehouseId || payment.warehouseCode || payment.warehouseName || "unknown");
+      const key = `${dateKey}::${warehouseKey}`;
+      const group = groups.get(key);
+      if (!group) return;
+      group.dayPayments.push(payment);
+      group.totals.dayCashAmount += Number(payment.cashAmount || 0);
+      group.totals.dayOnlineAmount += Number(payment.onlineAmount || 0);
+    });
+    groups.forEach((group) => {
+      group.totals.totalCashAmount = group.totals.entryCashAmount + group.totals.dayCashAmount;
+      group.totals.totalOnlineAmount = group.totals.entryOnlineAmount + group.totals.dayOnlineAmount;
+      group.totals.pendingAmount = Math.max(group.totals.saleAmount - group.totals.totalCashAmount - group.totals.totalOnlineAmount, 0);
+    });
+    return [...groups.values()].sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(a.warehouseName || "").localeCompare(String(b.warehouseName || "")));
   }
 
   function renderSaleEntriesMarkup() {
@@ -5024,8 +5119,10 @@
           ${detail ? saleEntryDetailMarkup(detail) : `
             <div class="grid metrics reports-metrics activity-report-metrics">
               ${metric("Month Sale", money(overview.saleAmount), "Overall sale value for the selected month")}
-              ${metric("Cash", money(overview.cashAmount), "Day-wise cash settlement total")}
-              ${metric("Online", money(overview.onlineAmount), "Day-wise online settlement total")}
+              ${metric("Entry Cash", money(overview.cashAmount), "Sale-entry-wise cash total")}
+              ${metric("Entry Online", money(overview.onlineAmount), "Sale-entry-wise online total")}
+              ${metric("Day Cash", money(overview.dayCashAmount || 0), "Day-wise cash settlement total")}
+              ${metric("Day Online", money(overview.dayOnlineAmount || 0), "Day-wise online settlement total")}
               ${metric("Pending", money(overview.pendingAmount), "Still to settle for the selected month")}
               ${metric("Entries", overview.entryCount, "Sale entries in the selected month")}
               ${metric("Qty", overview.totalQty, "Total sold quantity")}
@@ -5041,7 +5138,7 @@
     return groups.map((group) => `
       <section class="card section-gap">
         <div class="panel-header compact-header">
-          <h3>${escapeHtml(group.date || "-")}</h3>
+          <h3>${escapeHtml(group.date || "-")} · ${escapeHtml(group.warehouseName || group.warehouseCode || "-")}</h3>
           <div class="row-actions">
             <span class="metric-note">${group.totals.entryCount} entries</span>
           </div>
@@ -5049,10 +5146,65 @@
         <div class="panel-body">
           <div class="grid metrics reports-metrics activity-report-metrics">
             ${metric("Day Sale", money(group.totals.saleAmount), "Total sale value on this day")}
-            ${metric("Cash", money(group.totals.cashAmount), "Cash received on this day")}
-            ${metric("Online", money(group.totals.onlineAmount), "Online received on this day")}
+            ${metric("Entry Cash", money(group.totals.entryCashAmount), "Recorded against individual sale entries")}
+            ${metric("Entry Online", money(group.totals.entryOnlineAmount), "Recorded against individual sale entries")}
+            ${metric("Day Cash", money(group.totals.dayCashAmount), "Collective cash received for this day")}
+            ${metric("Day Online", money(group.totals.dayOnlineAmount), "Collective online received for this day")}
             ${metric("Pending", money(group.totals.pendingAmount), "Still to settle for this day")}
           </div>
+          <section class="card section-gap">
+            <div class="panel-header compact-header">
+              <h4>Day Settlement</h4>
+            </div>
+            <div class="panel-body">
+              ${group.dayPayments.length ? `
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Cash</th>
+                        <th>Online</th>
+                        <th>Total</th>
+                        <th>Recorded By</th>
+                        <th>Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${group.dayPayments.map((row) => `
+                        <tr>
+                          <td>${escapeHtml(toInputDate(row.saleDate) || "-")}</td>
+                          <td>${money(Number(row.cashAmount || 0))}</td>
+                          <td>${money(Number(row.onlineAmount || 0))}</td>
+                          <td>${money(Number(row.totalAmount || 0))}</td>
+                          <td>${escapeHtml(row.createdByName || row.createdByUsername || "-")}</td>
+                          <td>${escapeHtml(row.notes || "-")}</td>
+                        </tr>
+                      `).join("")}
+                    </tbody>
+                  </table>
+                </div>
+              ` : '<div class="empty-state">No day-wise payments recorded yet.</div>'}
+              <div class="section-gap"></div>
+              <form class="form-grid" onsubmit="window.erpApp.saveSaleDayPayment(event, '${escapeAttribute(group.warehouseId)}', '${escapeAttribute(group.date)}')">
+                <label class="field">
+                  <span>Cash Received For The Day</span>
+                  <input id="saleDayCashAmount-${escapeAttribute(group.date)}" type="number" min="0" step="0.01" placeholder="0">
+                </label>
+                <label class="field">
+                  <span>Online Received For The Day</span>
+                  <input id="saleDayOnlineAmount-${escapeAttribute(group.date)}" type="number" min="0" step="0.01" placeholder="0">
+                </label>
+                <label class="field wide-field">
+                  <span>Notes</span>
+                  <input id="saleDayPaymentNotes-${escapeAttribute(group.date)}" type="text" placeholder="Optional note for this day">
+                </label>
+                <div class="form-actions">
+                  <button class="button" type="submit">Save Day Payment</button>
+                </div>
+              </form>
+            </div>
+          </section>
           ${saleEntriesTable(group.rows)}
         </div>
       </section>
@@ -8037,6 +8189,7 @@
     showSaleEntryDetails,
     backToSaleEntriesSummary,
     saveSaleEntryPayment,
+    saveSaleDayPayment,
     showRequestDetails,
     backToRequestsSummary,
     openRequestApprovalForm,
