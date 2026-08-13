@@ -65,6 +65,14 @@
       "dest": "/frontend/sales-kakinada.html"
     },
     {
+      "src": "/sales/warehouse",
+      "dest": "/frontend/sales-warehouse.html"
+    },
+    {
+      "src": "/sales/warehouse/",
+      "dest": "/frontend/sales-warehouse.html"
+    },
+    {
       "src": "/sales/matchless",
       "dest": "/frontend/sales-matchless.html"
     },
@@ -79,6 +87,14 @@
     {
       "src": "/sales-kakinada.webmanifest",
       "dest": "/frontend/sales-kakinada.webmanifest"
+    },
+    {
+      "src": "/sales-warehouse.html",
+      "dest": "/frontend/sales-warehouse.html"
+    },
+    {
+      "src": "/sales-warehouse.webmanifest",
+      "dest": "/frontend/sales-warehouse.webmanifest"
     },
     {
       "src": "/sales-matchless.html",

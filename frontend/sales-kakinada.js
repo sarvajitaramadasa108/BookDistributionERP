@@ -4,6 +4,7 @@
   const overlay = document.getElementById("loadingOverlay");
   const toastStack = document.getElementById("toastStack");
   const WAREHOUSE_KEY = "Kakinada";
+  const APP_TITLE = "HKM Kakinada Book Distribution";
 
   const state = {
     currentUser: null,
@@ -1061,7 +1062,7 @@
         <div class="public-brand">
           <div class="public-mark">HKM</div>
           <div>
-            <div class="public-title">Kakinada Warehouse Sales</div>
+            <div class="public-title">${escapeHtml(APP_TITLE)}</div>
             <div class="public-subtitle">Log in, build a cart from live stock, and post direct sale entries for Kakinada.</div>
           </div>
         </div>
@@ -1302,7 +1303,7 @@
     return `
       <section class="public-card success-card">
         <div class="success-badge">HKM</div>
-        <h1>Kakinada Sales Login</h1>
+        <h1>${escapeHtml(APP_TITLE)}</h1>
         <p>Sign in with the warehouse incharge account to post live sales from Kakinada stock.</p>
         <form class="public-form" onsubmit="window.kkdSalesApp.login(event)">
           <label class="field">
@@ -1343,7 +1344,7 @@
   function render() {
     root.innerHTML = renderPage();
     renderImageViewer();
-    document.title = state.currentUser ? "Kakinada Sales" : "Kakinada Sales Login";
+    document.title = state.currentUser ? APP_TITLE : `${APP_TITLE} Login`;
   }
 
   function registerServiceWorker() {

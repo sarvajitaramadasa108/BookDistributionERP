@@ -229,10 +229,41 @@ function mapUser(row) {
     name: row.name,
     username: row.username,
     role: isStoreIncharge ? "storeIncharge" : "mainAdmin",
+    assignedWarehouseRowId: row.assigned_warehouse_id || "",
+    assignedWarehouseId: row.assigned_warehouse_code || "",
+    assignedWarehouseName: row.assigned_warehouse_name || "",
     active: row.active,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
+}
+
+function normalizeUserRole(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[^a-z]/g, "");
+  return normalized === "admin" || normalized === "mainadmin" ? "admin" : "store_incharge";
+}
+
+function getBoundWarehouseFilter(currentUser) {
+  if (!currentUser) return "";
+  const role = String(currentUser.role || "").trim().toLowerCase().replace(/[^a-z]/g, "");
+  if (role !== "storeincharge") return "";
+  return String(currentUser.assignedWarehouseId || "").trim();
+}
+
+async function fetchUserWithWarehouse(supabase, userId) {
+  if (!userId) return null;
+  const { data, error } = await supabase
+    .from("users")
+    .select("id, name, username, role, active, created_at, updated_at, assigned_warehouse_id, warehouses:assigned_warehouse_id (id, warehouse_code, warehouse_name)")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return mapUser({
+    ...data,
+    assigned_warehouse_code: data.warehouses?.warehouse_code || "",
+    assigned_warehouse_name: data.warehouses?.warehouse_name || ""
+  });
 }
 
 function mapDevotee(row) {
@@ -369,8 +400,7 @@ async function getSessionUser(supabase, sessionToken) {
     .gt("expires_at", nowIso())
     .maybeSingle();
   if (!session) return null;
-  const { data: user } = await supabase.from("users").select("*").eq("id", session.user_id).maybeSingle();
-  return user ? mapUser(user) : null;
+  return fetchUserWithWarehouse(supabase, session.user_id);
 }
 
 async function requireCurrentUser(supabase, payload, publicAction) {
@@ -699,7 +729,7 @@ async function authLogin(supabase, payload) {
   const username = String(payload.username || "").trim().toLowerCase();
   const password = String(payload.password || "");
   if (!username || !password) throw new Error("Username and password are required");
-  const { data: users, error } = await supabase.from("users").select("*");
+  const { data: users, error } = await supabase.from("users").select("id, username, password_hash, active");
   if (error) throw error;
   const user = (users || []).find((row) => String(row.username || "").trim().toLowerCase() === username);
   if (user && user.active && user.password_hash === sha256(password)) {
@@ -710,7 +740,7 @@ async function authLogin(supabase, payload) {
       expires_at: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString()
     });
     if (sessionError) throw sessionError;
-    return { sessionToken, user: mapUser(user) };
+    return { sessionToken, user: await fetchUserWithWarehouse(supabase, user.id) };
   }
   const bootstrapAccount = BOOTSTRAP_ACCOUNTS[username];
   if (bootstrapAccount && bootstrapAccount.password === password) {
@@ -741,24 +771,39 @@ async function authLogout(supabase, payload) {
 }
 
 async function usersList(supabase) {
-  return listTable(supabase, "users", mapUser);
+  const { data, error } = await supabase
+    .from("users")
+    .select("id, name, username, role, active, created_at, updated_at, assigned_warehouse_id, warehouses:assigned_warehouse_id (id, warehouse_code, warehouse_name)")
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data || []).map((row) => mapUser({
+    ...row,
+    assigned_warehouse_code: row.warehouses?.warehouse_code || "",
+    assigned_warehouse_name: row.warehouses?.warehouse_name || ""
+  }));
 }
 
 async function createUser(supabase, payload) {
   const username = String(payload.username || "").trim().toLowerCase();
   const name = String(payload.name || "").trim();
   if (!name || !username || !String(payload.password || "").trim()) throw new Error("Name, username, and password are required");
+  let assignedWarehouseId = null;
+  if (payload.assignedWarehouseId) {
+    const assignedWarehouse = await resolveWarehouseRow(supabase, payload.assignedWarehouseId);
+    assignedWarehouseId = assignedWarehouse?.id || null;
+  }
   const { data: existing } = await supabase.from("users").select("id").ilike("username", username).maybeSingle();
   if (existing) throw new Error("Username already exists");
   const { data, error } = await supabase.from("users").insert({
     name,
     username,
     password_hash: sha256(payload.password),
-    role: payload.role === "admin" ? "admin" : "store_incharge",
+    role: normalizeUserRole(payload.role),
+    assigned_warehouse_id: assignedWarehouseId,
     active: payload.active !== false
   }).select("*").single();
   if (error) throw error;
-  return mapUser(data);
+  return fetchUserWithWarehouse(supabase, data.id);
 }
 
 async function updateUser(supabase, payload) {
@@ -768,11 +813,19 @@ async function updateUser(supabase, payload) {
   if (payload.name !== undefined) updates.name = String(payload.name || "").trim();
   if (payload.username !== undefined) updates.username = String(payload.username || "").trim().toLowerCase();
   if (payload.password !== undefined && String(payload.password || "").trim()) updates.password_hash = sha256(payload.password);
-  if (payload.role !== undefined) updates.role = payload.role === "admin" ? "admin" : "store_incharge";
+  if (payload.role !== undefined) updates.role = normalizeUserRole(payload.role);
+  if (payload.assignedWarehouseId !== undefined) {
+    if (String(payload.assignedWarehouseId || "").trim()) {
+      const assignedWarehouse = await resolveWarehouseRow(supabase, payload.assignedWarehouseId);
+      updates.assigned_warehouse_id = assignedWarehouse?.id || null;
+    } else {
+      updates.assigned_warehouse_id = null;
+    }
+  }
   if (payload.active !== undefined) updates.active = Boolean(payload.active);
   const { data, error } = await supabase.from("users").update(updates).eq("id", id).select("*").single();
   if (error) throw error;
-  return mapUser(data);
+  return fetchUserWithWarehouse(supabase, data.id);
 }
 
 async function booksList(supabase) {
@@ -2090,7 +2143,8 @@ function buildSaleEntrySummary(doc, context) {
 
 async function saleEntriesList(supabase, payload, currentUser) {
   const context = await getSaleEntriesContext(supabase);
-  const warehouseFilter = String(payload.warehouseId || payload.warehouseCode || payload.warehouseName || "").trim();
+  const boundWarehouseFilter = getBoundWarehouseFilter(currentUser);
+  const warehouseFilter = boundWarehouseFilter || String(payload.warehouseId || payload.warehouseCode || payload.warehouseName || "").trim();
   const onlyMine = Boolean(payload.onlyMine);
   let rows = (context.documents || []).map((doc) => buildSaleEntrySummary(doc, context));
   if (warehouseFilter) {
@@ -2141,7 +2195,11 @@ async function createSaleEntryPayment(supabase, payload, currentUser) {
 
 async function submitWarehouseSale(supabase, payload, currentUser) {
   if (!currentUser || !currentUser.userId) throw new Error("Login is required");
-  const warehouseRow = await resolveWarehouseRow(supabase, payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
+  const boundWarehouseFilter = getBoundWarehouseFilter(currentUser);
+  const warehouseRow = await resolveWarehouseRow(
+    supabase,
+    boundWarehouseFilter || payload.warehouseId || payload.warehouseCode || payload.warehouseName || ""
+  );
   if (!warehouseRow) throw new Error("Warehouse is required");
   const rawLines = Array.isArray(payload.lines) ? payload.lines : [];
   const lines = rawLines

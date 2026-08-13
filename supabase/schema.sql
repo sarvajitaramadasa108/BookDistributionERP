@@ -21,10 +21,14 @@ create table if not exists public.users (
   username text not null unique,
   password_hash text not null,
   role text not null check (role in ('admin', 'store_incharge')),
+  assigned_warehouse_id uuid references public.warehouses(id) on update cascade on delete set null,
   active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.users
+  add column if not exists assigned_warehouse_id uuid references public.warehouses(id) on update cascade on delete set null;
 
 create table if not exists public.devotees (
   id uuid primary key default gen_random_uuid(),

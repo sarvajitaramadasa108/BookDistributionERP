@@ -32,6 +32,7 @@
     saleEntries: [],
     saleEntrySearch: "",
     saleEntryWarehouseFilter: "all",
+    saleEntryMonthFilter: new Date().toISOString().slice(0, 7),
     saleEntryDetailId: "",
     saleEntryDetail: null,
     requestSearch: "",
@@ -928,6 +929,7 @@
               <th>Name</th>
               <th>Username</th>
               <th>Role</th>
+              <th>Assigned Warehouse</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
@@ -939,6 +941,7 @@
                 <td>${escapeHtml(row.name || "-")}</td>
                 <td>${escapeHtml(row.username || "-")}</td>
                 <td>${escapeHtml(row.role || "-")}</td>
+                <td>${escapeHtml(row.assignedWarehouseName || row.assignedWarehouseId || "-")}</td>
                 <td>${status(row.active ? "Active" : "Inactive", row.active ? "good" : "warn")}</td>
                 <td>
                   <div class="row-actions">
@@ -2248,9 +2251,11 @@
       name: "",
       username: "",
       role: "storeIncharge",
+      assignedWarehouseId: "",
       active: true
     };
     const isEdit = Boolean(user.userId);
+    const warehouseOptions = (state.warehouses || []).filter((row) => row.active !== false);
     modalRoot.innerHTML = `
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
       <section class="modal" role="dialog" aria-modal="true" aria-labelledby="userFormTitle">
@@ -2279,6 +2284,13 @@
               <option value="storeIncharge" ${user.role === "storeIncharge" ? "selected" : ""}>Store Incharge</option>
             </select>
           </label>
+          <label class="field">
+            <span>Assigned Warehouse</span>
+            <select name="assignedWarehouseId">
+              <option value="">No warehouse binding</option>
+              ${warehouseOptions.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${String(user.assignedWarehouseId || "") === String(warehouse.warehouseId || "") ? "selected" : ""}>${escapeHtml(warehouse.name || warehouse.warehouseId)}</option>`).join("")}
+            </select>
+          </label>
           <label class="check-field">
             <input name="active" type="checkbox" ${user.active ? "checked" : ""}>
             <span>Active</span>
@@ -2303,6 +2315,7 @@
       username: data.get("username").trim(),
       password: data.get("password").trim(),
       role: data.get("role"),
+      assignedWarehouseId: data.get("assignedWarehouseId"),
       active: data.get("active") === "on"
     };
 
@@ -4808,6 +4821,13 @@
     content.innerHTML = renderSaleEntriesMarkup();
   }
 
+  async function setSaleEntryMonthFilter(value) {
+    state.saleEntryMonthFilter = value || new Date().toISOString().slice(0, 7);
+    state.saleEntryDetailId = "";
+    state.saleEntryDetail = null;
+    content.innerHTML = renderSaleEntriesMarkup();
+  }
+
   async function showSaleEntryDetails(documentId) {
     if (!documentId) return;
     state.saleEntryDetailId = documentId;
@@ -4889,6 +4909,7 @@
   function filteredSaleEntries() {
     const query = String(state.saleEntrySearch || "").trim().toLowerCase();
     const warehouseFilter = String(state.saleEntryWarehouseFilter || "all");
+    const monthFilter = String(state.saleEntryMonthFilter || "").trim();
     return (state.saleEntries || []).filter((row) => {
       if (warehouseFilter !== "all") {
         const warehouseMatches = [
@@ -4897,6 +4918,12 @@
           row.warehouseName
         ].some((value) => String(value || "").trim() === warehouseFilter);
         if (!warehouseMatches) {
+          return false;
+        }
+      }
+      if (monthFilter) {
+        const rowMonth = String(toInputDate(row.createdAt || row.documentDate) || "").slice(0, 7);
+        if (rowMonth !== monthFilter) {
           return false;
         }
       }
@@ -4913,8 +4940,59 @@
     });
   }
 
+  function saleEntriesOverview(rows) {
+    return rows.reduce((acc, row) => {
+      acc.saleAmount += Number(row.totalAmount || 0);
+      acc.cashAmount += Number(row.paidCashAmount || 0);
+      acc.onlineAmount += Number(row.paidOnlineAmount || 0);
+      acc.pendingAmount += Number(row.pendingAmount || 0);
+      acc.totalQty += Number(row.totalQty || 0);
+      acc.entryCount += 1;
+      return acc;
+    }, {
+      saleAmount: 0,
+      cashAmount: 0,
+      onlineAmount: 0,
+      pendingAmount: 0,
+      totalQty: 0,
+      entryCount: 0
+    });
+  }
+
+  function saleEntriesGroupedByDate(rows) {
+    const groups = new Map();
+    rows.forEach((row) => {
+      const key = toInputDate(row.createdAt || row.documentDate) || "Undated";
+      if (!groups.has(key)) {
+        groups.set(key, {
+          date: key,
+          rows: [],
+          totals: {
+            saleAmount: 0,
+            cashAmount: 0,
+            onlineAmount: 0,
+            pendingAmount: 0,
+            totalQty: 0,
+            entryCount: 0
+          }
+        });
+      }
+      const group = groups.get(key);
+      group.rows.push(row);
+      group.totals.saleAmount += Number(row.totalAmount || 0);
+      group.totals.cashAmount += Number(row.paidCashAmount || 0);
+      group.totals.onlineAmount += Number(row.paidOnlineAmount || 0);
+      group.totals.pendingAmount += Number(row.pendingAmount || 0);
+      group.totals.totalQty += Number(row.totalQty || 0);
+      group.totals.entryCount += 1;
+    });
+    return [...groups.values()].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  }
+
   function renderSaleEntriesMarkup() {
     const rows = filteredSaleEntries();
+    const overview = saleEntriesOverview(rows);
+    const groupedRows = saleEntriesGroupedByDate(rows);
     const detail = state.saleEntryDetail || state.saleEntries.find((row) => row.documentId === state.saleEntryDetailId) || null;
     const warehouseOptions = (state.warehouses || []).filter((row) => row.active !== false);
     return `
@@ -4938,11 +5016,47 @@
                 ${warehouseOptions.map((row) => `<option value="${escapeAttribute(row.warehouseId)}"${String(state.saleEntryWarehouseFilter || "") === String(row.warehouseId || "") ? " selected" : ""}>${escapeHtml(row.name || row.warehouseId)}</option>`).join("")}
               </select>
             </label>
+            <label class="field compact-field">
+              <span>Month</span>
+              <input type="month" value="${escapeAttribute(state.saleEntryMonthFilter || "")}" onchange="window.erpApp.setSaleEntryMonthFilter(this.value)">
+            </label>
           </div>
-          ${detail ? saleEntryDetailMarkup(detail) : (rows.length ? saleEntriesTable(rows) : '<div class="empty-state">No sale entries found.</div>')}
+          ${detail ? saleEntryDetailMarkup(detail) : `
+            <div class="grid metrics reports-metrics activity-report-metrics">
+              ${metric("Month Sale", money(overview.saleAmount), "Overall sale value for the selected month")}
+              ${metric("Cash", money(overview.cashAmount), "Day-wise cash settlement total")}
+              ${metric("Online", money(overview.onlineAmount), "Day-wise online settlement total")}
+              ${metric("Pending", money(overview.pendingAmount), "Still to settle for the selected month")}
+              ${metric("Entries", overview.entryCount, "Sale entries in the selected month")}
+              ${metric("Qty", overview.totalQty, "Total sold quantity")}
+            </div>
+            ${rows.length ? saleEntriesDayGroupsMarkup(groupedRows) : '<div class="empty-state">No sale entries found.</div>'}
+          `}
         </div>
       </section>
     `;
+  }
+
+  function saleEntriesDayGroupsMarkup(groups) {
+    return groups.map((group) => `
+      <section class="card section-gap">
+        <div class="panel-header compact-header">
+          <h3>${escapeHtml(group.date || "-")}</h3>
+          <div class="row-actions">
+            <span class="metric-note">${group.totals.entryCount} entries</span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="grid metrics reports-metrics activity-report-metrics">
+            ${metric("Day Sale", money(group.totals.saleAmount), "Total sale value on this day")}
+            ${metric("Cash", money(group.totals.cashAmount), "Cash received on this day")}
+            ${metric("Online", money(group.totals.onlineAmount), "Online received on this day")}
+            ${metric("Pending", money(group.totals.pendingAmount), "Still to settle for this day")}
+          </div>
+          ${saleEntriesTable(group.rows)}
+        </div>
+      </section>
+    `).join("");
   }
 
   function saleEntriesTable(rows) {
@@ -7919,6 +8033,7 @@
     setRequestGroupFilter,
     setSaleEntrySearch,
     setSaleEntryWarehouseFilter,
+    setSaleEntryMonthFilter,
     showSaleEntryDetails,
     backToSaleEntriesSummary,
     saveSaleEntryPayment,
