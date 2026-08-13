@@ -1452,8 +1452,9 @@
 
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
+    if (hasAndroidPrinterBridge()) return;
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sales-matchless-sw.js?v=1").catch(() => {});
+      navigator.serviceWorker.register("/sales-matchless-sw.js?v=2").catch(() => {});
     });
   }
 
