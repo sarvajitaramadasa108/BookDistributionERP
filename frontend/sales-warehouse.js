@@ -41,6 +41,28 @@
     deferredInstallPrompt: null
   };
 
+  function resetWarehouseSessionState() {
+    state.warehouseId = "";
+    state.warehouseName = "";
+    state.catalogByGroup = {
+      BOOK: [],
+      PARAPHERNALIA: []
+    };
+    state.loadingCatalog = false;
+    state.cart = [];
+    state.notes = "";
+    state.search = "";
+    state.devotionalCategory = "ALL";
+    state.itemGroup = "BOOK";
+    state.mySales = [];
+    state.mySalesLoaded = false;
+    state.mySalesLoading = false;
+    state.mySalesExpanded = "";
+    state.submittedSaleId = "";
+    state.lastSubmittedSale = null;
+    state.view = "catalog";
+  }
+
   function escapeHtml(value) {
     return String(value ?? "")
       .replace(/&/g, "&amp;")
@@ -281,6 +303,7 @@
     try {
       const user = await window.erpApi.request("auth.me", { sessionToken: token });
       if (!user) return false;
+      resetWarehouseSessionState();
       state.currentUser = user;
       return true;
     } catch (error) {
@@ -302,6 +325,7 @@
     try {
       const result = await window.erpApi.request("auth.login", { username, password });
       setStoredSessionToken(result.sessionToken);
+      resetWarehouseSessionState();
       state.currentUser = result.user || null;
       await Promise.all([ensureCatalogLoaded("BOOK"), ensureCatalogLoaded("PARAPHERNALIA"), loadMySales()]);
       showToast(`Welcome, ${state.currentUser?.name || username}`);
@@ -323,8 +347,8 @@
       }
     }
     setStoredSessionToken("");
+    resetWarehouseSessionState();
     state.currentUser = null;
-    state.cart = [];
     state.view = "login";
     render();
   }
