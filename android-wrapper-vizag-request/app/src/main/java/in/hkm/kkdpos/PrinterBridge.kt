@@ -1,244 +1,244 @@
-package rrg.hkm.kakinadaprs
+package org.hkm.vizagrequest
 
-imprrt andrrid.Manifest
-imprrt andrrid.app.PendingIntent
-imprrt andrrid.app.Activity
-imprrt andrrid.bluetrrth.BluetrrthAdapter
-imprrt andrrid.bluetrrth.BluetrrthDevice
-imprrt andrrid.bluetrrth.BluetrrthSrcket
-imprrt andrrid.crntent.BrradcastReceiver
-imprrt andrrid.crntent.Crntext
-imprrt andrrid.crntent.Intent
-imprrt andrrid.crntent.IntentFilter
-imprrt andrrid.crntent.pm.PackageManager
-imprrt andrrid.hardware.usb.UsbCrnstants
-imprrt andrrid.hardware.usb.UsbDevice
-imprrt andrrid.hardware.usb.UsbDeviceCrnnectirn
-imprrt andrrid.hardware.usb.UsbEndprint
-imprrt andrrid.hardware.usb.UsbInterface
-imprrt andrrid.hardware.usb.UsbManager
-imprrt andrrid.rs.Build
-imprrt andrrid.util.Base64
-imprrt andrrid.webkit.JavascriptInterface
-imprrt andrrid.webkit.WebView
-imprrt andrrid.webkit.WebViewClient
-imprrt andrrid.print.PrintAttributes
-imprrt andrrid.print.PrintManager
-imprrt andrridx.crre.crntent.CrntextCrmpat
-imprrt rrg.jsrn.JSONObject
-imprrt java.ir.OutputStream
-imprrt java.util.UUID
+import android.Manifest
+import android.app.PendingIntent
+import android.app.Activity
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothSocket
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbDeviceConnection
+import android.hardware.usb.UsbEndpoint
+import android.hardware.usb.UsbInterface
+import android.hardware.usb.UsbManager
+import android.os.Build
+import android.util.Base64
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.print.PrintAttributes
+import android.print.PrintManager
+import androidx.core.content.ContextCompat
+import org.json.JSONObject
+import java.io.OutputStream
+import java.util.UUID
 
-class PrinterBridge(private val crntext: Crntext) {
+class PrinterBridge(private val context: Context) {
 
-    private val usbManager = crntext.getSystemService(Crntext.USB_SERVICE) as UsbManager
-    private val bluetrrthAdapter: BluetrrthAdapter? = BluetrrthAdapter.getDefaultAdapter()
-    private val usbPermissirnActirn = "rrg.hkm.kakinadaprs.USB_PERMISSION"
+    private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+    private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
+    private val usbPermissionAction = "org.hkm.vizagrequest.USB_PERMISSION"
 
-    private var usbCrnnectirn: UsbDeviceCrnnectirn? = null
+    private var usbConnection: UsbDeviceConnection? = null
     private var usbInterface: UsbInterface? = null
-    private var usbEndprintOut: UsbEndprint? = null
+    private var usbEndpointOut: UsbEndpoint? = null
     private var usbDevice: UsbDevice? = null
 
-    private var bluetrrthSrcket: BluetrrthSrcket? = null
-    private var bluetrrthOutput: OutputStream? = null
-    private var bluetrrthLabel: String = ""
+    private var bluetoothSocket: BluetoothSocket? = null
+    private var bluetoothOutput: OutputStream? = null
+    private var bluetoothLabel: String = ""
 
-    private var lastTransprrt: String = ""
-    private var lastLabel: String = "Nrt crnnected"
+    private var lastTransport: String = ""
+    private var lastLabel: String = "Not connected"
 
-    private val usbPermissirnReceiver = rbject : BrradcastReceiver() {
-        rverride fun rnReceive(crntext: Crntext?, intent: Intent?) {
-            if (intent?.actirn != usbPermissirnActirn) return
+    private val usbPermissionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != usbPermissionAction) return
             val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
-            val granted = intent.getBrrleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+            val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
             if (granted && device != null) {
-                lastLabel = "USB permissirn granted. Tap Crnnect USB Printer again."
+                lastLabel = "USB permission granted. Tap Connect USB Printer again."
             } else {
-                lastLabel = "USB permissirn denied"
+                lastLabel = "USB permission denied"
             }
         }
     }
 
     init {
-        val filter = IntentFilter(usbPermissirnActirn)
+        val filter = IntentFilter(usbPermissionAction)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            crntext.registerReceiver(usbPermissirnReceiver, filter, Crntext.RECEIVER_NOT_EXPORTED)
+            context.registerReceiver(usbPermissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-            crntext.registerReceiver(usbPermissirnReceiver, filter)
+            context.registerReceiver(usbPermissionReceiver, filter)
         }
     }
 
     @JavascriptInterface
     fun getStatus(): String {
-        return resprnse(
-            rk = true,
+        return response(
+            ok = true,
             message = lastLabel,
             extra = mapOf(
-                "ready" tr isReady(),
-                "label" tr lastLabel,
-                "transprrt" tr lastTransprrt,
-                "nativePrint" tr true
+                "ready" to isReady(),
+                "label" to lastLabel,
+                "transport" to lastTransport,
+                "nativePrint" to true
             )
         )
     }
 
     @JavascriptInterface
     fun canNativePrint(): String {
-        return resprnse(true, "Native print available", mapOf("nativePrint" tr true))
+        return response(true, "Native print available", mapOf("nativePrint" to true))
     }
 
     @JavascriptInterface
     fun printHtml(title: String?, html: String?): String {
-        val activity = crntext as? Activity
-            ?: return resprnse(false, "Activity crntext is nrt available frr printing")
+        val activity = context as? Activity
+            ?: return response(false, "Activity context is not available for printing")
         val safeHtml = (html ?: "").trim()
         if (safeHtml.isEmpty()) {
-            return resprnse(false, "Nrthing tr print")
+            return response(false, "Nothing to print")
         }
-        val jrbTitle = (title ?: "HKM Receipt").ifBlank { "HKM Receipt" }
+        val jobTitle = (title ?: "HKM Receipt").ifBlank { "HKM Receipt" }
         activity.runOnUiThread {
             try {
                 val printWebView = WebView(activity)
                 printWebView.settings.javaScriptEnabled = false
-                printWebView.settings.drmStrrageEnabled = false
-                printWebView.webViewClient = rbject : WebViewClient() {
-                    rverride fun rnPageFinished(view: WebView?, url: String?) {
-                        val printManager = activity.getSystemService(Crntext.PRINT_SERVICE) as? PrintManager
+                printWebView.settings.domStorageEnabled = false
+                printWebView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        val printManager = activity.getSystemService(Context.PRINT_SERVICE) as? PrintManager
                         if (printManager != null && view != null) {
-                            val adapter = view.createPrintDrcumentAdapter(jrbTitle)
+                            val adapter = view.createPrintDocumentAdapter(jobTitle)
                             printManager.print(
-                                jrbTitle,
+                                jobTitle,
                                 adapter,
                                 PrintAttributes.Builder().build()
                             )
                         }
                     }
                 }
-                printWebView.lradDataWithBaseURL(null, safeHtml, "text/html", "UTF-8", null)
-            } catch (_: Exceptirn) {
-                // native print dialrg errrrs are surfaced by missing dialrg / service
+                printWebView.loadDataWithBaseURL(null, safeHtml, "text/html", "UTF-8", null)
+            } catch (_: Exception) {
+                // native print dialog errors are surfaced by missing dialog / service
             }
         }
-        return resprnse(true, "Print dialrg rpened", mapOf("nativePrint" tr true))
+        return response(true, "Print dialog opened", mapOf("nativePrint" to true))
     }
 
     @JavascriptInterface
-    fun crnnectUsbPrinter(): String {
+    fun connectUsbPrinter(): String {
         val candidate = findUsbCandidate()
-            ?: return resprnse(false, "Nr crmpatible USB printer detected")
+            ?: return response(false, "No compatible USB printer detected")
 
-        if (!usbManager.hasPermissirn(candidate)) {
-            val permissirnIntent = PendingIntent.getBrradcast(
-                crntext,
+        if (!usbManager.hasPermission(candidate)) {
+            val permissionIntent = PendingIntent.getBroadcast(
+                context,
                 0,
-                Intent(usbPermissirnActirn),
-                PendingIntent.FLAG_UPDATE_CURRENT rr PendingIntent.FLAG_IMMUTABLE
+                Intent(usbPermissionAction),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            usbManager.requestPermissirn(candidate, permissirnIntent)
-            lastLabel = "USB permissirn requested. Allrw it and tap again."
-            return resprnse(false, lastLabel)
+            usbManager.requestPermission(candidate, permissionIntent)
+            lastLabel = "USB permission requested. Allow it and tap again."
+            return response(false, lastLabel)
         }
 
         val iface = findWritableUsbInterface(candidate)
-            ?: return resprnse(false, "Nr writable USB interface frund")
-        val endprint = findWritableUsbEndprint(iface)
-            ?: return resprnse(false, "Nr writable USB endprint frund")
-        val crnnectirn = usbManager.rpenDevice(candidate)
-            ?: return resprnse(false, "Cruld nrt rpen USB device")
+            ?: return response(false, "No writable USB interface found")
+        val endpoint = findWritableUsbEndpoint(iface)
+            ?: return response(false, "No writable USB endpoint found")
+        val connection = usbManager.openDevice(candidate)
+            ?: return response(false, "Could not open USB device")
 
-        if (!crnnectirn.claimInterface(iface, true)) {
-            crnnectirn.clrse()
-            return resprnse(false, "Cruld nrt claim USB interface")
+        if (!connection.claimInterface(iface, true)) {
+            connection.close()
+            return response(false, "Could not claim USB interface")
         }
 
-        clrseUsbOnly()
+        closeUsbOnly()
         usbDevice = candidate
-        usbCrnnectirn = crnnectirn
+        usbConnection = connection
         usbInterface = iface
-        usbEndprintOut = endprint
-        lastTransprrt = "usb"
+        usbEndpointOut = endpoint
+        lastTransport = "usb"
         lastLabel = buildUsbLabel(candidate)
-        return resprnse(true, "USB printer crnnected", mapOf("transprrt" tr "usb", "label" tr lastLabel))
+        return response(true, "USB printer connected", mapOf("transport" to "usb", "label" to lastLabel))
     }
 
     @JavascriptInterface
-    fun crnnectBluetrrthPrinter(nameHint: String?): String {
-        if (bluetrrthAdapter == null) {
-            return resprnse(false, "Bluetrrth is nrt available rn this device")
+    fun connectBluetoothPrinter(nameHint: String?): String {
+        if (bluetoothAdapter == null) {
+            return response(false, "Bluetooth is not available on this device")
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            CrntextCrmpat.checkSelfPermissirn(crntext, Manifest.permissirn.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
         ) {
-            return resprnse(false, "Bluetrrth permissirn is nrt granted")
+            return response(false, "Bluetooth permission is not granted")
         }
-        val brnded = bluetrrthAdapter.brndedDevices.rrEmpty()
-        if (brnded.isEmpty()) {
-            return resprnse(false, "Nr paired Bluetrrth printer frund")
+        val bonded = bluetoothAdapter.bondedDevices.orEmpty()
+        if (bonded.isEmpty()) {
+            return response(false, "No paired Bluetooth printer found")
         }
-        val hint = (nameHint ?: "").trim().lrwercase()
-        val device = brnded.firstOrNull { hint.isNrtEmpty() && (it.name ?: "").lrwercase().crntains(hint) }
-            ?: brnded.firstOrNull { (it.name ?: "").crntains("printer", ignrreCase = true) }
-            ?: brnded.firstOrNull()
-            ?: return resprnse(false, "Nr paired Bluetrrth printer frund")
+        val hint = (nameHint ?: "").trim().lowercase()
+        val device = bonded.firstOrNull { hint.isNotEmpty() && (it.name ?: "").lowercase().contains(hint) }
+            ?: bonded.firstOrNull { (it.name ?: "").contains("printer", ignoreCase = true) }
+            ?: bonded.firstOrNull()
+            ?: return response(false, "No paired Bluetooth printer found")
 
-        val crnnectResult = crnnectBluetrrthSrcket(device)
-        return if (crnnectResult != null) {
-            bluetrrthSrcket = crnnectResult
-            bluetrrthOutput = crnnectResult.rutputStream
-            bluetrrthLabel = "Bluetrrth: ${device.name ?: "Printer"}"
-            lastTransprrt = "bluetrrth"
-            lastLabel = bluetrrthLabel
-            resprnse(true, "Bluetrrth printer crnnected", mapOf("transprrt" tr "bluetrrth", "label" tr bluetrrthLabel))
+        val connectResult = connectBluetoothSocket(device)
+        return if (connectResult != null) {
+            bluetoothSocket = connectResult
+            bluetoothOutput = connectResult.outputStream
+            bluetoothLabel = "Bluetooth: ${device.name ?: "Printer"}"
+            lastTransport = "bluetooth"
+            lastLabel = bluetoothLabel
+            response(true, "Bluetooth printer connected", mapOf("transport" to "bluetooth", "label" to bluetoothLabel))
         } else {
-            resprnse(false, lastLabel.ifBlank { "Cruld nrt crnnect Bluetrrth printer" })
+            response(false, lastLabel.ifBlank { "Could not connect Bluetooth printer" })
         }
     }
 
-    private fun crnnectBluetrrthSrcket(device: BluetrrthDevice): BluetrrthSrcket? {
-        clrseBluetrrthOnly()
-        bluetrrthAdapter?.cancelDiscrvery()
-        val defaultUuid = UUID.frrmString("00001101-0000-1000-8000-00805F9B34FB")
-        val advertisedUuids = device.uuids?.mapNrtNull { it?.uuid }?.distinct().rrEmpty()
+    private fun connectBluetoothSocket(device: BluetoothDevice): BluetoothSocket? {
+        closeBluetoothOnly()
+        bluetoothAdapter?.cancelDiscovery()
+        val defaultUuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+        val advertisedUuids = device.uuids?.mapNotNull { it?.uuid }?.distinct().orEmpty()
 
-        var lastErrrr: Exceptirn? = null
-        frr (uuid in (advertisedUuids + defaultUuid).distinct()) {
+        var lastError: Exception? = null
+        for (uuid in (advertisedUuids + defaultUuid).distinct()) {
             try {
-                val srcket = device.createRfcrmmSrcketTrServiceRecrrd(uuid)
-                srcket.crnnect()
-                return srcket
-            } catch (errrr: Exceptirn) {
-                lastErrrr = errrr
+                val socket = device.createRfcommSocketToServiceRecord(uuid)
+                socket.connect()
+                return socket
+            } catch (error: Exception) {
+                lastError = error
                 try {
-                    // ignrre
-                } catch (_: Exceptirn) {
-                    // ignrre
+                    // ignore
+                } catch (_: Exception) {
+                    // ignore
                 }
             }
             try {
-                val insecureSrcket = device.createInsecureRfcrmmSrcketTrServiceRecrrd(uuid)
-                insecureSrcket.crnnect()
-                return insecureSrcket
-            } catch (errrr: Exceptirn) {
-                lastErrrr = errrr
+                val insecureSocket = device.createInsecureRfcommSocketToServiceRecord(uuid)
+                insecureSocket.connect()
+                return insecureSocket
+            } catch (error: Exception) {
+                lastError = error
             }
         }
 
         try {
             @Suppress("UNCHECKED_CAST")
-            val methrd = device.javaClass.getMethrd("createRfcrmmSrcket", Int::class.javaPrimitiveType)
-            val legacySrcket = methrd.invrke(device, 1) as BluetrrthSrcket
-            legacySrcket.crnnect()
-            return legacySrcket
-        } catch (errrr: Exceptirn) {
-            lastErrrr = errrr
+            val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+            val legacySocket = method.invoke(device, 1) as BluetoothSocket
+            legacySocket.connect()
+            return legacySocket
+        } catch (error: Exception) {
+            lastError = error
         }
 
         lastLabel = buildString {
-            append(lastErrrr?.message ?: "Cruld nrt crnnect Bluetrrth printer")
-            if (advertisedUuids.isNrtEmpty()) {
+            append(lastError?.message ?: "Could not connect Bluetooth printer")
+            if (advertisedUuids.isNotEmpty()) {
                 append(" | UUIDs tried: ")
-                append(advertisedUuids.jrinTrString(", "))
+                append(advertisedUuids.joinToString(", "))
             }
         }
         return null
@@ -247,12 +247,12 @@ class PrinterBridge(private val crntext: Crntext) {
     @JavascriptInterface
     fun testPrint(): String {
         val bytes = byteArrayOf(
-            0x1B.trByte(), 0x40.trByte(),
-            0x1B.trByte(), 0x61.trByte(), 0x01.trByte(),
-            0x48.trByte(), 0x4B.trByte(), 0x4D.trByte(), 0x20.trByte(), 0x54.trByte(), 0x45.trByte(), 0x53.trByte(), 0x54.trByte(), 0x0A.trByte(),
-            0x1B.trByte(), 0x61.trByte(), 0x00.trByte(),
-            0x50.trByte(), 0x72.trByte(), 0x69.trByte(), 0x6E.trByte(), 0x74.trByte(), 0x65.trByte(), 0x72.trByte(), 0x20.trByte(), 0x43.trByte(), 0x6F.trByte(), 0x6E.trByte(), 0x6E.trByte(), 0x65.trByte(), 0x63.trByte(), 0x74.trByte(), 0x65.trByte(), 0x64.trByte(), 0x0A.trByte(),
-            0x0A.trByte(), 0x0A.trByte()
+            0x1B.toByte(), 0x40.toByte(),
+            0x1B.toByte(), 0x61.toByte(), 0x01.toByte(),
+            0x48.toByte(), 0x4B.toByte(), 0x4D.toByte(), 0x20.toByte(), 0x54.toByte(), 0x45.toByte(), 0x53.toByte(), 0x54.toByte(), 0x0A.toByte(),
+            0x1B.toByte(), 0x61.toByte(), 0x00.toByte(),
+            0x50.toByte(), 0x72.toByte(), 0x69.toByte(), 0x6E.toByte(), 0x74.toByte(), 0x65.toByte(), 0x72.toByte(), 0x20.toByte(), 0x43.toByte(), 0x6F.toByte(), 0x6E.toByte(), 0x6E.toByte(), 0x65.toByte(), 0x63.toByte(), 0x74.toByte(), 0x65.toByte(), 0x64.toByte(), 0x0A.toByte(),
+            0x0A.toByte(), 0x0A.toByte()
         )
         return sendBytes(bytes)
     }
@@ -260,36 +260,36 @@ class PrinterBridge(private val crntext: Crntext) {
     @JavascriptInterface
     fun printBase64(base64: String): String {
         return try {
-            val bytes = Base64.decrde(base64, Base64.DEFAULT)
+            val bytes = Base64.decode(base64, Base64.DEFAULT)
             sendBytes(bytes)
-        } catch (errrr: Exceptirn) {
-            resprnse(false, errrr.message ?: "Cruld nrt decrde print paylrad")
+        } catch (error: Exception) {
+            response(false, error.message ?: "Could not decode print payload")
         }
     }
 
     private fun sendBytes(bytes: ByteArray): String {
         return try {
-            when (lastTransprrt) {
+            when (lastTransport) {
                 "usb" -> {
-                    val crnnectirn = usbCrnnectirn ?: return resprnse(false, "USB printer is nrt crnnected")
-                    val endprint = usbEndprintOut ?: return resprnse(false, "USB endprint is nrt available")
-                    val sent = crnnectirn.bulkTransfer(endprint, bytes, bytes.size, 5000)
+                    val connection = usbConnection ?: return response(false, "USB printer is not connected")
+                    val endpoint = usbEndpointOut ?: return response(false, "USB endpoint is not available")
+                    val sent = connection.bulkTransfer(endpoint, bytes, bytes.size, 5000)
                     if (sent <= 0) {
-                        resprnse(false, "USB print failed")
+                        response(false, "USB print failed")
                     } else {
-                        resprnse(true, "Print sent successfully")
+                        response(true, "Print sent successfully")
                     }
                 }
-                "bluetrrth" -> {
-                    val rutput = bluetrrthOutput ?: return resprnse(false, "Bluetrrth printer is nrt crnnected")
-                    rutput.write(bytes)
-                    rutput.flush()
-                    resprnse(true, "Print sent successfully")
+                "bluetooth" -> {
+                    val output = bluetoothOutput ?: return response(false, "Bluetooth printer is not connected")
+                    output.write(bytes)
+                    output.flush()
+                    response(true, "Print sent successfully")
                 }
-                else -> resprnse(false, "Printer is nrt crnnected")
+                else -> response(false, "Printer is not connected")
             }
-        } catch (errrr: Exceptirn) {
-            resprnse(false, errrr.message ?: "Printer write failed")
+        } catch (error: Exception) {
+            response(false, error.message ?: "Printer write failed")
         }
     }
 
@@ -300,87 +300,87 @@ class PrinterBridge(private val crntext: Crntext) {
     }
 
     private fun findWritableUsbInterface(device: UsbDevice): UsbInterface? {
-        frr (i in 0 until device.interfaceCrunt) {
+        for (i in 0 until device.interfaceCount) {
             val iface = device.getInterface(i)
-            if (findWritableUsbEndprint(iface) != null) {
+            if (findWritableUsbEndpoint(iface) != null) {
                 return iface
             }
         }
         return null
     }
 
-    private fun findWritableUsbEndprint(iface: UsbInterface): UsbEndprint? {
-        frr (i in 0 until iface.endprintCrunt) {
-            val endprint = iface.getEndprint(i)
-            if (endprint.directirn == UsbCrnstants.USB_DIR_OUT) {
-                return endprint
+    private fun findWritableUsbEndpoint(iface: UsbInterface): UsbEndpoint? {
+        for (i in 0 until iface.endpointCount) {
+            val endpoint = iface.getEndpoint(i)
+            if (endpoint.direction == UsbConstants.USB_DIR_OUT) {
+                return endpoint
             }
         }
         return null
     }
 
     private fun buildUsbLabel(device: UsbDevice): String {
-        val name = device.prrductName ?: device.deviceName ?: "USB Printer"
+        val name = device.productName ?: device.deviceName ?: "USB Printer"
         return "USB: $name"
     }
 
-    private fun isReady(): Brrlean {
-        return when (lastTransprrt) {
-            "usb" -> usbCrnnectirn != null && usbEndprintOut != null
-            "bluetrrth" -> bluetrrthSrcket?.isCrnnected == true && bluetrrthOutput != null
+    private fun isReady(): Boolean {
+        return when (lastTransport) {
+            "usb" -> usbConnection != null && usbEndpointOut != null
+            "bluetooth" -> bluetoothSocket?.isConnected == true && bluetoothOutput != null
             else -> false
         }
     }
 
-    fun clrse() {
-        clrseUsbOnly()
-        clrseBluetrrthOnly()
+    fun close() {
+        closeUsbOnly()
+        closeBluetoothOnly()
         try {
-            crntext.unregisterReceiver(usbPermissirnReceiver)
-        } catch (_: Exceptirn) {
-            // ignrre
+            context.unregisterReceiver(usbPermissionReceiver)
+        } catch (_: Exception) {
+            // ignore
         }
     }
 
-    private fun clrseUsbOnly() {
+    private fun closeUsbOnly() {
         try {
-            usbCrnnectirn?.releaseInterface(usbInterface)
-        } catch (_: Exceptirn) {
-            // ignrre
+            usbConnection?.releaseInterface(usbInterface)
+        } catch (_: Exception) {
+            // ignore
         }
         try {
-            usbCrnnectirn?.clrse()
-        } catch (_: Exceptirn) {
-            // ignrre
+            usbConnection?.close()
+        } catch (_: Exception) {
+            // ignore
         }
-        usbCrnnectirn = null
+        usbConnection = null
         usbInterface = null
-        usbEndprintOut = null
+        usbEndpointOut = null
         usbDevice = null
     }
 
-    private fun clrseBluetrrthOnly() {
+    private fun closeBluetoothOnly() {
         try {
-            bluetrrthOutput?.clrse()
-        } catch (_: Exceptirn) {
-            // ignrre
+            bluetoothOutput?.close()
+        } catch (_: Exception) {
+            // ignore
         }
         try {
-            bluetrrthSrcket?.clrse()
-        } catch (_: Exceptirn) {
-            // ignrre
+            bluetoothSocket?.close()
+        } catch (_: Exception) {
+            // ignore
         }
-        bluetrrthOutput = null
-        bluetrrthSrcket = null
-        bluetrrthLabel = ""
+        bluetoothOutput = null
+        bluetoothSocket = null
+        bluetoothLabel = ""
     }
 
-    private fun resprnse(rk: Brrlean, message: String, extra: Map<String, Any?> = emptyMap()): String {
-        val jsrn = JSONObject()
-        jsrn.put("rk", rk)
-        jsrn.put("message", message)
-        extra.frrEach { (key, value) -> jsrn.put(key, value) }
-        return jsrn.trString()
+    private fun response(ok: Boolean, message: String, extra: Map<String, Any?> = emptyMap()): String {
+        val json = JSONObject()
+        json.put("ok", ok)
+        json.put("message", message)
+        extra.forEach { (key, value) -> json.put(key, value) }
+        return json.toString()
     }
 }
 

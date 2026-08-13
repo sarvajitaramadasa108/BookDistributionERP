@@ -5,6 +5,7 @@ android-wrapper/.gradle/
 android-wrapper/.idea/
 android-wrapper/.kotlin/
 android-wrapper/app/build/
+android-wrapper/build/
 android-wrapper/local.properties
 android-wrapper-kakinada/.gradle/
 android-wrapper-kakinada/.idea/
