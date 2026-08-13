@@ -385,12 +385,13 @@
   async function loadMySales() {
     state.mySalesLoading = true;
     try {
-      const rows = await window.erpApi.request("sales.entriesList", {
+      const result = await window.erpApi.request("sales.entriesList", {
         warehouseId: state.warehouseId || "",
         warehouseName: state.warehouseName || "",
         onlyMine: true
       });
-      state.mySales = Array.isArray(rows) ? rows : [];
+      const rows = Array.isArray(result) ? result : Array.isArray(result?.rows) ? result.rows : [];
+      state.mySales = rows;
       state.mySalesLoaded = true;
       return state.mySales;
     } finally {
