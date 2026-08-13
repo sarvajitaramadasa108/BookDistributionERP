@@ -14,6 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Book Distribution - HKM Vizag"
+rootProject.name = "HKM Vizag Book Distribution"
 include(":app")
 
