@@ -420,9 +420,21 @@ function requireAdminUser(currentUser) {
 }
 
 async function listTable(supabase, tableName, mapper) {
-  const { data, error } = await supabase.from(tableName).select("*");
-  if (error) throw error;
+  const data = await selectAllRows((from, to) => supabase.from(tableName).select("*").range(from, to));
   return (data || []).map(mapper);
+}
+
+async function selectAllRows(fetchPage, pageSize = 1000) {
+  const rows = [];
+  for (let from = 0; ; from += pageSize) {
+    const to = from + pageSize - 1;
+    const { data, error } = await fetchPage(from, to);
+    if (error) throw error;
+    const batch = data || [];
+    rows.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return rows;
 }
 
 async function findByCode(supabase, tableName, codeColumn, code) {
@@ -1566,8 +1578,12 @@ async function halveWarehouseOpeningStock(supabase, payload) {
 }
 
 async function stockCurrent(supabase) {
-  const { data: ledger, error } = await supabase.from("stock_ledger").select("warehouse_id,item_id,quantity_in,quantity_out,movement_type");
-  if (error) throw error;
+  const ledger = await selectAllRows((from, to) =>
+    supabase
+      .from("stock_ledger")
+      .select("warehouse_id,item_id,quantity_in,quantity_out,movement_type")
+      .range(from, to)
+  );
   const index = new Map();
   for (const row of ledger || []) {
     const key = `${row.warehouse_id || ""}|${row.item_id || ""}`;
