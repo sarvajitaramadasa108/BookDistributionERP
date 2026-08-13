@@ -2,7 +2,7 @@
   "name": "HKM Vizag Book Distribution",
   "short_name": "HKM Vizag",
   "description": "Warehouse-bound sale entry app for HKM Vizag book distribution.",
-  "start_url": "/sales/warehouse",
+  "start_url": "/stallsales",
   "display": "standalone",
   "background_color": "#f5e3c7",
   "theme_color": "#7b3f1d",

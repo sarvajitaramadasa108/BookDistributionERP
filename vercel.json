@@ -49,27 +49,19 @@
       "dest": "/frontend/request.html"
     },
     {
-      "src": "/sales",
+      "src": "/kkdsales",
       "dest": "/frontend/sales-kakinada.html"
     },
     {
-      "src": "/sales/",
+      "src": "/kkdsales/",
       "dest": "/frontend/sales-kakinada.html"
     },
     {
-      "src": "/sales/kakinada",
-      "dest": "/frontend/sales-kakinada.html"
-    },
-    {
-      "src": "/sales/kakinada/",
-      "dest": "/frontend/sales-kakinada.html"
-    },
-    {
-      "src": "/sales/warehouse",
+      "src": "/stallsales",
       "dest": "/frontend/sales-warehouse.html"
     },
     {
-      "src": "/sales/warehouse/",
+      "src": "/stallsales/",
       "dest": "/frontend/sales-warehouse.html"
     },
     {

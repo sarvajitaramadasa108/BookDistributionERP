@@ -1,6 +1,6 @@
 const CACHE_NAME = "hkm-vizag-sales-pwa-v1";
 const CORE_ASSETS = [
-  "/sales/warehouse",
+  "/stallsales",
   "/sales-warehouse.html",
   "/styles.css",
   "/config.js",

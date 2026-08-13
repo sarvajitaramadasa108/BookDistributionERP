@@ -1,6 +1,6 @@
 const CACHE_NAME = "hkm-kakinada-sales-pwa-v5";
 const CORE_ASSETS = [
-  "/sales/kakinada",
+  "/kkdsales",
   "/sales-kakinada.html",
   "/styles.css",
   "/config.js",

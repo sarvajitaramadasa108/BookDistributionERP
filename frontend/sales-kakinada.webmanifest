@@ -2,7 +2,7 @@
   "name": "HKM Kakinada Book Distribution",
   "short_name": "Kakinada",
   "description": "Kakinada warehouse sale entry app for books and devotional items.",
-  "start_url": "/sales/kakinada",
+  "start_url": "/kkdsales",
   "display": "standalone",
   "background_color": "#f5e3c7",
   "theme_color": "#7b3f1d",

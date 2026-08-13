@@ -5,7 +5,7 @@ This folder contains a native Android wrapper app for the Kakinada plain sales-e
 ## What it does
 
 - Opens the live KKD sales page:
-  - `https://book-distribution-erp.vercel.app/sales/kakinada`
+  - `https://book-distribution-erp.vercel.app/stallsales`
 - Supports:
   - login to the Kakinada sales page
   - live stock browsing
