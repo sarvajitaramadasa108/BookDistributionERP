@@ -387,6 +387,7 @@
   function buildEscPosReceiptBytes(detail) {
     const lines = Array.isArray(detail?.lines) ? detail.lines : [];
     const createdAt = detail?.createdAt || detail?.documentDate || new Date().toISOString();
+    const billNumber = String(detail?.documentId || "-").replace(/^DOC-?/i, "") || "-";
     const totalQty = lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
     const totalAmount = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
     const rowText = lines.map((line) => {
@@ -399,17 +400,15 @@
       new Uint8Array([0x1b, 0x40]),
       new Uint8Array([0x1b, 0x61, 0x01]),
       new Uint8Array([0x1b, 0x45, 0x01]),
-      encodeEscPosText("HARE KRISHNA MOVEMENT\n"),
+      encodeEscPosText("TOUCH STONE FOUNDATION\n"),
       encodeEscPosText("VISAKHAPATNAM\n"),
       new Uint8Array([0x1b, 0x45, 0x00]),
-      encodeEscPosText("Matchless Gift Store Sale Bill\n"),
+      encodeEscPosText("Matchless Gift Counter Bill\n"),
       new Uint8Array([0x1b, 0x61, 0x00]),
       encodeEscPosText("--------------------------------\n"),
-      encodeEscPosText(`Bill No: ${detail?.documentId || "-"}\n`),
-      encodeEscPosText(`Date: ${formatDateTime(createdAt)}\n`),
-      encodeEscPosText(`Warehouse: ${detail?.warehouseName || WAREHOUSE_KEY}\n`),
-      encodeEscPosText(`User: ${detail?.createdByName || detail?.createdByUsername || "-"}\n`),
-      detail?.notes ? encodeEscPosText(`Notes: ${detail.notes}\n`) : new Uint8Array(),
+      encodeEscPosText(`Bill No: ${billNumber}\n`),
+      encodeEscPosText(`Date and Time: ${formatDateTime(createdAt)}\n`),
+      encodeEscPosText("User: Counter Incharge\n"),
       encodeEscPosText("--------------------------------\n"),
       encodeEscPosText(rowText),
       encodeEscPosText("--------------------------------\n"),
@@ -418,7 +417,9 @@
       encodeEscPosText(`Total Amount: Rs. ${moneyNumber(totalAmount)}\n`),
       new Uint8Array([0x1b, 0x45, 0x00]),
       new Uint8Array([0x1b, 0x61, 0x01]),
-      encodeEscPosText("Thank you\n\n\n")
+      encodeEscPosText("Chant and Be Happy\n"),
+      encodeEscPosText("Hare Krishna Hare Krishna Krishna Krishna Hare Hare\n"),
+      encodeEscPosText("Hare Rama Hare Rama Rama Rama Hare Hare\n\n\n")
     ]);
   }
 
@@ -854,6 +855,7 @@
   function buildReceiptHtml(detail, printOnly) {
     const lines = Array.isArray(detail?.lines) ? detail.lines : [];
     const createdAt = detail?.createdAt || detail?.documentDate || new Date().toISOString();
+    const billNumber = String(detail?.documentId || "-").replace(/^DOC-?/i, "") || "-";
     const totalQty = lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
     const totalAmount = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
     const isPrintOnly = Boolean(printOnly);
@@ -981,15 +983,13 @@
     <button onclick="window.close()">Close</button>
   </div>`}
   <div class="receipt">
-    <div class="center strong">HARE KRISHNA MOVEMENT</div>
+    <div class="center strong">TOUCH STONE FOUNDATION</div>
     <div class="center strong">VISAKHAPATNAM</div>
-    <div class="center">Matchless Gift Store Sale Bill</div>
+    <div class="center">Matchless Gift Counter Bill</div>
     <div class="divider"></div>
-    <div class="meta-row"><span>Bill No</span><span>${escapeHtml(detail?.documentId || "-")}</span></div>
-    <div class="meta-row"><span>Date</span><span>${escapeHtml(formatDateTime(createdAt))}</span></div>
-    <div class="meta-row"><span>Warehouse</span><span>${escapeHtml(detail?.warehouseName || WAREHOUSE_KEY)}</span></div>
-    <div class="meta-row"><span>User</span><span>${escapeHtml(detail?.createdByName || detail?.createdByUsername || "-")}</span></div>
-    ${detail?.notes ? `<div class="meta-row"><span>Notes</span><span style="text-align:right;">${escapeHtml(detail.notes)}</span></div>` : ""}
+    <div class="meta-row"><span>Bill No</span><span>${escapeHtml(billNumber)}</span></div>
+    <div class="meta-row"><span>Date and Time</span><span>${escapeHtml(formatDateTime(createdAt))}</span></div>
+    <div class="meta-row"><span>User</span><span>Counter Incharge</span></div>
     <div class="divider"></div>
     <table>
       <colgroup>
@@ -1021,7 +1021,9 @@
     <div class="total-row strong"><span>Total Qty</span><span>${totalQty}</span></div>
     <div class="total-row strong"><span>Total Amount</span><span>Rs. ${moneyNumber(totalAmount)}</span></div>
     <div class="divider"></div>
-    <div class="center">Thank you</div>
+    <div class="center">Chant and Be Happy</div>
+    <div class="center" style="margin-top:6px;">Hare Krishna Hare Krishna Krishna Krishna Hare Hare</div>
+    <div class="center">Hare Rama Hare Rama Rama Rama Hare Hare</div>
   </div>
 </body>
 </html>
