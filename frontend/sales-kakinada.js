@@ -709,8 +709,25 @@
     render();
   }
 
+  function rerenderSearchPreservingFocus() {
+    const currentValue = String(state.search || "");
+    render();
+    const next = document.querySelector('.catalog-search input[type="search"]');
+    if (next) {
+      next.value = currentValue;
+      next.focus();
+      if (typeof next.setSelectionRange === "function") {
+        next.setSelectionRange(currentValue.length, currentValue.length);
+      }
+    }
+  }
+
   function setField(field, value) {
     state[field] = value;
+    if (field === "search") {
+      rerenderSearchPreservingFocus();
+      return;
+    }
     render();
   }
 
