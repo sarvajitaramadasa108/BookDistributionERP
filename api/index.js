@@ -1821,8 +1821,10 @@ async function catalogRequestItems(supabase, payload) {
   const itemGroup = String(payload.itemGroup || "BOOK").trim().toUpperCase();
   const sourceWarehouseRow = await resolveWarehouseRow(supabase, payload.sourceWarehouseId || payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
   if (!sourceWarehouseRow) throw new Error("Warehouse is required");
+  const itemsQuery = supabase.from("items").select("*").eq("active", true);
+  const normalizedGroup = itemGroup === "PARAPHERNALIA" ? ["PARAPHERNALIA", "OTHER"] : [itemGroup];
   const [itemsResult, stockRows] = await Promise.all([
-    supabase.from("items").select("*").eq("item_group", itemGroup).eq("active", true),
+    itemsQuery.in("item_group", normalizedGroup),
     stockCurrent(supabase)
   ]);
   if (itemsResult.error) throw itemsResult.error;

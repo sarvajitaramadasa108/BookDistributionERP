@@ -7,7 +7,7 @@
 
   const state = {
     currentUser: null,
-    itemGroup: "BOOK",
+    itemGroup: "PARAPHERNALIA",
     devotionalCategory: "ALL",
     search: "",
     warehouseId: "",
