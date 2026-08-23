@@ -1711,6 +1711,80 @@ async function adminUpdateCurrentStock(supabase, payload, currentUser) {
   };
 }
 
+async function resetWarehouseToOpening(supabase, payload, currentUser) {
+  requireAdminUser(currentUser);
+  const warehouseRow = await resolveWarehouseRow(supabase, payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
+  if (!warehouseRow) throw new Error("Warehouse is required");
+
+  const currentRows = await stockCurrent(supabase);
+  const currentMap = new Map(
+    currentRows
+      .filter((row) => String(row.warehouseId || "") === String(warehouseRow.warehouse_code || ""))
+      .map((row) => [String(row.bookId || "").trim(), Number(row.quantity || 0)])
+  );
+
+  const overrideRows = Array.isArray(payload.overrideRows) ? payload.overrideRows : [];
+  for (const row of overrideRows) {
+    const code = String(row.bookId || row.erpCode || "").trim();
+    if (!code) continue;
+    currentMap.set(code, Number(row.quantity || 0));
+  }
+
+  const desiredLines = [];
+  for (const [erpCode, quantity] of currentMap.entries()) {
+    const qty = Number(quantity || 0);
+    if (!(qty > 0)) continue;
+    const item = await findByCode(supabase, "items", "erp_code", erpCode);
+    if (!item) throw new Error(`Item not found: ${erpCode}`);
+    desiredLines.push({
+      bookId: erpCode,
+      quantity: qty,
+      rate: Number(item.sale_price || 0)
+    });
+  }
+  if (!desiredLines.length) throw new Error("No current stock found for that warehouse");
+
+  const { data: docs, error: docsError } = await supabase
+    .from("documents")
+    .select("id, document_code, document_date")
+    .or(`from_warehouse_id.eq.${warehouseRow.id},to_warehouse_id.eq.${warehouseRow.id}`)
+    .order("created_at", { ascending: false });
+  if (docsError) throw docsError;
+
+  const latestDocumentDate = String(
+    payload.documentDate
+    || (docs || []).find((row) => row.document_date)?.document_date
+    || nowIso()
+  ).slice(0, 10);
+
+  const deletedDocumentIds = (docs || []).map((row) => row.document_code || row.id).filter(Boolean);
+  const docRowIds = (docs || []).map((row) => row.id).filter(Boolean);
+
+  if (docRowIds.length) {
+    const { error: deleteDocsError } = await supabase.from("documents").delete().in("id", docRowIds);
+    if (deleteDocsError) throw deleteDocsError;
+  }
+
+  const { error: deleteDayPaymentsError } = await supabase.from("sale_day_payments").delete().eq("warehouse_id", warehouseRow.id);
+  if (deleteDayPaymentsError) throw deleteDayPaymentsError;
+
+  const created = await createDocument(supabase, {
+    documentType: "OPENING",
+    documentDate: latestDocumentDate,
+    toWarehouseId: warehouseRow.warehouse_code,
+    notes: String(payload.notes || "Warehouse reset to opening snapshot").trim() || "Warehouse reset to opening snapshot",
+    lines: desiredLines
+  }, currentUser);
+
+  return {
+    warehouseId: warehouseRow.warehouse_code,
+    warehouseName: warehouseRow.warehouse_name,
+    deletedDocuments: deletedDocumentIds,
+    recreatedOpeningDocumentId: created.documentId,
+    openingLines: desiredLines.length
+  };
+}
+
 async function onlineClassWarehouseBooks(supabase, payload) {
   const sourceWarehouseRow = await resolveWarehouseRow(supabase, payload.sourceWarehouseId || payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
   const [itemsResult, stockRows] = await Promise.all([
@@ -3373,6 +3447,9 @@ async function main(request) {
       case "stock.adminUpdate":
         requireAdminUser(currentUser);
         return json(200, { ok: true, data: await adminUpdateCurrentStock(supabase, payload, currentUser) });
+      case "documents.resetWarehouseToOpening":
+        requireAdminUser(currentUser);
+        return json(200, { ok: true, data: await resetWarehouseToOpening(supabase, payload, currentUser) });
       case "activity.unsettled":
         return json(200, { ok: true, data: await getActivityUnsettled(supabase) });
       case "activity.complimentary":
