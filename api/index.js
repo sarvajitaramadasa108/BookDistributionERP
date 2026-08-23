@@ -2173,9 +2173,9 @@ async function getSaleEntriesContext(supabase) {
         .order("created_at", { ascending: false })
         .range(from, to)
     ),
-    listTable(supabase, "items"),
-    listTable(supabase, "warehouses"),
-    listTable(supabase, "users"),
+    listTable(supabase, "items", mapItem),
+    listTable(supabase, "warehouses", mapWarehouse),
+    listTable(supabase, "users", mapUser),
     selectAllRows((from, to) =>
       supabase
         .from("sale_entry_payments")
@@ -2344,9 +2344,9 @@ async function saleEntryDetail(supabase, payload) {
         .order("created_at", { ascending: false })
         .range(from, to)
     ),
-    listTable(supabase, "items"),
-    listTable(supabase, "warehouses"),
-    listTable(supabase, "users"),
+    listTable(supabase, "items", mapItem),
+    listTable(supabase, "warehouses", mapWarehouse),
+    listTable(supabase, "users", mapUser),
     selectAllRows((from, to) =>
       supabase
         .from("sale_entry_payments")
