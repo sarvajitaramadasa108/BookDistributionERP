@@ -2222,6 +2222,8 @@ function buildSaleEntrySummary(doc, context) {
   const userById = Object.fromEntries((context.users || []).map((row) => [String(row.userId || ""), row]));
   const docLines = (context.lines || []).filter((line) => line.document_id === doc.id).sort((a, b) => Number(a.line_no || 0) - Number(b.line_no || 0));
   const paymentRows = (context.payments || []).filter((row) => row.document_id === doc.id);
+  const collectionRows = paymentRows.filter((row) => classifySaleEntryPaymentKind(row) === "SALE_COLLECTION");
+  const settlementRows = paymentRows.filter((row) => classifySaleEntryPaymentKind(row) === "BACKEND_SETTLEMENT");
   const lines = docLines.map((line, index) => {
     const item = itemById[line.item_id] || {};
     return {
@@ -2238,10 +2240,15 @@ function buildSaleEntrySummary(doc, context) {
   });
   const totalQty = lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
   const totalAmount = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
-  const paidCashAmount = paymentRows.reduce((sum, row) => sum + Number(row.cash_amount || 0), 0);
-  const paidOnlineAmount = paymentRows.reduce((sum, row) => sum + Number(row.online_amount || 0), 0);
-  const paidTotalAmount = paidCashAmount + paidOnlineAmount;
-  const pendingAmount = Math.max(totalAmount - paidTotalAmount, 0);
+  const collectedCashAmount = collectionRows.reduce((sum, row) => sum + Number(row.cash_amount || 0), 0);
+  const collectedOnlineAmount = collectionRows.reduce((sum, row) => sum + Number(row.online_amount || 0), 0);
+  const collectedTotalAmount = collectedCashAmount + collectedOnlineAmount;
+  const entrySettledCashAmount = settlementRows.reduce((sum, row) => sum + Number(row.cash_amount || 0), 0);
+  const entrySettledOnlineAmount = settlementRows.reduce((sum, row) => sum + Number(row.online_amount || 0), 0);
+  const entrySettledTotalAmount = entrySettledCashAmount + entrySettledOnlineAmount;
+  const pendingCashAmount = Math.max(collectedCashAmount - entrySettledCashAmount, 0);
+  const pendingOnlineAmount = Math.max(collectedOnlineAmount - entrySettledOnlineAmount, 0);
+  const pendingAmount = pendingCashAmount + pendingOnlineAmount;
   return {
     documentRowId: doc.id,
     documentId: doc.document_code,
@@ -2259,18 +2266,35 @@ function buildSaleEntrySummary(doc, context) {
     updatedAt: doc.updated_at,
     totalQty,
     totalAmount,
-    paidCashAmount,
-    paidOnlineAmount,
-    paidTotalAmount,
+    collectedCashAmount,
+    collectedOnlineAmount,
+    collectedTotalAmount,
+    entrySettledCashAmount,
+    entrySettledOnlineAmount,
+    entrySettledTotalAmount,
+    paidCashAmount: collectedCashAmount,
+    paidOnlineAmount: collectedOnlineAmount,
+    paidTotalAmount: collectedTotalAmount,
+    pendingCashAmount,
+    pendingOnlineAmount,
     pendingAmount,
     lines,
-    payments: paymentRows.map((row) => ({
+    payments: settlementRows.map((row) => ({
       paymentId: row.id,
       paymentDate: row.payment_date,
       cashAmount: Number(row.cash_amount || 0),
       onlineAmount: Number(row.online_amount || 0),
       totalAmount: Number(row.cash_amount || 0) + Number(row.online_amount || 0),
-      notes: row.notes || "",
+      notes: cleanSalePaymentNote(row.notes || ""),
+      createdAt: row.created_at
+    })),
+    collections: collectionRows.map((row) => ({
+      paymentId: row.id,
+      paymentDate: row.payment_date,
+      cashAmount: Number(row.cash_amount || 0),
+      onlineAmount: Number(row.online_amount || 0),
+      totalAmount: Number(row.cash_amount || 0) + Number(row.online_amount || 0),
+      notes: cleanSalePaymentNote(row.notes || ""),
       createdAt: row.created_at
     }))
   };
@@ -2290,12 +2314,28 @@ function buildSaleDayPaymentSummary(row, context) {
     cashAmount: Number(row.cash_amount || 0),
     onlineAmount: Number(row.online_amount || 0),
     totalAmount: Number(row.cash_amount || 0) + Number(row.online_amount || 0),
-    notes: row.notes || "",
+    notes: cleanSalePaymentNote(row.notes || ""),
     createdByUserId: row.created_by_user_id || "",
     createdByName: user.name || "",
     createdByUsername: user.username || "",
     createdAt: row.created_at || ""
   };
+}
+
+function classifySaleEntryPaymentKind(row) {
+  const notes = String(row?.notes || "").trim();
+  if (/^\[SALE_COLLECTION\]/i.test(notes) || /payment captured at sale entry/i.test(notes)) {
+    return "SALE_COLLECTION";
+  }
+  return "BACKEND_SETTLEMENT";
+}
+
+function cleanSalePaymentNote(notes) {
+  return String(notes || "")
+    .replace(/^\[SALE_COLLECTION\]\s*/i, "")
+    .replace(/^\[BACKEND_SETTLEMENT\]\s*/i, "")
+    .replace(/^\[BACKEND_DAY_SETTLEMENT\]\s*/i, "")
+    .trim();
 }
 
 async function saleEntriesList(supabase, payload, currentUser) {
@@ -2390,7 +2430,7 @@ async function createSaleEntryPayment(supabase, payload, currentUser) {
     payment_date: paymentDate,
     cash_amount: cashAmount,
     online_amount: onlineAmount,
-    notes: String(payload.notes || "").trim(),
+    notes: `[BACKEND_SETTLEMENT] ${String(payload.notes || "").trim()}`.trim(),
     created_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null
   });
   if (error) throw error;
@@ -2411,7 +2451,7 @@ async function createSaleDayPayment(supabase, payload, currentUser) {
     sale_date: saleDate,
     cash_amount: cashAmount,
     online_amount: onlineAmount,
-    notes: String(payload.notes || "").trim(),
+    notes: `[BACKEND_DAY_SETTLEMENT] ${String(payload.notes || "").trim()}`.trim(),
     created_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null
   });
   if (error) throw error;
@@ -2470,7 +2510,7 @@ async function submitWarehouseSale(supabase, payload, currentUser) {
       payment_date: paymentDate,
       cash_amount: cashAmount,
       online_amount: onlineAmount,
-      notes: paymentNotes
+      notes: `[SALE_COLLECTION] ${paymentNotes}`.trim()
     });
     if (paymentError) throw paymentError;
   }

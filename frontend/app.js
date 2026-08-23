@@ -3011,9 +3011,17 @@
       updatedAt: row.updatedAt || "",
       totalQty: Number(row.totalQty || 0),
       totalAmount: Number(row.totalAmount || 0),
+      collectedCashAmount: Number(row.collectedCashAmount || row.paidCashAmount || 0),
+      collectedOnlineAmount: Number(row.collectedOnlineAmount || row.paidOnlineAmount || 0),
+      collectedTotalAmount: Number(row.collectedTotalAmount || row.paidTotalAmount || 0),
+      entrySettledCashAmount: Number(row.entrySettledCashAmount || 0),
+      entrySettledOnlineAmount: Number(row.entrySettledOnlineAmount || 0),
+      entrySettledTotalAmount: Number(row.entrySettledTotalAmount || 0),
       paidCashAmount: Number(row.paidCashAmount || 0),
       paidOnlineAmount: Number(row.paidOnlineAmount || 0),
       paidTotalAmount: Number(row.paidTotalAmount || 0),
+      pendingCashAmount: Number(row.pendingCashAmount || 0),
+      pendingOnlineAmount: Number(row.pendingOnlineAmount || 0),
       pendingAmount: Number(row.pendingAmount || 0),
       lines: Array.isArray(row.lines) ? row.lines.map((line) => ({
         lineId: line.lineId || "",
@@ -3027,6 +3035,15 @@
         amount: Number(line.amount || 0)
       })) : [],
       payments: Array.isArray(row.payments) ? row.payments.map((payment) => ({
+        paymentId: payment.paymentId || "",
+        paymentDate: payment.paymentDate || "",
+        cashAmount: Number(payment.cashAmount || 0),
+        onlineAmount: Number(payment.onlineAmount || 0),
+        totalAmount: Number(payment.totalAmount || 0),
+        notes: payment.notes || "",
+        createdAt: payment.createdAt || ""
+      })) : [],
+      collections: Array.isArray(row.collections) ? row.collections.map((payment) => ({
         paymentId: payment.paymentId || "",
         paymentDate: payment.paymentDate || "",
         cashAmount: Number(payment.cashAmount || 0),
@@ -4878,7 +4895,7 @@
       showToast("Enter cash or online amount");
       return;
     }
-    setLoading(true, "Saving payment...");
+    setLoading(true, "Saving backend settlement...");
     try {
       const detail = await window.erpApi.request("sales.entryPaymentCreate", {
         documentId,
@@ -4891,9 +4908,9 @@
       await refreshSaleEntriesData();
       state.saleEntryDetail = normalizeSaleEntrySummary(detail || {});
       content.innerHTML = renderSaleEntriesMarkup();
-      showToast("Payment saved");
+      showToast("Backend settlement saved");
     } catch (error) {
-      showToast(error.message || "Could not save payment");
+      showToast(error.message || "Could not save backend settlement");
     } finally {
       setLoading(false);
     }
@@ -4908,7 +4925,7 @@
       showToast("Enter cash or online amount");
       return;
     }
-    setLoading(true, "Saving day payment...");
+    setLoading(true, "Saving day settlement...");
     try {
       await window.erpApi.request("sales.dayPaymentCreate", {
         warehouseId,
@@ -4919,9 +4936,9 @@
       });
       await refreshSaleEntriesData();
       content.innerHTML = renderSaleEntriesMarkup();
-      showToast("Day payment saved");
+      showToast("Day settlement saved");
     } catch (error) {
-      showToast(error.message || "Could not save day payment");
+      showToast(error.message || "Could not save day settlement");
     } finally {
       setLoading(false);
     }
@@ -4996,15 +5013,21 @@
   function saleEntriesOverview(rows) {
     const value = rows.reduce((acc, row) => {
       acc.saleAmount += Number(row.totalAmount || 0);
-      acc.cashAmount += Number(row.paidCashAmount || 0);
-      acc.onlineAmount += Number(row.paidOnlineAmount || 0);
+      acc.collectedCashAmount += Number(row.collectedCashAmount || row.paidCashAmount || 0);
+      acc.collectedOnlineAmount += Number(row.collectedOnlineAmount || row.paidOnlineAmount || 0);
+      acc.entrySettledCashAmount += Number(row.entrySettledCashAmount || 0);
+      acc.entrySettledOnlineAmount += Number(row.entrySettledOnlineAmount || 0);
       acc.totalQty += Number(row.totalQty || 0);
       acc.entryCount += 1;
       return acc;
     }, {
       saleAmount: 0,
-      cashAmount: 0,
-      onlineAmount: 0,
+      collectedCashAmount: 0,
+      collectedOnlineAmount: 0,
+      entrySettledCashAmount: 0,
+      entrySettledOnlineAmount: 0,
+      pendingCashAmount: 0,
+      pendingOnlineAmount: 0,
       pendingAmount: 0,
       totalQty: 0,
       entryCount: 0
@@ -5022,11 +5045,13 @@
       }
       return true;
     });
-    value.dayCashAmount = dayPayments.reduce((sum, row) => sum + Number(row.cashAmount || 0), 0);
-    value.dayOnlineAmount = dayPayments.reduce((sum, row) => sum + Number(row.onlineAmount || 0), 0);
-    value.totalCashAmount = value.cashAmount + value.dayCashAmount;
-    value.totalOnlineAmount = value.onlineAmount + value.dayOnlineAmount;
-    value.pendingAmount = Math.max(value.saleAmount - value.totalCashAmount - value.totalOnlineAmount, 0);
+    value.daySettledCashAmount = dayPayments.reduce((sum, row) => sum + Number(row.cashAmount || 0), 0);
+    value.daySettledOnlineAmount = dayPayments.reduce((sum, row) => sum + Number(row.onlineAmount || 0), 0);
+    value.totalSettledCashAmount = value.entrySettledCashAmount + value.daySettledCashAmount;
+    value.totalSettledOnlineAmount = value.entrySettledOnlineAmount + value.daySettledOnlineAmount;
+    value.pendingCashAmount = Math.max(value.collectedCashAmount - value.totalSettledCashAmount, 0);
+    value.pendingOnlineAmount = Math.max(value.collectedOnlineAmount - value.totalSettledOnlineAmount, 0);
+    value.pendingAmount = value.pendingCashAmount + value.pendingOnlineAmount;
     return value;
   }
 
@@ -5042,12 +5067,14 @@
           rows: [],
           totals: {
             saleAmount: 0,
-            entryCashAmount: 0,
-            entryOnlineAmount: 0,
-            dayCashAmount: 0,
-            dayOnlineAmount: 0,
-            totalCashAmount: 0,
-            totalOnlineAmount: 0,
+            collectedCashAmount: 0,
+            collectedOnlineAmount: 0,
+            entrySettledCashAmount: 0,
+            entrySettledOnlineAmount: 0,
+            daySettledCashAmount: 0,
+            daySettledOnlineAmount: 0,
+            pendingCashAmount: 0,
+            pendingOnlineAmount: 0,
             pendingAmount: 0,
             totalQty: 0,
             entryCount: 0
@@ -5061,8 +5088,10 @@
       const group = groups.get(key);
       group.rows.push(row);
       group.totals.saleAmount += Number(row.totalAmount || 0);
-      group.totals.entryCashAmount += Number(row.paidCashAmount || 0);
-      group.totals.entryOnlineAmount += Number(row.paidOnlineAmount || 0);
+      group.totals.collectedCashAmount += Number(row.collectedCashAmount || row.paidCashAmount || 0);
+      group.totals.collectedOnlineAmount += Number(row.collectedOnlineAmount || row.paidOnlineAmount || 0);
+      group.totals.entrySettledCashAmount += Number(row.entrySettledCashAmount || 0);
+      group.totals.entrySettledOnlineAmount += Number(row.entrySettledOnlineAmount || 0);
       group.totals.totalQty += Number(row.totalQty || 0);
       group.totals.entryCount += 1;
     });
@@ -5073,13 +5102,13 @@
       const group = groups.get(key);
       if (!group) return;
       group.dayPayments.push(payment);
-      group.totals.dayCashAmount += Number(payment.cashAmount || 0);
-      group.totals.dayOnlineAmount += Number(payment.onlineAmount || 0);
+      group.totals.daySettledCashAmount += Number(payment.cashAmount || 0);
+      group.totals.daySettledOnlineAmount += Number(payment.onlineAmount || 0);
     });
     groups.forEach((group) => {
-      group.totals.totalCashAmount = group.totals.entryCashAmount + group.totals.dayCashAmount;
-      group.totals.totalOnlineAmount = group.totals.entryOnlineAmount + group.totals.dayOnlineAmount;
-      group.totals.pendingAmount = Math.max(group.totals.saleAmount - group.totals.totalCashAmount - group.totals.totalOnlineAmount, 0);
+      group.totals.pendingCashAmount = Math.max(group.totals.collectedCashAmount - group.totals.entrySettledCashAmount - group.totals.daySettledCashAmount, 0);
+      group.totals.pendingOnlineAmount = Math.max(group.totals.collectedOnlineAmount - group.totals.entrySettledOnlineAmount - group.totals.daySettledOnlineAmount, 0);
+      group.totals.pendingAmount = group.totals.pendingCashAmount + group.totals.pendingOnlineAmount;
     });
     return [...groups.values()].sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(a.warehouseName || "").localeCompare(String(b.warehouseName || "")));
   }
@@ -5119,11 +5148,13 @@
           ${detail ? saleEntryDetailMarkup(detail) : `
             <div class="grid metrics reports-metrics activity-report-metrics">
               ${metric("Month Sale", money(overview.saleAmount), "Overall sale value for the selected month")}
-              ${metric("Entry Cash", money(overview.cashAmount), "Sale-entry-wise cash total")}
-              ${metric("Entry Online", money(overview.onlineAmount), "Sale-entry-wise online total")}
-              ${metric("Day Cash", money(overview.dayCashAmount || 0), "Day-wise cash settlement total")}
-              ${metric("Day Online", money(overview.dayOnlineAmount || 0), "Day-wise online settlement total")}
-              ${metric("Pending", money(overview.pendingAmount), "Still to settle for the selected month")}
+              ${metric("Cash Pending", money(overview.pendingCashAmount || 0), "Cash still to settle to backend")}
+              ${metric("Online Pending", money(overview.pendingOnlineAmount || 0), "Online still to settle to backend")}
+              ${metric("Collected Cash", money(overview.collectedCashAmount || 0), "Cash collected at the counter")}
+              ${metric("Collected Online", money(overview.collectedOnlineAmount || 0), "Online collected at the counter")}
+              ${metric("Settled Cash", money((overview.entrySettledCashAmount || 0) + (overview.daySettledCashAmount || 0)), "Cash already settled to backend")}
+              ${metric("Settled Online", money((overview.entrySettledOnlineAmount || 0) + (overview.daySettledOnlineAmount || 0)), "Online already settled to backend")}
+              ${metric("Total Pending", money(overview.pendingAmount), "Total amount still to settle to backend")}
               ${metric("Entries", overview.entryCount, "Sale entries in the selected month")}
               ${metric("Qty", overview.totalQty, "Total sold quantity")}
             </div>
@@ -5146,15 +5177,17 @@
         <div class="panel-body">
           <div class="grid metrics reports-metrics activity-report-metrics">
             ${metric("Day Sale", money(group.totals.saleAmount), "Total sale value on this day")}
-            ${metric("Entry Cash", money(group.totals.entryCashAmount), "Recorded against individual sale entries")}
-            ${metric("Entry Online", money(group.totals.entryOnlineAmount), "Recorded against individual sale entries")}
-            ${metric("Day Cash", money(group.totals.dayCashAmount), "Collective cash received for this day")}
-            ${metric("Day Online", money(group.totals.dayOnlineAmount), "Collective online received for this day")}
-            ${metric("Pending", money(group.totals.pendingAmount), "Still to settle for this day")}
+            ${metric("Cash Pending", money(group.totals.pendingCashAmount || 0), "Cash still to settle to backend for this day")}
+            ${metric("Online Pending", money(group.totals.pendingOnlineAmount || 0), "Online still to settle to backend for this day")}
+            ${metric("Collected Cash", money(group.totals.collectedCashAmount || 0), "Cash collected at the counter")}
+            ${metric("Collected Online", money(group.totals.collectedOnlineAmount || 0), "Online collected at the counter")}
+            ${metric("Settled Cash", money((group.totals.entrySettledCashAmount || 0) + (group.totals.daySettledCashAmount || 0)), "Cash already settled to backend")}
+            ${metric("Settled Online", money((group.totals.entrySettledOnlineAmount || 0) + (group.totals.daySettledOnlineAmount || 0)), "Online already settled to backend")}
+            ${metric("Total Pending", money(group.totals.pendingAmount), "Total amount still to settle to backend for this day")}
           </div>
           <section class="card section-gap">
             <div class="panel-header compact-header">
-              <h4>Day Settlement</h4>
+              <h4>Day Settlement To Backend</h4>
             </div>
             <div class="panel-body">
               ${group.dayPayments.length ? `
@@ -5184,15 +5217,15 @@
                     </tbody>
                   </table>
                 </div>
-              ` : '<div class="empty-state">No day-wise payments recorded yet.</div>'}
+              ` : '<div class="empty-state">No day-wise backend settlements recorded yet.</div>'}
               <div class="section-gap"></div>
               <form class="form-grid" onsubmit="window.erpApp.saveSaleDayPayment(event, '${escapeAttribute(group.warehouseId)}', '${escapeAttribute(group.date)}')">
                 <label class="field">
-                  <span>Cash Received For The Day</span>
+                  <span>Cash Settled To Backend For The Day</span>
                   <input id="saleDayCashAmount-${escapeAttribute(group.date)}" type="number" min="0" step="0.01" placeholder="0">
                 </label>
                 <label class="field">
-                  <span>Online Received For The Day</span>
+                  <span>Online Settled To Backend For The Day</span>
                   <input id="saleDayOnlineAmount-${escapeAttribute(group.date)}" type="number" min="0" step="0.01" placeholder="0">
                 </label>
                 <label class="field wide-field">
@@ -5200,7 +5233,7 @@
                   <input id="saleDayPaymentNotes-${escapeAttribute(group.date)}" type="text" placeholder="Optional note for this day">
                 </label>
                 <div class="form-actions">
-                  <button class="button" type="submit">Save Day Payment</button>
+                  <button class="button" type="submit">Save Day Settlement</button>
                 </div>
               </form>
             </div>
@@ -5224,9 +5257,9 @@
               <th>Items</th>
               <th>Qty</th>
               <th>Sale Amount</th>
-              <th>Cash</th>
-              <th>Online</th>
-              <th>Pending</th>
+              <th>Counter Cash</th>
+              <th>Counter Online</th>
+              <th>Pending To Backend</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -5265,10 +5298,14 @@
                 ${metric("Created By", detail.createdByName || detail.createdByUsername || "-", formatDateTime(detail.createdAt || detail.documentDate))}
                 ${metric("Total Qty", Number(detail.totalQty || 0), "Total sold quantity")}
                 ${metric("Sale Amount", money(Number(detail.totalAmount || 0)), "Current total")}
-                ${metric("Cash Received", money(Number(detail.paidCashAmount || 0)), "Recorded cash")}
-                ${metric("Online Received", money(Number(detail.paidOnlineAmount || 0)), "Recorded online")}
-                ${metric("Pending Amount", money(Number(detail.pendingAmount || 0)), "Still to settle")}
-                ${metric("Status", detail.pendingAmount > 0 ? "Settlement Pending" : "Settled", detail.status || "Posted")}
+                ${metric("Counter Cash", money(Number(detail.collectedCashAmount || detail.paidCashAmount || 0)), "Cash collected at the counter")}
+                ${metric("Counter Online", money(Number(detail.collectedOnlineAmount || detail.paidOnlineAmount || 0)), "Online collected at the counter")}
+                ${metric("Backend Settled Cash", money(Number(detail.entrySettledCashAmount || 0)), "Cash settled to backend entry-wise")}
+                ${metric("Backend Settled Online", money(Number(detail.entrySettledOnlineAmount || 0)), "Online settled to backend entry-wise")}
+                ${metric("Cash Pending", money(Number(detail.pendingCashAmount || 0)), "Cash still to settle to backend")}
+                ${metric("Online Pending", money(Number(detail.pendingOnlineAmount || 0)), "Online still to settle to backend")}
+                ${metric("Total Pending", money(Number(detail.pendingAmount || 0)), "Total still to settle to backend")}
+                ${metric("Status", detail.pendingAmount > 0 ? "Backend Settlement Pending" : "Settled", detail.status || "Posted")}
               </div>
               <div class="detail-meta">
                 <div><strong>Warehouse:</strong> ${escapeHtml(detail.warehouseName || detail.warehouseCode || "-")}</div>
@@ -5277,7 +5314,7 @@
             </div>
           </section>
           <section class="card">
-            <div class="panel-header"><h3>Payments</h3></div>
+            <div class="panel-header"><h3>Backend Settlements</h3></div>
             <div class="panel-body">
               ${paymentRows.length ? `
                 <div class="table-wrap">
@@ -5304,7 +5341,7 @@
                     </tbody>
                   </table>
                 </div>
-              ` : '<div class="empty-state">No payments recorded yet.</div>'}
+              ` : '<div class="empty-state">No backend settlements recorded yet.</div>'}
               <div class="section-gap"></div>
               <form class="form-grid" onsubmit="window.erpApp.saveSaleEntryPayment(event, '${escapeAttribute(detail.documentId)}')">
                 <label class="field">
@@ -5312,11 +5349,11 @@
                   <input id="saleEntryPaymentDate" type="date" value="${escapeAttribute(toInputDate(new Date().toISOString()) || "")}">
                 </label>
                 <label class="field">
-                  <span>Cash Received</span>
+                  <span>Cash Settled To Backend</span>
                   <input id="saleEntryCashAmount" type="number" min="0" step="0.01" placeholder="0">
                 </label>
                 <label class="field">
-                  <span>Online Received</span>
+                  <span>Online Settled To Backend</span>
                   <input id="saleEntryOnlineAmount" type="number" min="0" step="0.01" placeholder="0">
                 </label>
                 <label class="field wide-field">
@@ -5324,7 +5361,7 @@
                   <input id="saleEntryPaymentNotes" type="text" placeholder="Optional note">
                 </label>
                 <div class="form-actions">
-                  <button class="button" type="submit">Save Payment</button>
+                  <button class="button" type="submit">Save Settlement</button>
                 </div>
               </form>
             </div>

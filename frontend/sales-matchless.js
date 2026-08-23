@@ -269,6 +269,14 @@
     return (state.mySales || []).reduce((sum, row) => sum + Number(row.pendingAmount || 0), 0);
   }
 
+  function mySalesPendingCashTotal() {
+    return (state.mySales || []).reduce((sum, row) => sum + Number(row.pendingCashAmount || 0), 0);
+  }
+
+  function mySalesPendingOnlineTotal() {
+    return (state.mySales || []).reduce((sum, row) => sum + Number(row.pendingOnlineAmount || 0), 0);
+  }
+
   function mySalesOrderCount() {
     return (state.mySales || []).length;
   }
@@ -1446,9 +1454,19 @@
             <div class="metric-note">Total sale entries posted by you</div>
           </article>
           <article class="card metric-card">
-            <div class="metric-label">Pending Settlement</div>
+            <div class="metric-label">Cash Pending</div>
+            <div class="metric-value">${money(mySalesPendingCashTotal())}</div>
+            <div class="metric-note">Cash still to settle to backend</div>
+          </article>
+          <article class="card metric-card">
+            <div class="metric-label">Online Pending</div>
+            <div class="metric-value">${money(mySalesPendingOnlineTotal())}</div>
+            <div class="metric-note">Online still to settle to backend</div>
+          </article>
+          <article class="card metric-card">
+            <div class="metric-label">Total Pending</div>
             <div class="metric-value">${money(mySalesPendingTotal())}</div>
-            <div class="metric-note">Amount still to settle to backend</div>
+            <div class="metric-note">Total amount still to settle to backend</div>
           </article>
         </div>
         ${state.mySalesLoading ? `<div class="empty-note">Loading sale entries...</div>` : ""}
@@ -1473,10 +1491,10 @@
                   <tr>
                     <td>${escapeHtml(formatDateTime(row.createdAt || row.documentDate))}</td>
                     <td>${escapeHtml(row.documentId || "-")}</td>
-                    <td>${escapeHtml(Number(row.pendingAmount || 0) > 0 ? "Settlement Pending" : "Settled")}</td>
+                    <td>${escapeHtml(Number(row.pendingAmount || 0) > 0 ? "Backend Settlement Pending" : "Settled")}</td>
                     <td>${escapeHtml(money(row.totalAmount || 0))}</td>
-                    <td>${escapeHtml(money(row.paidCashAmount || 0))}</td>
-                    <td>${escapeHtml(money(row.paidOnlineAmount || 0))}</td>
+                    <td>${escapeHtml(money(row.collectedCashAmount || row.paidCashAmount || 0))}</td>
+                    <td>${escapeHtml(money(row.collectedOnlineAmount || row.paidOnlineAmount || 0))}</td>
                     <td>${escapeHtml(money(row.pendingAmount || 0))}</td>
                     <td>
                       <div class="row-actions">
@@ -1492,8 +1510,10 @@
                           <div class="detail-meta">
                             <div><strong>Warehouse:</strong> ${escapeHtml(row.warehouseName || "-")}</div>
                             <div><strong>Notes:</strong> ${escapeHtml(row.notes || "-")}</div>
-                            <div><strong>Cash Received:</strong> ${escapeHtml(money(row.paidCashAmount || 0))}</div>
-                            <div><strong>Online Received:</strong> ${escapeHtml(money(row.paidOnlineAmount || 0))}</div>
+                            <div><strong>Cash Collected At Counter:</strong> ${escapeHtml(money(row.collectedCashAmount || row.paidCashAmount || 0))}</div>
+                            <div><strong>Online Collected At Counter:</strong> ${escapeHtml(money(row.collectedOnlineAmount || row.paidOnlineAmount || 0))}</div>
+                            <div><strong>Cash Pending To Backend:</strong> ${escapeHtml(money(row.pendingCashAmount || 0))}</div>
+                            <div><strong>Online Pending To Backend:</strong> ${escapeHtml(money(row.pendingOnlineAmount || 0))}</div>
                           </div>
                           <div class="history-detail-table-wrap">
                             <table class="history-detail-table">
@@ -1543,8 +1563,8 @@
         <div class="success-meta">${state.submittedSaleId ? `Sale Entry ${escapeHtml(state.submittedSaleId)} was created successfully.` : "Sale entry created successfully."}</div>
         ${state.lastSubmittedSale ? `
           <div class="payment-summary-card submitted-payment-summary">
-            <div><strong>Cash Received:</strong> ${money(state.lastSubmittedSale.paidCashAmount || 0)}</div>
-            <div><strong>Online Received:</strong> ${money(state.lastSubmittedSale.paidOnlineAmount || 0)}</div>
+            <div><strong>Cash Collected At Counter:</strong> ${money(state.lastSubmittedSale.collectedCashAmount || state.lastSubmittedSale.paidCashAmount || 0)}</div>
+            <div><strong>Online Collected At Counter:</strong> ${money(state.lastSubmittedSale.collectedOnlineAmount || state.lastSubmittedSale.paidOnlineAmount || 0)}</div>
           </div>
         ` : ""}
         <div class="public-actions centered-actions">
