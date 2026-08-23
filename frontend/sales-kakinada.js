@@ -331,16 +331,16 @@
   function setMixedCash(value) {
     state.paymentDialog.mixedCash = String(value ?? "");
     state.paymentDialog.error = "";
-    const cursorPosition = String(value ?? "").length;
-    renderModalLayer();
-    const input = modalRoot.querySelector('.payment-split-grid input[type="number"]');
-    if (input) {
-      input.focus();
-      try {
-        input.setSelectionRange(cursorPosition, cursorPosition);
-      } catch (error) {
-        // ignore selection issues on unsupported inputs
-      }
+    const onlineField = modalRoot.querySelector('#paymentOnlineAmountDisplay');
+    if (onlineField) {
+      onlineField.value = money(paymentBreakup().onlineAmount);
+    }
+    const errorBox = modalRoot.querySelector('#paymentErrorBox');
+    if (errorBox) {
+      errorBox.textContent = "";
+      errorBox.classList.add("hidden");
+    } else {
+      renderModalLayer();
     }
   }
 
@@ -406,11 +406,11 @@
             <div class="grid-two payment-split-grid">
               <label class="field">
                 <span>Cash Received</span>
-                <input type="number" min="0" max="${escapeAttr(String(breakup.totalAmount))}" step="0.01" value="${escapeAttr(state.paymentDialog?.mixedCash || "")}" placeholder="Enter cash amount" oninput="window.kkdSalesApp.setMixedCash(this.value)">
+                <input id="paymentMixedCashInput" type="text" inputmode="decimal" value="${escapeAttr(state.paymentDialog?.mixedCash || "")}" placeholder="Enter cash amount" oninput="window.kkdSalesApp.setMixedCash(this.value)">
               </label>
               <label class="field">
                 <span>Online Received</span>
-                <input type="text" value="${escapeAttr(money(breakup.onlineAmount))}" readonly>
+                <input id="paymentOnlineAmountDisplay" type="text" value="${escapeAttr(money(breakup.onlineAmount))}" readonly>
               </label>
             </div>
           ` : ""}
@@ -420,7 +420,7 @@
               <div><strong>Online Received:</strong> ${money(breakup.totalAmount)}</div>
             </div>
           ` : ""}
-          ${state.paymentDialog?.error ? `<div class="payment-error">${escapeHtml(state.paymentDialog.error)}</div>` : ""}
+          <div id="paymentErrorBox" class="payment-error${state.paymentDialog?.error ? "" : " hidden"}">${escapeHtml(state.paymentDialog?.error || "")}</div>
           <div class="public-actions checkout-actions">
             <button class="button secondary" type="button" onclick="window.kkdSalesApp.closePaymentDialog()">Back to Cart</button>
             <button class="button" type="button" onclick="window.kkdSalesApp.confirmPaymentAndSubmit()">${method === "CASH" ? "Confirm Cash and Post Sale" : "Done and Post Sale"}</button>
