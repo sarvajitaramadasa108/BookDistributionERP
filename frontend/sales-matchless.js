@@ -334,7 +334,17 @@
   function setMixedCash(value) {
     state.paymentDialog.mixedCash = String(value ?? "");
     state.paymentDialog.error = "";
+    const cursorPosition = String(value ?? "").length;
     renderModalLayer();
+    const input = modalRoot.querySelector('.payment-split-grid input[type="number"]');
+    if (input) {
+      input.focus();
+      try {
+        input.setSelectionRange(cursorPosition, cursorPosition);
+      } catch (error) {
+        // ignore selection issues on unsupported inputs
+      }
+    }
   }
 
   function validatePaymentSelection() {
