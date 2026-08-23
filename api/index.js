@@ -2217,9 +2217,9 @@ async function getSaleEntriesContext(supabase) {
 }
 
 function buildSaleEntrySummary(doc, context) {
-  const itemById = Object.fromEntries((context.items || []).map((row) => [row.id, row]));
-  const warehouseById = Object.fromEntries((context.warehouses || []).map((row) => [row.id, row]));
-  const userById = Object.fromEntries((context.users || []).map((row) => [row.id, row]));
+  const itemById = Object.fromEntries((context.items || []).map((row) => [String(row.itemRowId || ""), row]));
+  const warehouseById = Object.fromEntries((context.warehouses || []).map((row) => [String(row.rowId || ""), row]));
+  const userById = Object.fromEntries((context.users || []).map((row) => [String(row.userId || ""), row]));
   const docLines = (context.lines || []).filter((line) => line.document_id === doc.id).sort((a, b) => Number(a.line_no || 0) - Number(b.line_no || 0));
   const paymentRows = (context.payments || []).filter((row) => row.document_id === doc.id);
   const lines = docLines.map((line, index) => {
@@ -2227,10 +2227,10 @@ function buildSaleEntrySummary(doc, context) {
     return {
       lineId: line.id,
       lineNo: Number(line.line_no || index + 1),
-      erpCode: item.erp_code || "",
-      itemName: item.item_name || "",
-      itemGroup: item.item_group || "BOOK",
-      itemType: item.item_type || "",
+      erpCode: item.erpCode || "",
+      itemName: item.name || "",
+      itemGroup: String(item.erpCode || "").startsWith("PRB-") ? "BOOK" : "DEVOTIONAL",
+      itemType: item.bookType || "",
       quantity: Number(line.quantity || 0),
       rate: Number(line.rate || 0),
       amount: Number(line.amount || 0)
@@ -2250,8 +2250,8 @@ function buildSaleEntrySummary(doc, context) {
     status: doc.status || "Posted",
     notes: doc.notes || "",
     warehouseId: doc.from_warehouse_id || doc.to_warehouse_id || "",
-    warehouseCode: warehouseById[doc.from_warehouse_id || doc.to_warehouse_id || ""]?.warehouse_code || "",
-    warehouseName: warehouseById[doc.from_warehouse_id || doc.to_warehouse_id || ""]?.warehouse_name || "",
+    warehouseCode: warehouseById[doc.from_warehouse_id || doc.to_warehouse_id || ""]?.warehouseId || "",
+    warehouseName: warehouseById[doc.from_warehouse_id || doc.to_warehouse_id || ""]?.name || "",
     createdByUserId: doc.created_by_user_id || "",
     createdByName: userById[doc.created_by_user_id || ""]?.name || "",
     createdByUsername: userById[doc.created_by_user_id || ""]?.username || "",
@@ -2277,15 +2277,15 @@ function buildSaleEntrySummary(doc, context) {
 }
 
 function buildSaleDayPaymentSummary(row, context) {
-  const warehouseById = Object.fromEntries((context.warehouses || []).map((item) => [item.id, item]));
-  const userById = Object.fromEntries((context.users || []).map((item) => [item.id, item]));
+  const warehouseById = Object.fromEntries((context.warehouses || []).map((item) => [String(item.rowId || ""), item]));
+  const userById = Object.fromEntries((context.users || []).map((item) => [String(item.userId || ""), item]));
   const warehouse = warehouseById[row.warehouse_id] || {};
   const user = userById[row.created_by_user_id] || {};
   return {
     dayPaymentId: row.id,
     warehouseId: row.warehouse_id || "",
-    warehouseCode: warehouse.warehouse_code || "",
-    warehouseName: warehouse.warehouse_name || "",
+    warehouseCode: warehouse.warehouseId || "",
+    warehouseName: warehouse.name || "",
     saleDate: row.sale_date || "",
     cashAmount: Number(row.cash_amount || 0),
     onlineAmount: Number(row.online_amount || 0),
