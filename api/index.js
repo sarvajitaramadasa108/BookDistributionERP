@@ -2328,15 +2328,21 @@ async function saleEntriesList(supabase, payload, currentUser) {
 async function saleEntryDetail(supabase, payload) {
   const documentRef = String(payload.documentId || payload.documentCode || "").trim();
   if (!documentRef) throw new Error("Sale entry is required");
+  const documentLookup = isUuidLike(documentRef)
+    ? (from, to) => supabase
+      .from("documents")
+      .select("*")
+      .eq("document_type", "SALE")
+      .eq("id", documentRef)
+      .range(from, to)
+    : (from, to) => supabase
+      .from("documents")
+      .select("*")
+      .eq("document_type", "SALE")
+      .eq("document_code", documentRef)
+      .range(from, to);
   const [documents, lines, items, warehouses, users, payments] = await Promise.all([
-    selectAllRows((from, to) =>
-      supabase
-        .from("documents")
-        .select("*")
-        .eq("document_type", "SALE")
-        .or(`id.eq.${documentRef},document_code.eq.${documentRef}`)
-        .range(from, to)
-    ),
+    selectAllRows(documentLookup),
     selectAllRows((from, to) =>
       supabase
         .from("document_lines")
@@ -2368,11 +2374,12 @@ async function createSaleEntryPayment(supabase, payload, currentUser) {
   const cashAmount = Number(payload.cashAmount || 0);
   const onlineAmount = Number(payload.onlineAmount || 0);
   if (cashAmount <= 0 && onlineAmount <= 0) throw new Error("Enter cash or online amount");
-  const { data: documentRow, error: documentError } = await supabase
+  const documentQuery = supabase
     .from("documents")
-    .select("id, document_type")
-    .or(`id.eq.${documentRef},document_code.eq.${documentRef}`)
-    .maybeSingle();
+    .select("id, document_type");
+  const { data: documentRow, error: documentError } = await (isUuidLike(documentRef)
+    ? documentQuery.eq("id", documentRef).maybeSingle()
+    : documentQuery.eq("document_code", documentRef).maybeSingle());
   if (documentError) throw documentError;
   if (!documentRow || String(documentRow.document_type || "").toUpperCase() !== "SALE") {
     throw new Error("Sale entry not found");
