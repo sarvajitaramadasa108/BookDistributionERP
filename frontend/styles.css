@@ -1251,6 +1251,82 @@ body.public-mode .loading-overlay {
   justify-content: flex-start;
 }
 
+.payment-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.payment-card {
+  width: min(100%, 560px);
+}
+
+.payment-method-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.payment-method-button {
+  min-height: 48px;
+  border: 1px solid rgba(133, 82, 44, 0.22);
+  border-radius: 14px;
+  background: #fff;
+  color: #5e3217;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.payment-method-button.active {
+  background: linear-gradient(180deg, #8d4d22, #6b3316);
+  color: #fff;
+  border-color: #6b3316;
+  box-shadow: 0 12px 26px rgba(107, 51, 22, 0.22);
+}
+
+.payment-qr-card,
+.payment-summary-card {
+  margin-top: 16px;
+  border: 1px solid rgba(133, 82, 44, 0.16);
+  border-radius: 18px;
+  background: #fff9ef;
+  padding: 14px;
+}
+
+.payment-summary-card {
+  display: grid;
+  gap: 8px;
+  color: #5e3217;
+  font-weight: 600;
+}
+
+.submitted-payment-summary {
+  max-width: 360px;
+  margin: 0 auto 18px;
+}
+
+.payment-qr-image {
+  display: block;
+  width: min(100%, 320px);
+  margin: 0 auto;
+  border-radius: 12px;
+  box-shadow: 0 10px 24px rgba(84, 42, 22, 0.12);
+}
+
+.payment-split-grid {
+  margin-top: 16px;
+}
+
+.payment-error {
+  margin-top: 12px;
+  color: #b42318;
+  font-weight: 700;
+}
+
 .success-card {
   text-align: center;
   padding: 28px 18px;
@@ -1278,6 +1354,10 @@ body.public-mode .loading-overlay {
 @media (max-width: 840px) {
   .grid-two,
   .grid-three {
+    grid-template-columns: 1fr;
+  }
+
+  .payment-method-grid {
     grid-template-columns: 1fr;
   }
 

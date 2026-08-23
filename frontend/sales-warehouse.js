@@ -5,6 +5,7 @@
   const toastStack = document.getElementById("toastStack");
   const APP_TITLE = "HKM Vizag Book Distribution";
   const APP_SUBTITLE = "Sign in with your warehouse account to post direct sale entries from live stock.";
+  const QR_IMAGE_URL = "/assets/idfc-qr.jpg";
 
   const state = {
     currentUser: null,
@@ -29,6 +30,12 @@
     requestSubmitting: false,
     submittedSaleId: "",
     lastSubmittedSale: null,
+    paymentDialog: {
+      open: false,
+      method: "CASH",
+      mixedCash: "",
+      error: ""
+    },
     printerTransport: "",
     printerReady: false,
     printerLabel: "Not connected",
@@ -252,6 +259,31 @@
     return state.cart.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.salePrice || 0), 0);
   }
 
+  function currentPaymentMethod() {
+    return String(state.paymentDialog?.method || "CASH").toUpperCase();
+  }
+
+  function paymentMethodLabel(method) {
+    if (method === "ONLINE") return "Online";
+    if (method === "MIXED") return "Mixed";
+    return "Cash";
+  }
+
+  function paymentBreakup() {
+    const total = Number(cartTotalValue() || 0);
+    const method = currentPaymentMethod();
+    if (method === "ONLINE") {
+      return { method, cashAmount: 0, onlineAmount: total, totalAmount: total };
+    }
+    if (method === "MIXED") {
+      const cashAmount = Number(state.paymentDialog?.mixedCash || 0);
+      const boundedCash = Math.min(Math.max(cashAmount, 0), total);
+      const onlineAmount = Math.max(total - boundedCash, 0);
+      return { method, cashAmount: boundedCash, onlineAmount, totalAmount: total };
+    }
+    return { method, cashAmount: total, onlineAmount: 0, totalAmount: total };
+  }
+
   function mySalesPendingTotal() {
     return (state.mySales || []).reduce((sum, row) => sum + Number(row.pendingAmount || 0), 0);
   }
@@ -278,7 +310,65 @@
 
   function closeImageViewer() {
     state.imageViewer = null;
-    renderImageViewer();
+    renderModalLayer();
+  }
+
+  function closePaymentDialog() {
+    state.paymentDialog = {
+      open: false,
+      method: "CASH",
+      mixedCash: "",
+      error: ""
+    };
+    renderModalLayer();
+  }
+
+  function openPaymentDialog() {
+    if (!state.cart.length) {
+      showToast("Add at least one item");
+      return;
+    }
+    if (!state.currentUser) {
+      showToast("Please log in first");
+      return;
+    }
+    state.paymentDialog = {
+      open: true,
+      method: "CASH",
+      mixedCash: "",
+      error: ""
+    };
+    renderModalLayer();
+  }
+
+  function setPaymentMethod(method) {
+    state.paymentDialog.method = String(method || "CASH").toUpperCase();
+    state.paymentDialog.error = "";
+    if (state.paymentDialog.method !== "MIXED") {
+      state.paymentDialog.mixedCash = "";
+    }
+    renderModalLayer();
+  }
+
+  function setMixedCash(value) {
+    state.paymentDialog.mixedCash = String(value ?? "");
+    state.paymentDialog.error = "";
+    renderModalLayer();
+  }
+
+  function validatePaymentSelection() {
+    const totalAmount = Number(cartTotalValue() || 0);
+    const { method, cashAmount, onlineAmount } = paymentBreakup();
+    if (totalAmount <= 0) return "Cart total must be greater than zero";
+    if (method === "MIXED") {
+      const rawCash = String(state.paymentDialog?.mixedCash || "").trim();
+      if (!rawCash.length) return "Enter the cash amount received";
+      if (!Number.isFinite(cashAmount)) return "Enter a valid cash amount";
+      if (cashAmount < 0) return "Cash amount cannot be negative";
+      if (cashAmount > totalAmount) return "Cash amount cannot exceed the total amount";
+      if (cashAmount === 0 && onlineAmount === 0) return "Enter a valid payment split";
+    }
+    return "";
   }
 
   function renderImageViewer() {
@@ -295,6 +385,67 @@
         </div>
       </section>
     `;
+  }
+
+  function renderPaymentDialog() {
+    if (!state.paymentDialog?.open) return false;
+    const method = currentPaymentMethod();
+    const breakup = paymentBreakup();
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop image-viewer-backdrop" onclick="window.kkdSalesApp.closePaymentDialog()"></div>
+      <section class="payment-modal" role="dialog" aria-modal="true" aria-label="Select payment method">
+        <div class="public-card payment-card">
+          <div class="public-card-header">
+            <h2>Payment Method</h2>
+            <div class="public-tag">${money(breakup.totalAmount)}</div>
+          </div>
+          <div class="payment-method-grid">
+            ${["CASH", "ONLINE", "MIXED"].map((option) => `
+              <button class="payment-method-button${method === option ? " active" : ""}" type="button" onclick="window.kkdSalesApp.setPaymentMethod('${option}')">${paymentMethodLabel(option)}</button>
+            `).join("")}
+          </div>
+          ${method === "CASH" ? `
+            <div class="payment-summary-card">
+              <div><strong>Cash Received:</strong> ${money(breakup.cashAmount)}</div>
+              <div><strong>Online Received:</strong> ${money(breakup.onlineAmount)}</div>
+            </div>
+          ` : `
+            <div class="payment-qr-card">
+              <img class="payment-qr-image" src="${escapeAttr(QR_IMAGE_URL)}" alt="Scan to pay QR code">
+            </div>
+          `}
+          ${method === "MIXED" ? `
+            <div class="grid-two payment-split-grid">
+              <label class="field">
+                <span>Cash Received</span>
+                <input type="number" min="0" max="${escapeAttr(String(breakup.totalAmount))}" step="0.01" value="${escapeAttr(state.paymentDialog?.mixedCash || "")}" placeholder="Enter cash amount" oninput="window.kkdSalesApp.setMixedCash(this.value)">
+              </label>
+              <label class="field">
+                <span>Online Received</span>
+                <input type="text" value="${escapeAttr(money(breakup.onlineAmount))}" readonly>
+              </label>
+            </div>
+          ` : ""}
+          ${method === "ONLINE" ? `
+            <div class="payment-summary-card">
+              <div><strong>Cash Received:</strong> ${money(0)}</div>
+              <div><strong>Online Received:</strong> ${money(breakup.totalAmount)}</div>
+            </div>
+          ` : ""}
+          ${state.paymentDialog?.error ? `<div class="payment-error">${escapeHtml(state.paymentDialog.error)}</div>` : ""}
+          <div class="public-actions checkout-actions">
+            <button class="button secondary" type="button" onclick="window.kkdSalesApp.closePaymentDialog()">Back to Cart</button>
+            <button class="button" type="button" onclick="window.kkdSalesApp.confirmPaymentAndSubmit()">${method === "CASH" ? "Confirm Cash and Post Sale" : "Done and Post Sale"}</button>
+          </div>
+        </div>
+      </section>
+    `;
+    return true;
+  }
+
+  function renderModalLayer() {
+    if (renderPaymentDialog()) return;
+    renderImageViewer();
   }
 
   async function ensureAuthenticated() {
@@ -427,7 +578,7 @@
       encodeEscPosText("--------------------------------\n"),
       encodeEscPosText(`Bill No: ${detail?.documentId || "-"}\n`),
       encodeEscPosText(`Date: ${formatDateTime(createdAt)}\n`),
-      encodeEscPosText(`Warehouse: ${detail?.warehouseName || WAREHOUSE_KEY}\n`),
+      encodeEscPosText(`Warehouse: ${detail?.warehouseName || state.warehouseName || "Warehouse"}\n`),
       encodeEscPosText(`User: ${detail?.createdByName || detail?.createdByUsername || "-"}\n`),
       detail?.notes ? encodeEscPosText(`Notes: ${detail.notes}\n`) : new Uint8Array(),
       encodeEscPosText("--------------------------------\n"),
@@ -802,22 +953,31 @@
   }
 
   async function submitSale() {
-    if (!state.cart.length) {
-      showToast("Add at least one item");
+    openPaymentDialog();
+  }
+
+  async function confirmPaymentAndSubmit() {
+    const paymentError = validatePaymentSelection();
+    if (paymentError) {
+      state.paymentDialog.error = paymentError;
+      renderModalLayer();
       return;
     }
-    if (!state.currentUser) {
-      showToast("Please log in first");
-      return;
-    }
+    const breakup = paymentBreakup();
     state.requestSubmitting = true;
     setLoading(true, "Posting sale entry...");
     try {
       const result = await window.erpApi.request("sales.submit", {
-        warehouseId: state.warehouseId || WAREHOUSE_KEY,
-        warehouseName: state.warehouseName || WAREHOUSE_KEY,
+        warehouseId: state.warehouseId || state.warehouseName || "",
+        warehouseName: state.warehouseName || state.warehouseId || "",
         documentDate: new Date().toISOString().slice(0, 10),
         notes: String(state.notes || "").trim(),
+        paymentMethod: breakup.method,
+        paymentMethodLabel: paymentMethodLabel(breakup.method),
+        paymentDate: new Date().toISOString().slice(0, 10),
+        paymentNotes: `Payment captured at sale entry (${paymentMethodLabel(breakup.method)})`,
+        cashAmount: Number(breakup.cashAmount || 0),
+        onlineAmount: Number(breakup.onlineAmount || 0),
         lines: state.cart.map((line) => ({
           erpCode: line.erpCode,
           quantity: Number(line.quantity || 0),
@@ -829,6 +989,7 @@
       state.lastSubmittedSale = result || null;
       state.cart = [];
       state.notes = "";
+      closePaymentDialog();
       state.view = "submitted";
       state.catalogByGroup = { BOOK: [], PARAPHERNALIA: [] };
       await Promise.all([ensureCatalogLoaded("BOOK"), ensureCatalogLoaded("PARAPHERNALIA"), loadMySales()]);
@@ -847,6 +1008,9 @@
     const createdAt = detail?.createdAt || detail?.documentDate || new Date().toISOString();
     const totalQty = lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
     const totalAmount = lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+    const paidCashAmount = Number(detail?.paidCashAmount || 0);
+    const paidOnlineAmount = Number(detail?.paidOnlineAmount || 0);
+    const paymentType = paidCashAmount > 0 && paidOnlineAmount > 0 ? "Mixed" : paidOnlineAmount > 0 ? "Online" : "Cash";
     const isPrintOnly = Boolean(printOnly);
     return `
 <!doctype html>
@@ -978,8 +1142,11 @@
     <div class="divider"></div>
     <div class="meta-row"><span>Bill No</span><span>${escapeHtml(detail?.documentId || "-")}</span></div>
     <div class="meta-row"><span>Date</span><span>${escapeHtml(formatDateTime(createdAt))}</span></div>
-    <div class="meta-row"><span>Warehouse</span><span>${escapeHtml(detail?.warehouseName || WAREHOUSE_KEY)}</span></div>
+    <div class="meta-row"><span>Warehouse</span><span>${escapeHtml(detail?.warehouseName || state.warehouseName || "Warehouse")}</span></div>
     <div class="meta-row"><span>User</span><span>${escapeHtml(detail?.createdByName || detail?.createdByUsername || "-")}</span></div>
+    <div class="meta-row"><span>Payment</span><span>${escapeHtml(paymentType)}</span></div>
+    <div class="meta-row"><span>Cash</span><span>${escapeHtml(money(paidCashAmount))}</span></div>
+    <div class="meta-row"><span>Online</span><span>${escapeHtml(money(paidOnlineAmount))}</span></div>
     ${detail?.notes ? `<div class="meta-row"><span>Notes</span><span style="text-align:right;">${escapeHtml(detail.notes)}</span></div>` : ""}
     <div class="divider"></div>
     <table>
@@ -1220,7 +1387,7 @@
         </label>
         <div class="public-actions checkout-actions">
           <button class="button secondary" type="button" onclick="window.kkdSalesApp.setView('catalog')">Continue picking books / items</button>
-          <button class="button" type="button" onclick="window.kkdSalesApp.submitSale()" ${state.cart.length && !state.requestSubmitting ? "" : "disabled"}>${state.requestSubmitting ? "Posting..." : "Post Sale Entry"}</button>
+          <button class="button" type="button" onclick="window.kkdSalesApp.submitSale()" ${state.cart.length && !state.requestSubmitting ? "" : "disabled"}>${state.requestSubmitting ? "Posting..." : "Choose Payment & Post Sale"}</button>
         </div>
       </section>
     `;
@@ -1285,6 +1452,8 @@
                           <div class="detail-meta">
                             <div><strong>Warehouse:</strong> ${escapeHtml(row.warehouseName || "-")}</div>
                             <div><strong>Notes:</strong> ${escapeHtml(row.notes || "-")}</div>
+                            <div><strong>Cash Received:</strong> ${escapeHtml(money(row.paidCashAmount || 0))}</div>
+                            <div><strong>Online Received:</strong> ${escapeHtml(money(row.paidOnlineAmount || 0))}</div>
                           </div>
                           <div class="history-detail-table-wrap">
                             <table class="history-detail-table">
@@ -1332,6 +1501,12 @@
         <h1>Sale Entry Posted</h1>
         <p>Your cart has been posted as a sale entry for the ${escapeHtml(state.warehouseName)} warehouse.</p>
         <div class="success-meta">${state.submittedSaleId ? `Sale Entry ${escapeHtml(state.submittedSaleId)} was created successfully.` : "Sale entry created successfully."}</div>
+        ${state.lastSubmittedSale ? `
+          <div class="payment-summary-card submitted-payment-summary">
+            <div><strong>Cash Received:</strong> ${money(state.lastSubmittedSale.paidCashAmount || 0)}</div>
+            <div><strong>Online Received:</strong> ${money(state.lastSubmittedSale.paidOnlineAmount || 0)}</div>
+          </div>
+        ` : ""}
         <div class="public-actions centered-actions">
           <button class="button secondary" type="button" onclick="window.kkdSalesApp.setView('history')">My Sale Entries</button>
           <button class="button" type="button" onclick="window.kkdSalesApp.setView('catalog')">Post Another Sale</button>
@@ -1384,7 +1559,7 @@
 
   function render() {
     root.innerHTML = renderPage();
-    renderImageViewer();
+    renderModalLayer();
     document.title = state.currentUser ? APP_TITLE : `${APP_TITLE} Login`;
   }
 
@@ -1419,6 +1594,10 @@
     updateCartQty,
     removeCartLine,
     submitSale,
+    closePaymentDialog,
+    setPaymentMethod,
+    setMixedCash,
+    confirmPaymentAndSubmit,
     openReceipt,
     connectPrinter,
     connectBluetoothPrinter,

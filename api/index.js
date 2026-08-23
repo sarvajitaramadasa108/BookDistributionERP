@@ -2428,6 +2428,20 @@ async function submitWarehouseSale(supabase, payload, currentUser) {
     }))
     .filter((line) => line.bookId && line.quantity > 0);
   if (!lines.length) throw new Error("Add at least one item");
+  const paymentMethod = String(payload.paymentMethod || "").trim().toUpperCase();
+  const cashAmount = Number(payload.cashAmount || 0);
+  const onlineAmount = Number(payload.onlineAmount || 0);
+  if (!paymentMethod || !["CASH", "ONLINE", "MIXED"].includes(paymentMethod)) {
+    throw new Error("Select a payment method");
+  }
+  if (cashAmount < 0 || onlineAmount < 0) {
+    throw new Error("Payment amounts cannot be negative");
+  }
+  const expectedTotalAmount = lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.rate || 0), 0);
+  const paidTotalAmount = cashAmount + onlineAmount;
+  if (Math.abs(expectedTotalAmount - paidTotalAmount) > 0.01) {
+    throw new Error("Payment total must match the sale amount");
+  }
   const created = await createDocument(supabase, {
     documentType: "SALE",
     documentDate: payload.documentDate || nowIso(),
@@ -2436,6 +2450,23 @@ async function submitWarehouseSale(supabase, payload, currentUser) {
     notes: String(payload.notes || "").trim(),
     lines
   }, currentUser);
+  const detail = await saleEntryDetail(supabase, { documentId: created.documentId });
+  if (cashAmount > 0 || onlineAmount > 0) {
+    const paymentDate = toDateOnly(payload.paymentDate || payload.documentDate || nowIso());
+    const paymentNotes = String(
+      payload.paymentNotes
+      || payload.paymentMethodLabel
+      || `Payment captured at sale entry (${paymentMethod})`
+    ).trim();
+    const { error: paymentError } = await supabase.from("sale_entry_payments").insert({
+      document_id: detail.documentRowId,
+      payment_date: paymentDate,
+      cash_amount: cashAmount,
+      online_amount: onlineAmount,
+      notes: paymentNotes
+    });
+    if (paymentError) throw paymentError;
+  }
   return saleEntryDetail(supabase, { documentId: created.documentId });
 }
 
