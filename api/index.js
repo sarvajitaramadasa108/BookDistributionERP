@@ -2149,35 +2149,70 @@ async function approveCatalogRequest(supabase, payload, currentUser) {
 }
 
 async function getSaleEntriesContext(supabase) {
-  const [documentsResult, linesResult, itemsResult, warehousesResult, usersResult, paymentsResult, dayPaymentsResult] = await Promise.all([
-    supabase.from("documents").select("*").eq("document_type", "SALE").order("created_at", { ascending: false }),
-    supabase.from("document_lines").select("*"),
-    supabase.from("items").select("*"),
-    supabase.from("warehouses").select("*"),
-    supabase.from("users").select("*"),
-    supabase.from("sale_entry_payments").select("*").order("payment_date", { ascending: true }).order("created_at", { ascending: true }),
-    supabase.from("sale_day_payments").select("*").order("sale_date", { ascending: true }).order("created_at", { ascending: true })
+  const [
+    documents,
+    lines,
+    items,
+    warehouses,
+    users,
+    payments,
+    dayPaymentsRows
+  ] = await Promise.all([
+    selectAllRows((from, to) =>
+      supabase
+        .from("documents")
+        .select("*")
+        .eq("document_type", "SALE")
+        .order("created_at", { ascending: false })
+        .range(from, to)
+    ),
+    selectAllRows((from, to) =>
+      supabase
+        .from("document_lines")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .range(from, to)
+    ),
+    listTable(supabase, "items"),
+    listTable(supabase, "warehouses"),
+    listTable(supabase, "users"),
+    selectAllRows((from, to) =>
+      supabase
+        .from("sale_entry_payments")
+        .select("*")
+        .order("payment_date", { ascending: true })
+        .order("created_at", { ascending: true })
+        .range(from, to)
+    ),
+    selectAllRows((from, to) =>
+      supabase
+        .from("sale_day_payments")
+        .select("*")
+        .order("sale_date", { ascending: true })
+        .order("created_at", { ascending: true })
+        .range(from, to)
+    ).catch((error) => {
+      const message = String(error?.message || "").toLowerCase();
+      if (!message.includes("sale_day_payments") && !message.includes("schema cache") && !message.includes("does not exist")) {
+        throw error;
+      }
+      return [];
+    })
   ]);
-  if (documentsResult.error) throw documentsResult.error;
-  if (linesResult.error) throw linesResult.error;
-  if (itemsResult.error) throw itemsResult.error;
-  if (warehousesResult.error) throw warehousesResult.error;
-  if (usersResult.error) throw usersResult.error;
-  if (paymentsResult.error) throw paymentsResult.error;
-  if (dayPaymentsResult.error) {
-    const message = String(dayPaymentsResult.error.message || "").toLowerCase();
+  if (Array.isArray(dayPaymentsRows) === false) {
+    const message = String(dayPaymentsRows?.error?.message || "").toLowerCase();
     if (!message.includes("sale_day_payments") && !message.includes("schema cache") && !message.includes("does not exist")) {
-      throw dayPaymentsResult.error;
+      throw dayPaymentsRows.error;
     }
   }
   return {
-    documents: documentsResult.data || [],
-    lines: linesResult.data || [],
-    items: itemsResult.data || [],
-    warehouses: warehousesResult.data || [],
-    users: usersResult.data || [],
-    payments: paymentsResult.data || [],
-    dayPayments: dayPaymentsResult.data || []
+    documents: documents || [],
+    lines: lines || [],
+    items: items || [],
+    warehouses: warehouses || [],
+    users: users || [],
+    payments: payments || [],
+    dayPayments: Array.isArray(dayPaymentsRows) ? dayPaymentsRows : []
   };
 }
 
@@ -2293,8 +2328,36 @@ async function saleEntriesList(supabase, payload, currentUser) {
 async function saleEntryDetail(supabase, payload) {
   const documentRef = String(payload.documentId || payload.documentCode || "").trim();
   if (!documentRef) throw new Error("Sale entry is required");
-  const context = await getSaleEntriesContext(supabase);
-  const doc = (context.documents || []).find((row) => row.id === documentRef || row.document_code === documentRef);
+  const [documents, lines, items, warehouses, users, payments] = await Promise.all([
+    selectAllRows((from, to) =>
+      supabase
+        .from("documents")
+        .select("*")
+        .eq("document_type", "SALE")
+        .or(`id.eq.${documentRef},document_code.eq.${documentRef}`)
+        .range(from, to)
+    ),
+    selectAllRows((from, to) =>
+      supabase
+        .from("document_lines")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .range(from, to)
+    ),
+    listTable(supabase, "items"),
+    listTable(supabase, "warehouses"),
+    listTable(supabase, "users"),
+    selectAllRows((from, to) =>
+      supabase
+        .from("sale_entry_payments")
+        .select("*")
+        .order("payment_date", { ascending: true })
+        .order("created_at", { ascending: true })
+        .range(from, to)
+    )
+  ]);
+  const context = { documents, lines, items, warehouses, users, payments, dayPayments: [] };
+  const doc = (documents || []).find((row) => row.id === documentRef || row.document_code === documentRef);
   if (!doc) throw new Error("Sale entry not found");
   return buildSaleEntrySummary(doc, context);
 }
