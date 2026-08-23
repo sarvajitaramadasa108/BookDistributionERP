@@ -1002,6 +1002,17 @@ tbody tr:hover td {
     padding: 4px 3px;
     font-size: 9px;
   }
+
+  .payment-modal {
+    padding:
+      max(12px, env(safe-area-inset-top))
+      12px
+      max(20px, calc(env(safe-area-inset-bottom) + 16px));
+  }
+
+  .payment-card {
+    width: 100%;
+  }
 }
 
 body.public-mode {
@@ -1256,8 +1267,15 @@ body.public-mode .loading-overlay {
   inset: 0;
   z-index: 60;
   display: grid;
-  place-items: center;
-  padding: 20px;
+  justify-items: center;
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding:
+    max(20px, env(safe-area-inset-top))
+    20px
+    max(28px, calc(env(safe-area-inset-bottom) + 20px));
 }
 
 .payment-card {
