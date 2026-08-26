@@ -297,6 +297,7 @@ function mapWarehouse(row) {
 
 function mapItem(row) {
   return {
+    id: row.id,
     itemRowId: row.id,
     bookId: row.erp_code,
     erpCode: row.erp_code,
@@ -1340,13 +1341,18 @@ async function createDocument(supabase, payload, currentUser) {
         item = await upsertItemIfMissing(supabase, { ...rawLine, itemGroup });
       }
     }
+    const itemRowId = String(item && (item.id || item.itemRowId) || "").trim();
+    if (!itemRowId) {
+      const lineLabel = String(rawLine.bookName || rawLine.name || rawLine.erpCode || rawLine.bookId || `line ${lineNo}`).trim();
+      throw new Error(`Could not resolve item for ${lineLabel}`);
+    }
     const qty = Number(rawLine.quantity || 0);
     const rate = Number(rawLine.rate || rawLine.purchasePrice || 0);
     const amount = qty * rate;
     const { data: line, error: lineError } = await supabase.from("document_lines").insert({
       document_id: doc.id,
       line_no: lineNo,
-      item_id: item.id,
+      item_id: itemRowId,
       quantity: qty,
       rate,
       amount,
@@ -1362,7 +1368,7 @@ async function createDocument(supabase, payload, currentUser) {
         ledger_date: documentDate,
         warehouse_id: fromWarehouseId,
           activity_id: activityRow ? activityRow.id : null,
-          item_id: item.id,
+          item_id: itemRowId,
           movement_type: "TRANSFER_OUT",
           quantity_in: 0,
           quantity_out: qty,
@@ -1375,7 +1381,7 @@ async function createDocument(supabase, payload, currentUser) {
           ledger_date: documentDate,
           warehouse_id: toWarehouseId,
           activity_id: activityRow ? activityRow.id : null,
-          item_id: item.id,
+          item_id: itemRowId,
           movement_type: "TRANSFER_IN",
           quantity_in: qty,
         quantity_out: 0,
@@ -1389,7 +1395,7 @@ async function createDocument(supabase, payload, currentUser) {
         ledger_date: documentDate,
         warehouse_id: warehouseId,
         activity_id: activityRow ? activityRow.id : null,
-        item_id: item.id,
+        item_id: itemRowId,
         movement_type: "UNSETTLED_OPENING",
         quantity_in: 0,
         quantity_out: 0,
@@ -1403,7 +1409,7 @@ async function createDocument(supabase, payload, currentUser) {
         ledger_date: documentDate,
         warehouse_id: warehouseId,
           activity_id: activityRow ? activityRow.id : null,
-          item_id: item.id,
+          item_id: itemRowId,
           movement_type: documentType,
           quantity_in: qty,
           quantity_out: 0,
@@ -1417,7 +1423,7 @@ async function createDocument(supabase, payload, currentUser) {
           ledger_date: documentDate,
           warehouse_id: warehouseId,
           activity_id: activityRow ? activityRow.id : null,
-          item_id: item.id,
+          item_id: itemRowId,
           movement_type: documentType,
           quantity_in: 0,
           quantity_out: qty,
