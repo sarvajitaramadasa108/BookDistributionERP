@@ -5010,15 +5010,56 @@
     });
   }
 
+  function saleEntriesForWarehouseContext() {
+    const warehouseFilter = String(state.saleEntryWarehouseFilter || "all");
+    return (state.saleEntries || []).filter((row) => {
+      if (warehouseFilter === "all") return true;
+      return [
+        row.warehouseId,
+        row.warehouseCode,
+        row.warehouseName
+      ].some((value) => String(value || "").trim() === warehouseFilter);
+    });
+  }
+
+  function saleEntrySettlementLabel(row) {
+    const collectedTotal = Number(row?.collectedTotalAmount || row?.paidTotalAmount || 0);
+    const pendingAmount = Number(row?.pendingAmount || 0);
+    if (collectedTotal <= 0) return "Payment Pending";
+    if (pendingAmount > 0) return "Backend Settlement Pending";
+    return "Settled";
+  }
+
   function saleEntriesOverview(rows) {
+    const todayKey = toInputDate(new Date().toISOString());
     const value = rows.reduce((acc, row) => {
-      acc.saleAmount += Number(row.totalAmount || 0);
-      acc.collectedCashAmount += Number(row.collectedCashAmount || row.paidCashAmount || 0);
-      acc.collectedOnlineAmount += Number(row.collectedOnlineAmount || row.paidOnlineAmount || 0);
+      const totalAmount = Number(row.totalAmount || 0);
+      const collectedCashAmount = Number(row.collectedCashAmount || row.paidCashAmount || 0);
+      const collectedOnlineAmount = Number(row.collectedOnlineAmount || row.paidOnlineAmount || 0);
+      const rowDate = toInputDate(row.createdAt || row.documentDate);
+      acc.saleAmount += totalAmount;
+      acc.collectedCashAmount += collectedCashAmount;
+      acc.collectedOnlineAmount += collectedOnlineAmount;
       acc.entrySettledCashAmount += Number(row.entrySettledCashAmount || 0);
       acc.entrySettledOnlineAmount += Number(row.entrySettledOnlineAmount || 0);
       acc.totalQty += Number(row.totalQty || 0);
       acc.entryCount += 1;
+      if (rowDate === todayKey) {
+        acc.todayCashSales += collectedCashAmount;
+        acc.todayOnlineSales += collectedOnlineAmount;
+        acc.todayTotalSales += totalAmount;
+      }
+      (row.lines || []).forEach((line) => {
+        const amount = Number(line.amount || 0);
+        const group = String(line.itemGroup || "BOOK").toUpperCase();
+        if (group === "PARAPHERNALIA" || group === "DEVOTIONAL") {
+          acc.totalDevotionalSales += amount;
+          if (rowDate === todayKey) acc.todayDevotionalSales += amount;
+        } else {
+          acc.totalBookSales += amount;
+          if (rowDate === todayKey) acc.todayBookSales += amount;
+        }
+      });
       return acc;
     }, {
       saleAmount: 0,
@@ -5030,7 +5071,14 @@
       pendingOnlineAmount: 0,
       pendingAmount: 0,
       totalQty: 0,
-      entryCount: 0
+      entryCount: 0,
+      todayBookSales: 0,
+      todayDevotionalSales: 0,
+      todayCashSales: 0,
+      todayOnlineSales: 0,
+      todayTotalSales: 0,
+      totalBookSales: 0,
+      totalDevotionalSales: 0
     });
     const monthFilter = String(state.saleEntryMonthFilter || "").trim();
     const warehouseFilter = String(state.saleEntryWarehouseFilter || "all");
@@ -5115,7 +5163,8 @@
 
   function renderSaleEntriesMarkup() {
     const rows = filteredSaleEntries();
-    const overview = saleEntriesOverview(rows);
+    const warehouseScopedRows = saleEntriesForWarehouseContext();
+    const overview = saleEntriesOverview(warehouseScopedRows);
     const groupedRows = saleEntriesGroupedByDate(rows);
     const detail = state.saleEntryDetail || state.saleEntries.find((row) => row.documentId === state.saleEntryDetailId) || null;
     const warehouseOptions = (state.warehouses || []).filter((row) => row.active !== false);
@@ -5147,16 +5196,14 @@
           </div>
           ${detail ? saleEntryDetailMarkup(detail) : `
             <div class="grid metrics reports-metrics activity-report-metrics">
-              ${metric("Month Sale", money(overview.saleAmount), "Overall sale value for the selected month")}
-              ${metric("Cash Pending", money(overview.pendingCashAmount || 0), "Cash still to settle to backend")}
-              ${metric("Online Pending", money(overview.pendingOnlineAmount || 0), "Online still to settle to backend")}
-              ${metric("Collected Cash", money(overview.collectedCashAmount || 0), "Cash collected at the counter")}
-              ${metric("Collected Online", money(overview.collectedOnlineAmount || 0), "Online collected at the counter")}
-              ${metric("Settled Cash", money((overview.entrySettledCashAmount || 0) + (overview.daySettledCashAmount || 0)), "Cash already settled to backend")}
-              ${metric("Settled Online", money((overview.entrySettledOnlineAmount || 0) + (overview.daySettledOnlineAmount || 0)), "Online already settled to backend")}
-              ${metric("Total Pending", money(overview.pendingAmount), "Total amount still to settle to backend")}
-              ${metric("Entries", overview.entryCount, "Sale entries in the selected month")}
-              ${metric("Qty", overview.totalQty, "Total sold quantity")}
+              ${metric("Today's Book Sales", money(overview.todayBookSales || 0), "Books sold today")}
+              ${metric("Today's Devotional Sales", money(overview.todayDevotionalSales || 0), "Devotional items sold today")}
+              ${metric("Today's Cash Sales", money(overview.todayCashSales || 0), "Cash sales collected today")}
+              ${metric("Today's Online Sales", money(overview.todayOnlineSales || 0), "Online sales collected today")}
+              ${metric("Today's Total Sales", money(overview.todayTotalSales || 0), "Total sale value posted today")}
+              ${metric("Total Sales Till Now", money(overview.saleAmount || 0), "All sale value for the selected warehouse scope")}
+              ${metric("Total Cash Payment Pending", money(overview.pendingCashAmount || 0), "Cash still to settle to backend")}
+              ${metric("Total Online Payment Pending", money(overview.pendingOnlineAmount || 0), "Online still to settle to backend")}
             </div>
             ${rows.length ? saleEntriesDayGroupsMarkup(groupedRows) : '<div class="empty-state">No sale entries found.</div>'}
           `}
@@ -5256,13 +5303,14 @@
               <th>Created By</th>
               <th>Items</th>
               <th>Qty</th>
-              <th>Sale Amount</th>
-              <th>Counter Cash</th>
-              <th>Counter Online</th>
-              <th>Pending To Backend</th>
-              <th>Action</th>
-            </tr>
-          </thead>
+                <th>Sale Amount</th>
+                <th>Counter Cash</th>
+                <th>Counter Online</th>
+                <th>Pending To Backend</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
           <tbody>
             ${rows.map((row) => `
               <tr>
@@ -5276,6 +5324,7 @@
                 <td>${money(Number(row.paidCashAmount || 0))}</td>
                 <td>${money(Number(row.paidOnlineAmount || 0))}</td>
                 <td>${money(Number(row.pendingAmount || 0))}</td>
+                <td>${escapeHtml(saleEntrySettlementLabel(row))}</td>
                 <td><button class="small-button" type="button" onclick="window.erpApp.showSaleEntryDetails('${escapeAttribute(row.documentId)}')">Show Details</button></td>
               </tr>
             `).join("")}
@@ -5305,7 +5354,7 @@
                 ${metric("Cash Pending", money(Number(detail.pendingCashAmount || 0)), "Cash still to settle to backend")}
                 ${metric("Online Pending", money(Number(detail.pendingOnlineAmount || 0)), "Online still to settle to backend")}
                 ${metric("Total Pending", money(Number(detail.pendingAmount || 0)), "Total still to settle to backend")}
-                ${metric("Status", detail.pendingAmount > 0 ? "Backend Settlement Pending" : "Settled", detail.status || "Posted")}
+                ${metric("Status", saleEntrySettlementLabel(detail), detail.status || "Posted")}
               </div>
               <div class="detail-meta">
                 <div><strong>Warehouse:</strong> ${escapeHtml(detail.warehouseName || detail.warehouseCode || "-")}</div>

@@ -302,6 +302,51 @@
     return (state.mySales || []).length;
   }
 
+  function saleSettlementLabel(row) {
+    const collectedTotal = Number(row?.collectedTotalAmount || row?.paidTotalAmount || 0);
+    const pendingAmount = Number(row?.pendingAmount || 0);
+    if (collectedTotal <= 0) return "Payment Pending";
+    if (pendingAmount > 0) return "Backend Settlement Pending";
+    return "Settled";
+  }
+
+  function mySalesDashboardMetrics() {
+    const todayKey = toInputDate(new Date().toISOString());
+    return (state.mySales || []).reduce((acc, row) => {
+      const totalAmount = Number(row.totalAmount || 0);
+      const cashAmount = Number(row.collectedCashAmount || row.paidCashAmount || 0);
+      const onlineAmount = Number(row.collectedOnlineAmount || row.paidOnlineAmount || 0);
+      const rowDate = toInputDate(row.createdAt || row.documentDate);
+      acc.totalSalesTillNow += totalAmount;
+      acc.totalCashPaymentPending += Number(row.pendingCashAmount || 0);
+      acc.totalOnlinePaymentPending += Number(row.pendingOnlineAmount || 0);
+      if (rowDate === todayKey) {
+        acc.todayCashSales += cashAmount;
+        acc.todayOnlineSales += onlineAmount;
+        acc.todayTotalSales += totalAmount;
+      }
+      (row.lines || []).forEach((line) => {
+        const amount = Number(line.amount || 0);
+        const group = String(line.itemGroup || "BOOK").toUpperCase();
+        if (group === "PARAPHERNALIA" || group === "DEVOTIONAL") {
+          acc.todayDevotionalSales += rowDate === todayKey ? amount : 0;
+        } else {
+          acc.todayBookSales += rowDate === todayKey ? amount : 0;
+        }
+      });
+      return acc;
+    }, {
+      todayBookSales: 0,
+      todayDevotionalSales: 0,
+      todayCashSales: 0,
+      todayOnlineSales: 0,
+      todayTotalSales: 0,
+      totalSalesTillNow: 0,
+      totalCashPaymentPending: 0,
+      totalOnlinePaymentPending: 0
+    });
+  }
+
   function openImageViewer(imageUrl, itemName) {
     const url = normalizeDriveImageUrl(imageUrl);
     if (!url) return;
@@ -1632,6 +1677,7 @@
   }
 
   function renderHistoryView() {
+    const metrics = mySalesDashboardMetrics();
     return `
       <section class="public-card request-main">
         <div class="public-card-header">
@@ -1640,24 +1686,44 @@
         </div>
         <div class="grid metrics reports-metrics activity-report-metrics">
           <article class="card metric-card">
-            <div class="metric-label">My Sale Orders</div>
-            <div class="metric-value">${mySalesOrderCount()}</div>
-            <div class="metric-note">Total sale entries posted by you</div>
+            <div class="metric-label">Today's Book Sales</div>
+            <div class="metric-value">${money(metrics.todayBookSales || 0)}</div>
+            <div class="metric-note">Books sold today</div>
           </article>
           <article class="card metric-card">
-            <div class="metric-label">Cash Pending</div>
-            <div class="metric-value">${money(mySalesPendingCashTotal())}</div>
+            <div class="metric-label">Today's Devotional Sales</div>
+            <div class="metric-value">${money(metrics.todayDevotionalSales || 0)}</div>
+            <div class="metric-note">Devotional items sold today</div>
+          </article>
+          <article class="card metric-card">
+            <div class="metric-label">Today's Cash Sales</div>
+            <div class="metric-value">${money(metrics.todayCashSales || 0)}</div>
+            <div class="metric-note">Cash sales collected today</div>
+          </article>
+          <article class="card metric-card">
+            <div class="metric-label">Today's Online Sales</div>
+            <div class="metric-value">${money(metrics.todayOnlineSales || 0)}</div>
+            <div class="metric-note">Online sales collected today</div>
+          </article>
+          <article class="card metric-card">
+            <div class="metric-label">Today's Total Sales</div>
+            <div class="metric-value">${money(metrics.todayTotalSales || 0)}</div>
+            <div class="metric-note">Total sale value posted today</div>
+          </article>
+          <article class="card metric-card">
+            <div class="metric-label">Total Sales Till now</div>
+            <div class="metric-value">${money(metrics.totalSalesTillNow || 0)}</div>
+            <div class="metric-note">All sale value posted by you</div>
+          </article>
+          <article class="card metric-card">
+            <div class="metric-label">Total Cash payment pending</div>
+            <div class="metric-value">${money(metrics.totalCashPaymentPending || 0)}</div>
             <div class="metric-note">Cash still to settle to backend</div>
           </article>
           <article class="card metric-card">
-            <div class="metric-label">Online Pending</div>
-            <div class="metric-value">${money(mySalesPendingOnlineTotal())}</div>
+            <div class="metric-label">Total Online payment pending</div>
+            <div class="metric-value">${money(metrics.totalOnlinePaymentPending || 0)}</div>
             <div class="metric-note">Online still to settle to backend</div>
-          </article>
-          <article class="card metric-card">
-            <div class="metric-label">Total Pending</div>
-            <div class="metric-value">${money(mySalesPendingTotal())}</div>
-            <div class="metric-note">Total amount still to settle to backend</div>
           </article>
         </div>
         ${state.mySalesLoading ? `<div class="empty-note">Loading sale entries...</div>` : ""}
@@ -1682,7 +1748,7 @@
                   <tr>
                     <td>${escapeHtml(formatDateTime(row.createdAt || row.documentDate))}</td>
                     <td>${escapeHtml(row.documentId || "-")}</td>
-                    <td>${escapeHtml(Number(row.collectedTotalAmount || 0) <= 0 ? "Payment Pending" : Number(row.pendingAmount || 0) > 0 ? "Backend Settlement Pending" : "Settled")}</td>
+                    <td>${escapeHtml(saleSettlementLabel(row))}</td>
                     <td>${escapeHtml(money(row.totalAmount || 0))}</td>
                     <td>${escapeHtml(money(row.collectedCashAmount || row.paidCashAmount || 0))}</td>
                     <td>${escapeHtml(money(row.collectedOnlineAmount || row.paidOnlineAmount || 0))}</td>
