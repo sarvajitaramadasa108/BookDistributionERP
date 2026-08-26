@@ -1,11 +1,11 @@
-const CACHE_NAME = "hkm-matchless-sales-pwa-v2";
+const CACHE_NAME = "hkm-matchless-sales-pwa-v3";
 const CORE_ASSETS = [
   "/sales/matchless",
   "/sales-matchless.html",
-  "/styles.css",
-  "/config.js?v=20260813",
-  "/api.js?v=20260813",
-  "/sales-matchless.js?v=20260813",
+  "/styles.css?v=20260826",
+  "/config.js?v=20260826",
+  "/api.js?v=20260826",
+  "/sales-matchless.js?v=20260826",
   "/sales-matchless.webmanifest"
 ];
 

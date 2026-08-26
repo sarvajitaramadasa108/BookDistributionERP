@@ -31,9 +31,17 @@
     lastSubmittedSale: null,
     paymentDialog: {
       open: false,
+      documentId: "",
       method: "CASH",
+      totalAmount: 0,
       mixedCash: "",
       error: ""
+    },
+    saleEditDialog: {
+      open: false,
+      documentId: "",
+      lines: [],
+      notes: ""
     },
     printerTransport: "",
     printerReady: false,
@@ -244,15 +252,28 @@
     return String(state.paymentDialog?.method || "CASH").toUpperCase();
   }
 
+  function paymentDialogDocumentId() {
+    return String(state.paymentDialog?.documentId || "").trim();
+  }
+
+  function paymentDialogTotalAmount() {
+    const configuredTotal = Number(state.paymentDialog?.totalAmount || 0);
+    return configuredTotal > 0 ? configuredTotal : Number(cartTotalValue() || 0);
+  }
+
   function paymentMethodLabel(method) {
     if (method === "ONLINE") return "Online";
     if (method === "MIXED") return "Mixed";
+    if (method === "PENDING") return "Payment Pending";
     return "Cash";
   }
 
   function paymentBreakup() {
-    const total = Number(cartTotalValue() || 0);
+    const total = paymentDialogTotalAmount();
     const method = currentPaymentMethod();
+    if (method === "PENDING") {
+      return { method, cashAmount: 0, onlineAmount: 0, totalAmount: total };
+    }
     if (method === "ONLINE") {
       return { method, cashAmount: 0, onlineAmount: total, totalAmount: total };
     }
@@ -305,15 +326,18 @@
   function closePaymentDialog() {
     state.paymentDialog = {
       open: false,
+      documentId: "",
       method: "CASH",
+      totalAmount: 0,
       mixedCash: "",
       error: ""
     };
     renderModalLayer();
   }
 
-  function openPaymentDialog() {
-    if (!state.cart.length) {
+  function openPaymentDialog(documentId = "", totalAmount = 0) {
+    const existingDocumentId = String(documentId || "").trim();
+    if (!existingDocumentId && !state.cart.length) {
       showToast("Add at least one item");
       return;
     }
@@ -323,7 +347,9 @@
     }
     state.paymentDialog = {
       open: true,
+      documentId: existingDocumentId,
       method: "CASH",
+      totalAmount: Number(totalAmount || 0),
       mixedCash: "",
       error: ""
     };
@@ -356,9 +382,10 @@
   }
 
   function validatePaymentSelection() {
-    const totalAmount = Number(cartTotalValue() || 0);
+    const totalAmount = paymentDialogTotalAmount();
     const { method, cashAmount, onlineAmount } = paymentBreakup();
     if (totalAmount <= 0) return "Cart total must be greater than zero";
+    if (method === "PENDING") return "";
     if (method === "MIXED") {
       const rawCash = String(state.paymentDialog?.mixedCash || "").trim();
       if (!rawCash.length) return "Enter the cash amount received";
@@ -390,6 +417,7 @@
     if (!state.paymentDialog?.open) return false;
     const method = currentPaymentMethod();
     const breakup = paymentBreakup();
+    const isExistingSale = Boolean(paymentDialogDocumentId());
     modalRoot.innerHTML = `
       <div class="modal-backdrop image-viewer-backdrop" onclick="window.kkdSalesApp.closePaymentDialog()"></div>
       <section class="payment-modal" role="dialog" aria-modal="true" aria-label="Select payment method">
@@ -399,7 +427,7 @@
             <div class="public-tag">${money(breakup.totalAmount)}</div>
           </div>
           <div class="payment-method-grid">
-            ${["CASH", "ONLINE", "MIXED"].map((option) => `
+            ${["CASH", "ONLINE", "MIXED", "PENDING"].map((option) => `
               <button class="payment-method-button${method === option ? " active" : ""}" type="button" onclick="window.kkdSalesApp.setPaymentMethod('${option}')">${paymentMethodLabel(option)}</button>
             `).join("")}
           </div>
@@ -407,6 +435,12 @@
             <div class="payment-summary-card">
               <div><strong>Cash Received:</strong> ${money(breakup.cashAmount)}</div>
               <div><strong>Online Received:</strong> ${money(breakup.onlineAmount)}</div>
+            </div>
+          ` : method === "PENDING" ? `
+            <div class="payment-summary-card">
+              <div><strong>Status:</strong> Payment Pending</div>
+              <div><strong>Cash Received:</strong> ${money(0)}</div>
+              <div><strong>Online Received:</strong> ${money(0)}</div>
             </div>
           ` : `
             <div class="payment-qr-card">
@@ -434,7 +468,109 @@
           <div id="paymentErrorBox" class="payment-error${state.paymentDialog?.error ? "" : " hidden"}">${escapeHtml(state.paymentDialog?.error || "")}</div>
           <div class="public-actions checkout-actions">
             <button class="button secondary" type="button" onclick="window.kkdSalesApp.closePaymentDialog()">Back to Cart</button>
-            <button class="button" type="button" onclick="window.kkdSalesApp.confirmPaymentAndSubmit()">${method === "CASH" ? "Confirm Cash and Post Sale" : "Done and Post Sale"}</button>
+            <button class="button" type="button" onclick="window.kkdSalesApp.confirmPaymentAndSubmit()">${isExistingSale ? (method === "PENDING" ? "Keep Payment Pending" : "Done and Clear Payment") : (method === "CASH" ? "Confirm Cash and Post Sale" : method === "PENDING" ? "Post Sale as Payment Pending" : "Done and Post Sale")}</button>
+          </div>
+        </div>
+      </section>
+    `;
+    return true;
+  }
+
+  function allCatalogItemsSorted() {
+    return [...getCatalog("BOOK"), ...getCatalog("PARAPHERNALIA")]
+      .slice()
+      .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")) || String(a.erpCode || "").localeCompare(String(b.erpCode || "")));
+  }
+
+  function openSaleEditDialog(documentId) {
+    const row = (state.mySales || []).find((item) => String(item.documentId || "") === String(documentId || ""));
+    if (!row) {
+      showToast("Sale entry not found");
+      return;
+    }
+    state.saleEditDialog = {
+      open: true,
+      documentId: String(row.documentId || ""),
+      notes: String(row.notes || ""),
+      lines: (row.lines || []).map((line, index) => ({
+        lineId: line.lineId || "",
+        lineNo: Number(line.lineNo || index + 1),
+        erpCode: String(line.erpCode || ""),
+        quantity: Number(line.quantity || 0),
+        rate: Number(line.rate || 0)
+      }))
+    };
+    renderModalLayer();
+  }
+
+  function closeSaleEditDialog() {
+    state.saleEditDialog = {
+      open: false,
+      documentId: "",
+      lines: [],
+      notes: ""
+    };
+    renderModalLayer();
+  }
+
+  function updateSaleEditLine(index, key, value) {
+    const line = state.saleEditDialog?.lines?.[index];
+    if (!line) return;
+    if (key === "quantity") {
+      line.quantity = Math.max(0, Math.floor(Number(value || 0)));
+    } else if (key === "erpCode") {
+      line.erpCode = String(value || "");
+      const item = getItemByCode(line.erpCode);
+      if (item) {
+        line.rate = Number(item.salePrice || 0);
+      }
+    }
+  }
+
+  function renderSaleEditDialog() {
+    if (!state.saleEditDialog?.open) return false;
+    const itemOptions = allCatalogItemsSorted();
+    modalRoot.innerHTML = `
+      <div class="modal-backdrop image-viewer-backdrop" onclick="window.kkdSalesApp.closeSaleEditDialog()"></div>
+      <section class="payment-modal" role="dialog" aria-modal="true" aria-label="Edit sale entry">
+        <div class="public-card payment-card">
+          <div class="public-card-header">
+            <h2>Edit Sale Entry</h2>
+            <div class="public-tag">${escapeHtml(state.saleEditDialog.documentId || "-")}</div>
+          </div>
+          <div class="history-detail-table-wrap">
+            <table class="history-detail-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Qty</th>
+                  <th>Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${state.saleEditDialog.lines.map((line, index) => `
+                  <tr>
+                    <td>
+                      <select onchange="window.kkdSalesApp.updateSaleEditLine(${index}, 'erpCode', this.value)">
+                        ${itemOptions.map((item) => `<option value="${escapeAttr(item.erpCode)}"${item.erpCode === line.erpCode ? " selected" : ""}>${escapeHtml(item.name)} (${escapeHtml(item.erpCode)})</option>`).join("")}
+                      </select>
+                    </td>
+                    <td>
+                      <input type="number" min="0" step="1" value="${escapeAttr(line.quantity)}" onchange="window.kkdSalesApp.updateSaleEditLine(${index}, 'quantity', this.value)">
+                    </td>
+                    <td>${escapeHtml(money(line.rate || 0))}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+          <label class="field">
+            <span>Notes</span>
+            <input type="text" value="${escapeAttr(state.saleEditDialog.notes || "")}" oninput="window.kkdSalesApp.setSaleEditNotes(this.value)" placeholder="Optional note">
+          </label>
+          <div class="public-actions checkout-actions">
+            <button class="button secondary" type="button" onclick="window.kkdSalesApp.closeSaleEditDialog()">Cancel</button>
+            <button class="button" type="button" onclick="window.kkdSalesApp.saveEditedSale()">Save Changes</button>
           </div>
         </div>
       </section>
@@ -444,6 +580,7 @@
 
   function renderModalLayer() {
     if (renderPaymentDialog()) return;
+    if (renderSaleEditDialog()) return;
     renderImageViewer();
   }
 
@@ -908,26 +1045,45 @@
     render();
   }
 
-  function rerenderSearchPreservingFocus() {
-    const currentValue = String(state.search || "");
-    render();
-    const next = document.querySelector('.catalog-search input[type="search"]');
-    if (next) {
-      next.value = currentValue;
-      next.focus();
-      if (typeof next.setSelectionRange === "function") {
-        next.setSelectionRange(currentValue.length, currentValue.length);
+  function renderCatalogResultsOnly() {
+    const host = root.querySelector('[data-catalog-results]');
+    if (!host) return false;
+    const items = getFilteredItems();
+    host.innerHTML = `
+      ${state.loadingCatalog ? `<div class="empty-note">Loading catalog...</div>` : ""}
+      ${!state.loadingCatalog && !items.length ? `<div class="empty-note">No matching ${state.itemGroup === "PARAPHERNALIA" ? "items" : "books"} found.</div>` : ""}
+      ${!state.loadingCatalog ? `<div class="catalog-grid compact-grid">${items.map(renderCatalogCard).join("")}</div>` : ""}
+    `;
+    return true;
+  }
+
+  function updateSearchResultsPreservingFocus(input) {
+    const active = input || document.querySelector('.catalog-search input[type="search"]');
+    const selectionStart = active && typeof active.selectionStart === "number" ? active.selectionStart : null;
+    const selectionEnd = active && typeof active.selectionEnd === "number" ? active.selectionEnd : null;
+    if (!renderCatalogResultsOnly()) {
+      render();
+      return;
+    }
+    if (active) {
+      active.focus();
+      if (selectionStart !== null && selectionEnd !== null && typeof active.setSelectionRange === "function") {
+        active.setSelectionRange(selectionStart, selectionEnd);
       }
     }
   }
 
-  function setField(field, value) {
+  function setField(field, value, element) {
     state[field] = value;
     if (field === "search") {
-      rerenderSearchPreservingFocus();
+      updateSearchResultsPreservingFocus(element);
       return;
     }
     render();
+  }
+
+  function setSaleEditNotes(value) {
+    state.saleEditDialog.notes = String(value || "");
   }
 
   function addWithQty(erpCode) {
@@ -989,50 +1145,107 @@
       return;
     }
     const breakup = paymentBreakup();
+    const existingDocumentId = paymentDialogDocumentId();
     state.requestSubmitting = true;
-    setLoading(true, "Posting sale entry...");
+    setLoading(true, existingDocumentId ? "Saving payment..." : "Posting sale entry...");
     try {
-      const result = await window.erpApi.request("sales.submit", {
-        warehouseId: state.warehouseId || WAREHOUSE_KEY,
-        warehouseName: state.warehouseName || WAREHOUSE_KEY,
-        documentDate: new Date().toISOString().slice(0, 10),
-        notes: String(state.notes || "").trim(),
-        paymentMethod: breakup.method,
-        paymentMethodLabel: paymentMethodLabel(breakup.method),
-        paymentDate: new Date().toISOString().slice(0, 10),
-        paymentNotes: `Payment captured at sale entry (${paymentMethodLabel(breakup.method)})`,
-        cashAmount: Number(breakup.cashAmount || 0),
-        onlineAmount: Number(breakup.onlineAmount || 0),
-        lines: state.cart.map((line) => ({
-          erpCode: line.erpCode,
-          quantity: Number(line.quantity || 0),
-          salePrice: Number(line.salePrice || 0),
-          rate: Number(line.salePrice || 0)
-        }))
-      });
-      state.submittedSaleId = result?.documentId || "";
-      state.lastSubmittedSale = result || null;
-      state.cart = [];
-      state.notes = "";
-      closePaymentDialog();
-      state.view = "submitted";
-      state.catalogByGroup = { BOOK: [], PARAPHERNALIA: [] };
-      await Promise.all([ensureCatalogLoaded("BOOK"), ensureCatalogLoaded("PARAPHERNALIA"), loadMySales()]);
-      if (hasAndroidPrinterBridge()) {
-        try {
-          await autoPrintSubmittedSale(result || state.submittedSaleId);
-          showToast("Sale entry created and bill printed");
-        } catch (printError) {
-          showToast(`Sale entry created. Auto print skipped: ${printError.message || "Printer not ready"}`);
+      if (existingDocumentId) {
+        if (breakup.method !== "PENDING") {
+          const detail = await window.erpApi.request("sales.entryCollectionCreate", {
+            documentId: existingDocumentId,
+            paymentDate: new Date().toISOString().slice(0, 10),
+            paymentMethod: breakup.method,
+            paymentMethodLabel: paymentMethodLabel(breakup.method),
+            notes: `Payment cleared at counter (${paymentMethodLabel(breakup.method)})`,
+            cashAmount: Number(breakup.cashAmount || 0),
+            onlineAmount: Number(breakup.onlineAmount || 0)
+          });
+          state.lastSubmittedSale = detail || null;
         }
+        closePaymentDialog();
+        await loadMySales();
+        state.view = "history";
+        render();
+        showToast(breakup.method === "PENDING" ? "Payment kept pending" : "Payment marked as cleared");
       } else {
-        showToast("Sale entry created");
+        const result = await window.erpApi.request("sales.submit", {
+          warehouseId: state.warehouseId || WAREHOUSE_KEY,
+          warehouseName: state.warehouseName || WAREHOUSE_KEY,
+          documentDate: new Date().toISOString().slice(0, 10),
+          notes: String(state.notes || "").trim(),
+          paymentMethod: breakup.method,
+          paymentMethodLabel: paymentMethodLabel(breakup.method),
+          paymentDate: new Date().toISOString().slice(0, 10),
+          paymentNotes: breakup.method === "PENDING" ? "Payment pending at counter" : `Payment captured at sale entry (${paymentMethodLabel(breakup.method)})`,
+          cashAmount: Number(breakup.cashAmount || 0),
+          onlineAmount: Number(breakup.onlineAmount || 0),
+          lines: state.cart.map((line) => ({
+            erpCode: line.erpCode,
+            quantity: Number(line.quantity || 0),
+            salePrice: Number(line.salePrice || 0),
+            rate: Number(line.salePrice || 0)
+          }))
+        });
+        state.submittedSaleId = result?.documentId || "";
+        state.lastSubmittedSale = result || null;
+        state.cart = [];
+        state.notes = "";
+        closePaymentDialog();
+        state.view = "submitted";
+        state.catalogByGroup = { BOOK: [], PARAPHERNALIA: [] };
+        await Promise.all([ensureCatalogLoaded("BOOK"), ensureCatalogLoaded("PARAPHERNALIA"), loadMySales()]);
+        if (hasAndroidPrinterBridge() && breakup.method !== "PENDING") {
+          try {
+            await autoPrintSubmittedSale(result || state.submittedSaleId);
+            showToast("Sale entry created and bill printed");
+          } catch (printError) {
+            showToast(`Sale entry created. Auto print skipped: ${printError.message || "Printer not ready"}`);
+          }
+        } else {
+          showToast(breakup.method === "PENDING" ? "Sale entry created with payment pending" : "Sale entry created");
+        }
+        render();
       }
-      render();
     } catch (error) {
       showToast(error.message || "Could not create sale entry");
     } finally {
       state.requestSubmitting = false;
+      setLoading(false);
+    }
+  }
+
+  async function saveEditedSale() {
+    const documentId = String(state.saleEditDialog?.documentId || "").trim();
+    const lines = (state.saleEditDialog?.lines || [])
+      .map((line) => ({
+        lineId: line.lineId,
+        lineNo: line.lineNo,
+        erpCode: String(line.erpCode || "").trim(),
+        bookId: String(line.erpCode || "").trim(),
+        quantity: Number(line.quantity || 0),
+        rate: Number(line.rate || 0)
+      }))
+      .filter((line) => line.erpCode && line.quantity > 0);
+    if (!documentId || !lines.length) {
+      showToast("Add at least one valid sale line");
+      return;
+    }
+    setLoading(true, "Saving sale changes...");
+    try {
+      const detail = await window.erpApi.request("sales.entryUpdate", {
+        documentId,
+        notes: String(state.saleEditDialog.notes || "").trim(),
+        lines
+      });
+      state.lastSubmittedSale = detail || null;
+      closeSaleEditDialog();
+      await loadMySales();
+      state.mySalesExpanded = documentId;
+      render();
+      showToast("Sale entry updated");
+    } catch (error) {
+      showToast(error.message || "Could not update sale entry");
+    } finally {
       setLoading(false);
     }
   }
@@ -1284,49 +1497,25 @@
 
   function renderFloatingActions() {
     if (!state.currentUser) return "";
+    const historyActive = state.view === "history";
+    const cartActive = state.view === "cart" || state.view === "submitted";
     return `
       <div class="floating-request-actions">
         ${state.installReady ? `<button class="segment" type="button" onclick="window.kkdSalesApp.installPwa()">Install App</button>` : ""}
-        <button class="segment" type="button" onclick="window.kkdSalesApp.setView('history')">My Sale Entries</button>
-        <button class="segment active" type="button" onclick="window.kkdSalesApp.setView('cart')">Go to Cart (${cartTotalQty()})</button>
+        <button class="segment${historyActive ? " active" : ""}" type="button" onclick="window.kkdSalesApp.setView('history')">My Sale Entries</button>
+        <button class="segment${cartActive ? " active" : ""}" type="button" onclick="window.kkdSalesApp.setView('cart')">Go to Cart (${cartTotalQty()})</button>
         <button class="segment" type="button" onclick="window.kkdSalesApp.logout()">Logout</button>
       </div>
     `;
   }
 
-  function renderPrinterCard() {
-    if (!state.currentUser) return "";
-    return `
-      <section class="public-card category-switch-card">
-        <div class="public-card-header compact-header">
-          <h2>Printing</h2>
-          <div class="public-tag">${escapeHtml(isAndroidWrapperMode() ? "Android Wrapper" : "Web Only")}</div>
-        </div>
-        <div class="empty-note">
-          ${isAndroidWrapperMode()
-            ? `After a sale entry is posted, the app will try to auto-print through the paired Bluetooth printer. You can also reprint later from <strong>My Sale Entries</strong>.`
-            : `Printing is available only in the Matchless Android app. The web page can still post sale entries.`}
-        </div>
-      </section>
-    `;
-  }
-
   function renderHeader() {
     return `
-      <header class="public-hero">
-        <div class="public-brand">
-          <div class="public-mark">HKM</div>
-          <div>
-            <div class="public-title">Matchless Gift Store Sales</div>
-            <div class="public-subtitle">Log in, build a cart from live stock, post direct sale entries, and print bills for Matchless Gift Store.</div>
-          </div>
-        </div>
-      </header>
       <section class="public-card category-switch-card">
         <div class="public-card-header compact-header">
-          <h2>Select Category</h2>
-          <div class="public-tag">${escapeHtml(state.currentUser ? `${state.warehouseName} · ${state.currentUser.name || state.currentUser.username || "User"}` : state.warehouseName)}</div>
+          <h2>Matchless Gifts Counter</h2>
         </div>
+        <div class="category-inline-heading">Select Category</div>
         <div class="segmented category-segmented">
           <button class="segment ${state.itemGroup === "BOOK" ? "active" : ""}" type="button" onclick="window.kkdSalesApp.setCategory('BOOK')">Books</button>
           <button class="segment ${state.itemGroup === "PARAPHERNALIA" ? "active" : ""}" type="button" onclick="window.kkdSalesApp.setCategory('PARAPHERNALIA')">Devotional Items</button>
@@ -1380,7 +1569,7 @@
         <div class="catalog-toolbar">
           <label class="field compact-field catalog-search">
             <span>${state.itemGroup === "PARAPHERNALIA" ? "Search devotional item" : "Search books"}</span>
-            <input type="search" value="${escapeAttr(state.search)}" placeholder="${state.itemGroup === "PARAPHERNALIA" ? "Search item name" : "Search book name"}" oninput="window.kkdSalesApp.setField('search', this.value)">
+            <input type="search" value="${escapeAttr(state.search)}" placeholder="${state.itemGroup === "PARAPHERNALIA" ? "Search item name" : "Search book name"}" oninput="window.kkdSalesApp.setField('search', this.value, this)">
           </label>
           ${state.itemGroup === "PARAPHERNALIA" ? `
             <label class="field compact-field">
@@ -1392,9 +1581,11 @@
             </label>
           ` : ""}
         </div>
-        ${state.loadingCatalog ? `<div class="empty-note">Loading catalog...</div>` : ""}
-        ${!state.loadingCatalog && !items.length ? `<div class="empty-note">No matching ${state.itemGroup === "PARAPHERNALIA" ? "items" : "books"} found.</div>` : ""}
-        ${!state.loadingCatalog ? `<div class="catalog-grid compact-grid">${items.map(renderCatalogCard).join("")}</div>` : ""}
+        <div data-catalog-results>
+          ${state.loadingCatalog ? `<div class="empty-note">Loading catalog...</div>` : ""}
+          ${!state.loadingCatalog && !items.length ? `<div class="empty-note">No matching ${state.itemGroup === "PARAPHERNALIA" ? "items" : "books"} found.</div>` : ""}
+          ${!state.loadingCatalog ? `<div class="catalog-grid compact-grid">${items.map(renderCatalogCard).join("")}</div>` : ""}
+        </div>
       </section>
     `;
   }
@@ -1491,7 +1682,7 @@
                   <tr>
                     <td>${escapeHtml(formatDateTime(row.createdAt || row.documentDate))}</td>
                     <td>${escapeHtml(row.documentId || "-")}</td>
-                    <td>${escapeHtml(Number(row.pendingAmount || 0) > 0 ? "Backend Settlement Pending" : "Settled")}</td>
+                    <td>${escapeHtml(Number(row.collectedTotalAmount || 0) <= 0 ? "Payment Pending" : Number(row.pendingAmount || 0) > 0 ? "Backend Settlement Pending" : "Settled")}</td>
                     <td>${escapeHtml(money(row.totalAmount || 0))}</td>
                     <td>${escapeHtml(money(row.collectedCashAmount || row.paidCashAmount || 0))}</td>
                     <td>${escapeHtml(money(row.collectedOnlineAmount || row.paidOnlineAmount || 0))}</td>
@@ -1499,6 +1690,8 @@
                     <td>
                       <div class="row-actions">
                         <button class="small-button" type="button" onclick="window.kkdSalesApp.toggleHistoryDetails('${escapeAttr(row.documentId)}')">${state.mySalesExpanded === row.documentId ? "Hide" : "Show"} Details</button>
+                        <button class="small-button" type="button" onclick="window.kkdSalesApp.openSaleEditDialog('${escapeAttr(row.documentId)}')">Edit</button>
+                        ${Number(row.collectedTotalAmount || 0) <= 0 ? `<button class="small-button" type="button" onclick="window.kkdSalesApp.openPaymentDialog('${escapeAttr(row.documentId)}', ${Number(row.totalAmount || 0)})">Payment Cleared</button>` : ""}
                         ${isAndroidWrapperMode() ? `<button class="small-button" type="button" onclick="window.kkdSalesApp.printReceiptToPrinter('${escapeAttr(row.documentId)}')">Print Bill</button>` : ""}
                       </div>
                     </td>
@@ -1612,7 +1805,6 @@
       <div class="public-shell pwa-shell">
         ${renderFloatingActions()}
         ${state.currentUser ? renderHeader() : ""}
-        ${renderPrinterCard()}
         ${renderBody()}
       </div>
     `;
@@ -1660,6 +1852,12 @@
     setPaymentMethod,
     setMixedCash,
     confirmPaymentAndSubmit,
+    openPaymentDialog,
+    openSaleEditDialog,
+    closeSaleEditDialog,
+    updateSaleEditLine,
+    setSaleEditNotes,
+    saveEditedSale,
     openReceipt,
     connectPrinter,
     connectBluetoothPrinter,

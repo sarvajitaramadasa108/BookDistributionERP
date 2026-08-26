@@ -1280,6 +1280,8 @@ body.public-mode .loading-overlay {
 
 .payment-card {
   width: min(100%, 560px);
+  max-height: calc(100vh - 40px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto;
 }
 
 .payment-method-grid {
@@ -1617,6 +1619,9 @@ body.public-mode .loading-overlay {
   justify-content: flex-end;
   margin-bottom: 14px;
   padding-top: 4px;
+  padding-bottom: 8px;
+  background: linear-gradient(180deg, rgba(246, 231, 200, 0.98), rgba(246, 231, 200, 0.94));
+  backdrop-filter: blur(6px);
 }
 
 .floating-request-actions .segment {
@@ -1625,6 +1630,13 @@ body.public-mode .loading-overlay {
 
 .category-switch-card {
   padding: 16px 18px;
+}
+
+.category-inline-heading {
+  font-size: 15px;
+  font-weight: 700;
+  color: #6d4327;
+  margin-bottom: 10px;
 }
 
 .compact-header {
@@ -1679,6 +1691,11 @@ body.public-mode .loading-overlay {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.checkout-actions > .button,
+.checkout-actions > .button.secondary {
+  flex: 1 1 220px;
 }
 
 .centered-actions {
@@ -1781,6 +1798,17 @@ body.public-mode .loading-overlay {
 
   .compact-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .checkout-actions {
+    flex-wrap: nowrap;
+  }
+
+  .checkout-actions > .button,
+  .checkout-actions > .button.secondary {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: 10px;
   }
 
   .catalog-body {

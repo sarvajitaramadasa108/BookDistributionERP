@@ -420,6 +420,12 @@ function requireAdminUser(currentUser) {
   }
 }
 
+function isAdminUser(currentUser) {
+  const role = String(currentUser && currentUser.role || "").trim().toLowerCase().replace(/[^a-z]/g, "");
+  const username = String(currentUser && currentUser.username || "").trim().toLowerCase();
+  return Boolean(currentUser) && (role === "mainadmin" || role === "admin" || username === "admin");
+}
+
 async function listTable(supabase, tableName, mapper) {
   const data = await selectAllRows((from, to) => supabase.from(tableName).select("*").range(from, to));
   return (data || []).map(mapper);
@@ -2443,6 +2449,45 @@ async function createSaleEntryPayment(supabase, payload, currentUser) {
   return saleEntryDetail(supabase, { documentId: documentRow.id });
 }
 
+async function createSaleEntryCollection(supabase, payload, currentUser) {
+  const documentRef = String(payload.documentId || payload.documentCode || "").trim();
+  if (!documentRef) throw new Error("Sale entry is required");
+  const cashAmount = Number(payload.cashAmount || 0);
+  const onlineAmount = Number(payload.onlineAmount || 0);
+  if (cashAmount <= 0 && onlineAmount <= 0) throw new Error("Enter cash or online amount");
+  const documentQuery = supabase
+    .from("documents")
+    .select("id, document_type, from_warehouse_id, to_warehouse_id, created_by_user_id");
+  const { data: documentRow, error: documentError } = await (isUuidLike(documentRef)
+    ? documentQuery.eq("id", documentRef).maybeSingle()
+    : documentQuery.eq("document_code", documentRef).maybeSingle());
+  if (documentError) throw documentError;
+  if (!documentRow || String(documentRow.document_type || "").toUpperCase() !== "SALE") {
+    throw new Error("Sale entry not found");
+  }
+  const boundWarehouseFilter = getBoundWarehouseFilter(currentUser);
+  const touchesBoundWarehouse = boundWarehouseFilter
+    ? [documentRow.from_warehouse_id, documentRow.to_warehouse_id].some((value) => String(value || "").trim() === String(boundWarehouseFilter))
+    : false;
+  const ownsDocument = currentUser && String(documentRow.created_by_user_id || "") === String(currentUser.userId || "");
+  if (!isAdminUser(currentUser) && !touchesBoundWarehouse && !ownsDocument) {
+    throw new Error("You cannot update this sale entry");
+  }
+  const paymentDate = toDateOnly(payload.paymentDate || nowIso());
+  const paymentMethod = String(payload.paymentMethod || "").trim().toUpperCase();
+  const noteLabel = String(payload.notes || payload.paymentMethodLabel || `Payment cleared at counter (${paymentMethod || "MIXED"})`).trim();
+  const { error } = await supabase.from("sale_entry_payments").insert({
+    document_id: documentRow.id,
+    payment_date: paymentDate,
+    cash_amount: cashAmount,
+    online_amount: onlineAmount,
+    notes: `[SALE_COLLECTION] ${noteLabel}`.trim(),
+    created_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null
+  });
+  if (error) throw error;
+  return saleEntryDetail(supabase, { documentId: documentRow.id });
+}
+
 async function createSaleDayPayment(supabase, payload, currentUser) {
   const warehouseRef = String(payload.warehouseId || payload.warehouseCode || payload.warehouseName || "").trim();
   if (!warehouseRef) throw new Error("Warehouse is required");
@@ -2462,6 +2507,38 @@ async function createSaleDayPayment(supabase, payload, currentUser) {
   });
   if (error) throw error;
   return saleEntriesList(supabase, { warehouseId: warehouseRow.id }, currentUser);
+}
+
+async function updateSaleEntry(supabase, payload, currentUser) {
+  if (!currentUser || !currentUser.userId) throw new Error("Login is required");
+  const documentRef = String(payload.documentId || payload.documentCode || "").trim();
+  if (!documentRef) throw new Error("Sale entry is required");
+  const { data: doc, error: docError } = await supabase
+    .from("documents")
+    .select("*")
+    .or(`document_code.eq.${documentRef},id.eq.${documentRef}`)
+    .maybeSingle();
+  if (docError) throw docError;
+  if (!doc || String(doc.document_type || "").toUpperCase() !== "SALE") throw new Error("Sale entry not found");
+  const boundWarehouseFilter = getBoundWarehouseFilter(currentUser);
+  const touchesBoundWarehouse = boundWarehouseFilter
+    ? documentTouchesWarehouse(doc, boundWarehouseFilter)
+    : false;
+  const ownsDocument = String(doc.created_by_user_id || "") === String(currentUser.userId || "");
+  if (!isAdminUser(currentUser) && !touchesBoundWarehouse && !ownsDocument) {
+    throw new Error("You cannot edit this sale entry");
+  }
+  const { data: paymentRows, error: paymentRowsError } = await supabase
+    .from("sale_entry_payments")
+    .select("*")
+    .eq("document_id", doc.id);
+  if (paymentRowsError) throw paymentRowsError;
+  const hasBackendSettlements = (paymentRows || []).some((row) => classifySaleEntryPaymentKind(row) === "BACKEND_SETTLEMENT");
+  if (hasBackendSettlements) {
+    throw new Error("This sale entry is already under backend settlement and cannot be edited");
+  }
+  await updateDocumentInPlace(supabase, { ...payload, documentId: doc.id }, { ...currentUser, role: "admin", username: currentUser.username || "admin" });
+  return saleEntryDetail(supabase, { documentId: doc.id });
 }
 
 async function submitWarehouseSale(supabase, payload, currentUser) {
@@ -2484,7 +2561,7 @@ async function submitWarehouseSale(supabase, payload, currentUser) {
   const paymentMethod = String(payload.paymentMethod || "").trim().toUpperCase();
   const cashAmount = Number(payload.cashAmount || 0);
   const onlineAmount = Number(payload.onlineAmount || 0);
-  if (!paymentMethod || !["CASH", "ONLINE", "MIXED"].includes(paymentMethod)) {
+  if (!paymentMethod || !["CASH", "ONLINE", "MIXED", "PENDING"].includes(paymentMethod)) {
     throw new Error("Select a payment method");
   }
   if (cashAmount < 0 || onlineAmount < 0) {
@@ -2492,7 +2569,10 @@ async function submitWarehouseSale(supabase, payload, currentUser) {
   }
   const expectedTotalAmount = lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.rate || 0), 0);
   const paidTotalAmount = cashAmount + onlineAmount;
-  if (Math.abs(expectedTotalAmount - paidTotalAmount) > 0.01) {
+  if (paymentMethod === "PENDING" && paidTotalAmount > 0.01) {
+    throw new Error("Pending payment sale cannot include received amounts");
+  }
+  if (paymentMethod !== "PENDING" && Math.abs(expectedTotalAmount - paidTotalAmount) > 0.01) {
     throw new Error("Payment total must match the sale amount");
   }
   const created = await createDocument(supabase, {
@@ -3633,8 +3713,12 @@ async function main(request) {
         return json(200, { ok: true, data: await saleEntryDetail(supabase, payload) });
       case "sales.entryPaymentCreate":
         return json(200, { ok: true, data: await createSaleEntryPayment(supabase, payload, currentUser) });
+      case "sales.entryCollectionCreate":
+        return json(200, { ok: true, data: await createSaleEntryCollection(supabase, payload, currentUser) });
       case "sales.dayPaymentCreate":
         return json(200, { ok: true, data: await createSaleDayPayment(supabase, payload, currentUser) });
+      case "sales.entryUpdate":
+        return json(200, { ok: true, data: await updateSaleEntry(supabase, payload, currentUser) });
       case "sales.submit":
         return json(200, { ok: true, data: await submitWarehouseSale(supabase, payload, currentUser) });
       case "reports.activityLedger":
