@@ -26,6 +26,8 @@
     mySalesLoaded: false,
     mySalesLoading: false,
     mySalesExpanded: "",
+    mySalesSearch: "",
+    mySalesStatusFilter: "ALL",
     requestSubmitting: false,
     submittedSaleId: "",
     lastSubmittedSale: null,
@@ -153,6 +155,19 @@
       hour: "2-digit",
       minute: "2-digit"
     });
+  }
+
+  function toInputDate(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      const raw = String(value || "");
+      return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+    }
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
   }
 
   function setLoading(value, message) {
@@ -312,7 +327,7 @@
 
   function mySalesDashboardMetrics() {
     const todayKey = toInputDate(new Date().toISOString());
-    return (state.mySales || []).reduce((acc, row) => {
+    return filteredMySales().reduce((acc, row) => {
       const totalAmount = Number(row.totalAmount || 0);
       const cashAmount = Number(row.collectedCashAmount || row.paidCashAmount || 0);
       const onlineAmount = Number(row.collectedOnlineAmount || row.paidOnlineAmount || 0);
@@ -344,6 +359,25 @@
       totalSalesTillNow: 0,
       totalCashPaymentPending: 0,
       totalOnlinePaymentPending: 0
+    });
+  }
+
+  function filteredMySales() {
+    const query = normalizeText(state.mySalesSearch);
+    const statusFilter = String(state.mySalesStatusFilter || "ALL").toUpperCase();
+    return (state.mySales || []).filter((row) => {
+      const status = saleSettlementLabel(row).toUpperCase();
+      if (statusFilter === "PAYMENT_PENDING" && status !== "PAYMENT PENDING") return false;
+      if (statusFilter === "SETTLEMENT_PENDING" && status !== "BACKEND SETTLEMENT PENDING") return false;
+      if (statusFilter === "SETTLED" && status !== "SETTLED") return false;
+      if (!query) return true;
+      const haystack = [
+        row.documentId,
+        row.notes,
+        row.warehouseName,
+        ...(row.lines || []).flatMap((line) => [line.erpCode, line.itemName, line.itemGroup])
+      ].join(" ").toLowerCase();
+      return haystack.includes(query);
     });
   }
 
@@ -1678,11 +1712,27 @@
 
   function renderHistoryView() {
     const metrics = mySalesDashboardMetrics();
+    const filteredRows = filteredMySales();
     return `
       <section class="public-card request-main">
         <div class="public-card-header">
           <h2>My Sale Entries</h2>
           <div class="public-tag">${escapeHtml(state.warehouseName)}</div>
+        </div>
+        <div class="catalog-toolbar">
+          <label class="field compact-field catalog-search">
+            <span>Search Sale Entries</span>
+            <input type="search" value="${escapeAttr(state.mySalesSearch)}" placeholder="Search sale id, item name, ERP code" oninput="window.kkdSalesApp.setField('mySalesSearch', this.value)">
+          </label>
+          <label class="field compact-field">
+            <span>Status</span>
+            <select onchange="window.kkdSalesApp.setField('mySalesStatusFilter', this.value)">
+              <option value="ALL"${state.mySalesStatusFilter === "ALL" ? " selected" : ""}>All entries</option>
+              <option value="PAYMENT_PENDING"${state.mySalesStatusFilter === "PAYMENT_PENDING" ? " selected" : ""}>Payment pending</option>
+              <option value="SETTLEMENT_PENDING"${state.mySalesStatusFilter === "SETTLEMENT_PENDING" ? " selected" : ""}>Settlement pending</option>
+              <option value="SETTLED"${state.mySalesStatusFilter === "SETTLED" ? " selected" : ""}>Settled</option>
+            </select>
+          </label>
         </div>
         <div class="grid metrics reports-metrics activity-report-metrics">
           <article class="card metric-card">
@@ -1728,7 +1778,8 @@
         </div>
         ${state.mySalesLoading ? `<div class="empty-note">Loading sale entries...</div>` : ""}
         ${!state.mySalesLoading && !state.mySales.length ? `<div class="empty-note">You have not posted any sale entries yet.</div>` : ""}
-        ${!state.mySalesLoading && state.mySales.length ? `
+        ${!state.mySalesLoading && state.mySales.length && !filteredRows.length ? `<div class="empty-note">No sale entries match this filter.</div>` : ""}
+        ${!state.mySalesLoading && filteredRows.length ? `
           <div class="history-table-wrap">
             <table class="history-table">
               <thead>
@@ -1744,7 +1795,7 @@
                 </tr>
               </thead>
               <tbody>
-                ${state.mySales.map((row) => `
+                ${filteredRows.map((row) => `
                   <tr>
                     <td>${escapeHtml(formatDateTime(row.createdAt || row.documentDate))}</td>
                     <td>${escapeHtml(row.documentId || "-")}</td>
