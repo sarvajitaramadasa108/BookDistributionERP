@@ -1152,10 +1152,28 @@
     }
   }
 
+  function updateHistorySearchPreservingFocus(input) {
+    const active = input || document.querySelector('.history-search-input');
+    const selectionStart = active && typeof active.selectionStart === "number" ? active.selectionStart : null;
+    const selectionEnd = active && typeof active.selectionEnd === "number" ? active.selectionEnd : null;
+    render();
+    const refreshed = document.querySelector('.history-search-input');
+    if (refreshed) {
+      refreshed.focus();
+      if (selectionStart !== null && selectionEnd !== null && typeof refreshed.setSelectionRange === "function") {
+        refreshed.setSelectionRange(selectionStart, selectionEnd);
+      }
+    }
+  }
+
   function setField(field, value, element) {
     state[field] = value;
     if (field === "search") {
       updateSearchResultsPreservingFocus(element);
+      return;
+    }
+    if (field === "mySalesSearch") {
+      updateHistorySearchPreservingFocus(element);
       return;
     }
     render();
@@ -1722,7 +1740,7 @@
         <div class="catalog-toolbar">
           <label class="field compact-field catalog-search">
             <span>Search Sale Entries</span>
-            <input type="search" value="${escapeAttr(state.mySalesSearch)}" placeholder="Search sale id, item name, ERP code" oninput="window.kkdSalesApp.setField('mySalesSearch', this.value)">
+            <input class="history-search-input" type="search" value="${escapeAttr(state.mySalesSearch)}" placeholder="Search sale id, item name, ERP code" oninput="window.kkdSalesApp.setField('mySalesSearch', this.value, this)">
           </label>
           <label class="field compact-field">
             <span>Status</span>
