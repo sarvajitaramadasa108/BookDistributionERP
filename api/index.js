@@ -1540,6 +1540,104 @@ async function importUnsettledOpeningDocuments(supabase, payload, currentUser) {
   return { created: created.length, documents: created };
 }
 
+async function findActivityByName(supabase, activityName) {
+  const name = String(activityName || "").trim();
+  if (!name) return null;
+  const normalizedName = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const { data: allRows, error: allError } = await supabase.from("activities").select("id, activity_code, activity_name");
+  if (allError) throw allError;
+  return (allRows || []).find((row) => {
+    return [row.activity_name, row.activity_code]
+      .map((value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, ""))
+      .includes(normalizedName);
+  }) || null;
+}
+
+async function activityHasIssueForReturns(supabase, activityId) {
+  const activityRow = await resolveActivityRow(supabase, activityId);
+  if (!activityRow) return false;
+  const { data, error } = await supabase
+    .from("documents")
+    .select("id")
+    .eq("activity_id", activityRow.id)
+    .in("document_type", ["ISSUE", "UNSETTLED_OPENING"])
+    .limit(1);
+  if (error) throw error;
+  return Boolean(data && data.length);
+}
+
+async function importActivityStockDocuments(supabase, payload, currentUser) {
+  const documentType = String(payload.documentType || "").trim().toUpperCase();
+  if (!["ISSUE", "COMPLIMENTARY", "RETURN"].includes(documentType)) {
+    throw new Error("Bulk activity import is available for issue, complimentary, and return entries");
+  }
+  const entries = Array.isArray(payload.entries) ? payload.entries : [];
+  if (!entries.length) throw new Error("At least one activity entry is required");
+
+  const created = [];
+  const errors = [];
+  for (const rawEntry of entries) {
+    const activityName = String(rawEntry.activityName || rawEntry.activityId || "").trim();
+    const cleanLines = (Array.isArray(rawEntry.lines) ? rawEntry.lines : [])
+      .filter((line) => String(line.bookId || line.erpCode || "").trim() && Number(line.quantity || 0) > 0);
+    if (!activityName || !cleanLines.length) continue;
+
+    let activity = null;
+    try {
+      activity = rawEntry.activityId ? await resolveActivityRow(supabase, rawEntry.activityId) : await findActivityByName(supabase, activityName);
+    } catch (error) {
+      activity = null;
+    }
+
+    if (!activity && documentType === "ISSUE") {
+      activity = await createActivity(supabase, {
+        name: activityName,
+        type: "Activity",
+        warehouseId: payload.fromWarehouseId || payload.warehouseId || payload.toWarehouseId || null,
+        status: "Running",
+        startDate: payload.documentDate || null
+      });
+    }
+
+    if (!activity) {
+      errors.push(`${activityName}: activity not found`);
+      continue;
+    }
+
+    if (documentType === "RETURN") {
+      const hasIssue = await activityHasIssueForReturns(supabase, activity.activity_code || activity.id);
+      if (!hasIssue) {
+        errors.push(`${activityName}: no issue found for this activity`);
+        continue;
+      }
+    }
+
+    try {
+      const result = await createDocument(supabase, {
+        documentType,
+        documentDate: payload.documentDate,
+        fromWarehouseId: payload.fromWarehouseId,
+        toWarehouseId: payload.toWarehouseId,
+        activityId: activity.activity_code || activity.id,
+        status: "Posted",
+        returnProgress: payload.returnProgress || "RETURNS_PENDING",
+        notes: payload.notes || "",
+        itemGroup: payload.itemGroup || "BOOK",
+        lines: cleanLines
+      }, currentUser);
+      created.push({ ...result, activityName });
+    } catch (error) {
+      errors.push(`${activityName}: ${error.message || "could not create document"}`);
+    }
+  }
+
+  if (!created.length && errors.length) {
+    throw new Error(errors.join("; "));
+  }
+  if (!created.length) throw new Error("No valid activity lines found");
+  return { created: created.length, documents: created, errors };
+}
+
 async function halveWarehouseOpeningStock(supabase, payload) {
   const warehouseId = await resolveWarehouseRef(supabase, payload.warehouseId);
   if (!warehouseId) throw new Error("Warehouse is required");
@@ -3668,6 +3766,8 @@ async function main(request) {
         return json(200, { ok: true, data: await correctDocument(supabase, payload, currentUser) });
       case "documents.importUnsettledOpening":
         return json(200, { ok: true, data: await importUnsettledOpeningDocuments(supabase, payload, currentUser) });
+      case "documents.importActivityBulk":
+        return json(200, { ok: true, data: await importActivityStockDocuments(supabase, payload, currentUser) });
       case "documents.halveWarehouseOpening":
         requireAdminUser(currentUser);
         return json(200, { ok: true, data: await halveWarehouseOpeningStock(supabase, payload) });

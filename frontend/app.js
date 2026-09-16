@@ -6838,6 +6838,138 @@
     }
   }
 
+  function pickActivityBulkImport(kind) {
+    const inputId = kind === "receive" ? "receiveBulkImportInput" : "issueBulkImportInput";
+    const input = document.getElementById(inputId);
+    if (input) {
+      input.click();
+    }
+  }
+
+  function activityBulkFormData(kind) {
+    const form = document.getElementById(kind === "receive" ? "receiveForm" : "issueForm");
+    return form ? new FormData(form) : new FormData();
+  }
+
+  function buildActivityBulkEntries(parsed) {
+    const fixedFields = new Set([
+      "ERP Code",
+      "ERP",
+      "Book Name",
+      "Book",
+      "Item Name",
+      "Item",
+      "Name",
+      "Category",
+      "Book Type",
+      "Item Type"
+    ]);
+    const activityColumns = parsed.headers
+      .map((header, columnIndex) => ({
+        header: String(header || "").trim(),
+        index: columnIndex
+      }))
+      .filter((column) => column.header && !fixedFields.has(column.header));
+    if (!activityColumns.length) {
+      throw new Error("Add activity columns to the file");
+    }
+
+    const entriesByActivityName = new Map();
+    for (const rowValues of parsed.rows) {
+      const row = spreadsheetRowToObject(parsed.headers, rowValues);
+      const erpCode = String(row["ERP Code"] || row.erpCode || row["ERP"] || "").trim();
+      const itemName = String(row["Item Name"] || row["Book Name"] || row.name || row["Name"] || row["Item"] || row["Book"] || "").trim();
+      const item = resolveImportedItemFromRow(row, "BOOK");
+      if (!item) {
+        throw new Error(`Item not found: ${erpCode || itemName || "-"}`);
+      }
+      const bookId = item.erpCode || item.bookId || erpCode || "";
+      activityColumns.forEach((column) => {
+        const quantity = Number(rowValues[column.index] || 0);
+        if (quantity <= 0) return;
+        const activityName = String(column.header || "").trim();
+        const activityKey = activityName.toLowerCase();
+        const entry = entriesByActivityName.get(activityKey) || {
+          activityName,
+          linesByBookId: new Map()
+        };
+        const current = entry.linesByBookId.get(bookId) || {
+          bookId,
+          quantity: 0,
+          rate: Number(item.purchasePrice || item.distributorPrice || 0)
+        };
+        current.quantity += quantity;
+        entry.linesByBookId.set(bookId, current);
+        entriesByActivityName.set(activityKey, entry);
+      });
+    }
+
+    return Array.from(entriesByActivityName.values())
+      .map((entry) => ({
+        activityName: entry.activityName,
+        lines: Array.from(entry.linesByBookId.values()).filter((line) => Number(line.quantity || 0) > 0)
+      }))
+      .filter((entry) => entry.lines.length);
+  }
+
+  async function importActivityBulkFile(file, kind) {
+    if (!file) return;
+    const isReceive = kind === "receive";
+    try {
+      await ensureActivityMastersLoaded();
+      await ensureDocumentItemMastersLoaded();
+      const parsed = await parseSpreadsheetRows(file);
+      if (!parsed.rows.length) {
+        showToast("No rows found in the file");
+        return;
+      }
+      const entries = buildActivityBulkEntries(parsed);
+      if (!entries.length) {
+        showToast("No quantities found in activity columns");
+        return;
+      }
+
+      const data = activityBulkFormData(kind);
+      const documentType = isReceive ? "RETURN" : (state.issueDocumentType === "COMPLIMENTARY" ? "COMPLIMENTARY" : "ISSUE");
+      const payload = {
+        documentType,
+        documentDate: data.get("documentDate") || new Date().toISOString().slice(0, 10),
+        fromWarehouseId: data.get("fromWarehouseId") || "",
+        toWarehouseId: data.get("toWarehouseId") || "",
+        returnProgress: data.get("returnSettlement") || "RETURNS_PENDING",
+        notes: data.get("notes") || `Bulk ${documentType.toLowerCase()} upload`,
+        entries
+      };
+      if (documentType !== "RETURN" && !payload.fromWarehouseId) {
+        showToast("Select source warehouse before bulk upload");
+        return;
+      }
+      if (documentType === "RETURN" && !payload.toWarehouseId) {
+        showToast("Select return warehouse before bulk upload");
+        return;
+      }
+
+      setLoading(true, "Posting bulk stock documents...");
+      try {
+        const result = await window.erpApi.request("documents.importActivityBulk", payload);
+        invalidateCurrentStockCache();
+        closeModal();
+        content.innerHTML = await renderDocuments();
+        const warnings = result.errors && result.errors.length ? ` (${result.errors.length} skipped)` : "";
+        showToast(`Bulk upload posted ${result.created || entries.length} document(s)${warnings}`);
+      } finally {
+        setLoading(false);
+      }
+    } catch (error) {
+      showToast(error.message || "Could not import bulk stock document");
+    } finally {
+      const input = document.getElementById(isReceive ? "receiveBulkImportInput" : "issueBulkImportInput");
+      if (input) {
+        input.value = "";
+      }
+    }
+  }
+
   function openUnsettledOpeningForm() {
     void ensureDocumentItemMastersLoaded().catch(() => {});
     state.unsettledDraft = {
@@ -7208,8 +7340,12 @@
           <div class="wide-field">
             <div class="line-editor-header">
               <h3>${isComplimentary ? `Complimentary Issue${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}` : `Issue Entry${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}`}</h3>
-              <button class="small-button" type="button" onclick="window.erpApp.addIssueLine()">Add Line</button>
+              <div class="button-row">
+                <button class="small-button" type="button" onclick="window.erpApp.pickActivityBulkImport('issue')">Bulk Upload</button>
+                <button class="small-button" type="button" onclick="window.erpApp.addIssueLine()">Add Line</button>
+              </div>
             </div>
+            <input id="issueBulkImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importActivityBulkFile(this.files[0], 'issue')">
             ${hasAnyItems ? issueLinesMarkup([], fromWarehouseId) : '<div class="empty-state">Add active books or devotional items before posting issue.</div>'}
           </div>
           <div class="form-actions">
@@ -7398,8 +7534,12 @@
           <div class="wide-field">
             <div class="line-editor-header">
               <h3>${getItemGroupLabel(itemGroup)}</h3>
-              <button class="small-button" type="button" onclick="window.erpApp.addReceiveLine()">Add Line</button>
+              <div class="button-row">
+                <button class="small-button" type="button" onclick="window.erpApp.pickActivityBulkImport('receive')">Bulk Upload</button>
+                <button class="small-button" type="button" onclick="window.erpApp.addReceiveLine()">Add Line</button>
+              </div>
             </div>
+            <input id="receiveBulkImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importActivityBulkFile(this.files[0], 'receive')">
             ${!draft.activityId
               ? `<div class="empty-state">Select an activity first. Returns can only be entered for items already issued to that activity.</div>`
               : state.receiveActivityDetailLoading
@@ -8323,6 +8463,8 @@
     downloadUnsettledOpeningSample,
     importUnsettledOpeningFile,
     pickUnsettledOpeningImport,
+    pickActivityBulkImport,
+    importActivityBulkFile,
     addPurchaseLine,
     removePurchaseLine,
     updatePurchaseLine,
