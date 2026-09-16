@@ -6087,6 +6087,37 @@
     URL.revokeObjectURL(url);
   }
 
+  function downloadActivityBulkSample(kind) {
+    const documentLabel = kind === "receive"
+      ? "Return Entry"
+      : (state.issueDocumentType === "COMPLIMENTARY" ? "Complimentary Issue" : "Issue Entry");
+    const rows = [
+      ["ERP Code", "Item Name", "Activity 1", "Activity 2", "Activity 2"],
+      ["PRB-00001", "Sample Book Name", "10", "0", "2"],
+      ["GFTA-00001", "Sample Devotional Item Name", "0", "5", "1"]
+    ];
+    const sheetName = documentLabel.slice(0, 31);
+    const fileBase = `${documentLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-bulk-sample`;
+    if (window.XLSX && window.XLSX.utils) {
+      const sheet = window.XLSX.utils.aoa_to_sheet(rows);
+      const workbook = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(workbook, sheet, sheetName);
+      window.XLSX.writeFile(workbook, `${fileBase}.xlsx`);
+      return;
+    }
+    const csv = rows.map((row) => row.map((cell) => {
+      const text = String(cell || "");
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${fileBase}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   function downloadBookSample() {
     const rows = [
       ["ERP Code", "Book Name", "Book Type", "Purchase Price", "Sale Price"],
@@ -7341,6 +7372,7 @@
             <div class="line-editor-header">
               <h3>${isComplimentary ? `Complimentary Issue${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}` : `Issue Entry${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}`}</h3>
               <div class="button-row">
+                <button class="small-button" type="button" onclick="window.erpApp.downloadActivityBulkSample('issue')">Download Sample</button>
                 <button class="small-button" type="button" onclick="window.erpApp.pickActivityBulkImport('issue')">Bulk Upload</button>
                 <button class="small-button" type="button" onclick="window.erpApp.addIssueLine()">Add Line</button>
               </div>
@@ -7535,6 +7567,7 @@
             <div class="line-editor-header">
               <h3>${getItemGroupLabel(itemGroup)}</h3>
               <div class="button-row">
+                <button class="small-button" type="button" onclick="window.erpApp.downloadActivityBulkSample('receive')">Download Sample</button>
                 <button class="small-button" type="button" onclick="window.erpApp.pickActivityBulkImport('receive')">Bulk Upload</button>
                 <button class="small-button" type="button" onclick="window.erpApp.addReceiveLine()">Add Line</button>
               </div>
@@ -8469,6 +8502,7 @@
     removePurchaseLine,
     updatePurchaseLine,
     downloadPurchaseSample,
+    downloadActivityBulkSample,
     importPurchaseFile,
     openUnsettledOpeningForm,
     addUnsettledLine,
