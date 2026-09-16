@@ -6118,6 +6118,34 @@
     URL.revokeObjectURL(url);
   }
 
+  function downloadSimpleStockDocSample(kind) {
+    const documentLabel = kind === "transfer" ? "Transfer Entry" : "Sale Entry";
+    const rows = [
+      ["ERP Code", "Item Name", "Quantity"],
+      ["PRB-00001", "Sample Book Name", "10"],
+      ["GFTA-00001", "Sample Devotional Item Name", "5"]
+    ];
+    const fileBase = `${documentLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-sample`;
+    if (window.XLSX && window.XLSX.utils) {
+      const sheet = window.XLSX.utils.aoa_to_sheet(rows);
+      const workbook = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(workbook, sheet, documentLabel.slice(0, 31));
+      window.XLSX.writeFile(workbook, `${fileBase}.xlsx`);
+      return;
+    }
+    const csv = rows.map((row) => row.map((cell) => {
+      const text = String(cell || "");
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${fileBase}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   function downloadBookSample() {
     const rows = [
       ["ERP Code", "Book Name", "Book Type", "Purchase Price", "Sale Price"],
@@ -7001,6 +7029,61 @@
     }
   }
 
+  async function importSimpleStockDocFile(file, kind) {
+    if (!file) return;
+    try {
+      await ensureDocumentItemMastersLoaded();
+      const parsed = await parseSpreadsheetRows(file);
+      if (!parsed.rows.length) {
+        showToast("No rows found in the file");
+        return;
+      }
+      const lines = [];
+      for (const rowValues of parsed.rows) {
+        const row = spreadsheetRowToObject(parsed.headers, rowValues);
+        const erpCode = String(row["ERP Code"] || row.erpCode || row["ERP"] || "").trim();
+        const itemName = String(row["Item Name"] || row["Book Name"] || row.name || row["Name"] || row["Item"] || row["Book"] || "").trim();
+        const quantity = Number(row["Quantity"] || row.quantity || row["Qty"] || row.qty || 0);
+        if (quantity <= 0) continue;
+        const item = resolveImportedItemFromRow(row, "BOOK");
+        if (!item) {
+          throw new Error(`Item not found: ${erpCode || itemName || "-"}`);
+        }
+        const bookId = item.erpCode || item.bookId || erpCode || "";
+        lines.push({
+          bookId,
+          quantity,
+          rate: kind === "sale" ? Number(getBookSalePrice(bookId) || item.salePrice || 0) : 0,
+          itemGroup: normalizeItemGroup(item.itemGroup || item.item_group || (state.devotionalItems.some((devotional) => (devotional.erpCode || devotional.bookId) === bookId) ? "PARAPHERNALIA" : "BOOK"))
+        });
+      }
+      if (!lines.length) {
+        showToast("No valid item quantity rows found");
+        return;
+      }
+      if (kind === "transfer") {
+        syncTransferDraft();
+        state.transferLines = lines;
+        state.transferBookQueries = lines.map(() => "");
+        renderTransferModal();
+        showToast(`Loaded ${lines.length} transfer row(s)`);
+      } else {
+        syncSaleDraft();
+        state.saleLines = lines;
+        state.saleBookQueries = lines.map(() => "");
+        renderSaleModal();
+        showToast(`Loaded ${lines.length} sale row(s)`);
+      }
+    } catch (error) {
+      showToast(error.message || "Could not import stock document file");
+    } finally {
+      const input = document.getElementById(kind === "transfer" ? "transferImportInput" : "saleImportInput");
+      if (input) {
+        input.value = "";
+      }
+    }
+  }
+
   function openUnsettledOpeningForm() {
     void ensureDocumentItemMastersLoaded().catch(() => {});
     state.unsettledDraft = {
@@ -7220,8 +7303,13 @@
           <div class="wide-field">
             <div class="line-editor-header">
               <h3>${getItemGroupLabel(itemGroup)}${warehouseId ? ` (Stock at ${getWarehouseName(warehouseId)})` : ""}</h3>
-              <button class="small-button" type="button" onclick="window.erpApp.addSaleLine()">Add Line</button>
+              <div class="button-row">
+                <button class="small-button" type="button" onclick="window.erpApp.downloadSimpleStockDocSample('sale')">Download Sample</button>
+                <button class="small-button" type="button" onclick="document.getElementById('saleImportInput').click()">Import Excel</button>
+                <button class="small-button" type="button" onclick="window.erpApp.addSaleLine()">Add Line</button>
+              </div>
             </div>
+            <input id="saleImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importSimpleStockDocFile(this.files[0], 'sale')">
             ${warehouseId ? (hasAnyItems ? saleLinesMarkup([], warehouseId, itemGroup) : `<div class="empty-state">Add active books or devotional items before posting sale.</div>`) : `<div class="empty-state">Select a warehouse to see available books or devotional items.</div>`}
           </div>
           <div class="form-actions">
@@ -7784,8 +7872,13 @@
           <div class="wide-field">
             <div class="line-editor-header">
               <h3>${getItemGroupLabel(itemGroup)}${fromWarehouseId ? ` (Stock at ${getWarehouseName(fromWarehouseId)})` : ""}</h3>
-              <button class="small-button" type="button" onclick="window.erpApp.addTransferLine()">Add Line</button>
+              <div class="button-row">
+                <button class="small-button" type="button" onclick="window.erpApp.downloadSimpleStockDocSample('transfer')">Download Sample</button>
+                <button class="small-button" type="button" onclick="document.getElementById('transferImportInput').click()">Import Excel</button>
+                <button class="small-button" type="button" onclick="window.erpApp.addTransferLine()">Add Line</button>
+              </div>
             </div>
+            <input id="transferImportInput" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="window.erpApp.importSimpleStockDocFile(this.files[0], 'transfer')">
             ${fromWarehouseId ? (hasAnyItems ? transferLinesMarkup([], fromWarehouseId, itemGroup) : '<div class="empty-state">Add active books or devotional items before posting transfer.</div>') : '<div class="empty-state">Select a source warehouse to see available books or devotional items.</div>'}
           </div>
           <div class="form-actions">
@@ -8503,7 +8596,9 @@
     updatePurchaseLine,
     downloadPurchaseSample,
     downloadActivityBulkSample,
+    downloadSimpleStockDocSample,
     importPurchaseFile,
+    importSimpleStockDocFile,
     openUnsettledOpeningForm,
     addUnsettledLine,
     removeUnsettledLine,
