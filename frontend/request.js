@@ -644,8 +644,8 @@
     return `
       <div class="floating-request-actions">
         ${state.installReady ? `<button class="segment" type="button" onclick="window.requestApp.installPwa()">Install App</button>` : ""}
-        <button class="segment ${isHistory ? "active" : ""}" type="button" onclick="window.requestApp.openHistory()">My Requests</button>
-        <button class="segment ${isCart ? "active" : ""}" type="button" onclick="window.requestApp.openCart()">Go to Cart (${cartTotalQty()})</button>
+        <button class="segment request-nav-tab ${isHistory ? "active request-nav-active" : ""}" type="button" aria-pressed="${isHistory ? "true" : "false"}" onclick="window.requestApp.openHistory()">My Requests</button>
+        <button class="segment request-nav-tab ${isCart ? "active request-nav-active" : ""}" type="button" aria-pressed="${isCart ? "true" : "false"}" onclick="window.requestApp.openCart()">Go to Cart (${cartTotalQty()})</button>
       </div>
     `;
   }

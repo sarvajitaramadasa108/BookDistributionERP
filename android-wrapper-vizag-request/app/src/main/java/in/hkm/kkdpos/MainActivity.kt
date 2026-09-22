@@ -44,7 +44,7 @@ class MainActivity : ComponentActivity() {
         webView.webViewClient = WebViewClient()
         webView.webChromeClient = WebChromeClient()
         webView.addJavascriptInterface(printerBridge, "AndroidPosPrinter")
-        webView.loadUrl("https://book-distribution-erp.vercel.app/request?warehouse=WH001&android_wrapper=1&v=20260922")
+        webView.loadUrl("https://book-distribution-erp.vercel.app/request?warehouse=WH001&android_wrapper=1&v=20260922b")
     }
 
     private fun requestBluetoothPermissionsIfNeeded() {

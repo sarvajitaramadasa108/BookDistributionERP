@@ -1645,6 +1645,14 @@ body.public-mode .loading-overlay {
   box-shadow: 0 12px 24px rgba(103, 48, 18, 0.24);
 }
 
+.floating-request-actions .request-nav-tab.request-nav-active,
+.floating-request-actions .request-nav-tab[aria-pressed="true"] {
+  background: linear-gradient(180deg, #8f431b, #5f260e) !important;
+  color: #fffaf0 !important;
+  border-color: transparent !important;
+  box-shadow: 0 12px 24px rgba(103, 48, 18, 0.28) !important;
+}
+
 .category-switch-card {
   padding: 16px 18px;
 }
