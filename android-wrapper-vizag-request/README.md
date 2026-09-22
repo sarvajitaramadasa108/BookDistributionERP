@@ -7,9 +7,11 @@ This folder contains a native Android wrapper app for the Gambhiram public reque
 - Opens the live KKD sales page:
   - `https://book-distribution-erp.vercel.app/request?warehouse=WH001`
 - Supports:
-  - login to the Gambhiram request page
+  - requester details lookup by mobile number
   - live stock browsing
-  - direct sale entry posting
+  - book and devotional item requests
+  - request activity names for backend issue generation
+  - request history by mobile number
   - app-style wrapper experience
 
 ## Android Studio setup

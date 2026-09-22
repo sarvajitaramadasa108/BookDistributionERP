@@ -226,6 +226,7 @@ create table if not exists public.catalog_requests (
   folk_guide_name text not null default '',
   preacher_name text not null default '',
   requester_location text not null default '',
+  request_activity_name text not null default 'General Issue',
   notes text not null default '',
   status text not null default 'New' check (status in ('New', 'Viewed', 'Approved', 'Accepted', 'Rejected', 'Fulfilled')),
   accepted_activity_id uuid references public.activities(id) on update cascade on delete set null,
@@ -306,6 +307,9 @@ alter table public.catalog_requests
 
 alter table public.catalog_requests
   add column if not exists requester_location text not null default '';
+
+alter table public.catalog_requests
+  add column if not exists request_activity_name text not null default 'General Issue';
 
 alter table public.catalog_requests
   add column if not exists accepted_activity_id uuid references public.activities(id) on update cascade on delete set null;

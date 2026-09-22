@@ -106,7 +106,8 @@ function buildCatalogProfileFromRequestRows(rows) {
       requesterSegment: "",
       folkGuideName: "",
       preacherName: "",
-      requesterLocation: ""
+      requesterLocation: "",
+      requestActivityNames: ["General Issue"]
     };
   }
 
@@ -118,12 +119,14 @@ function buildCatalogProfileFromRequestRows(rows) {
     preacherName: "",
     requesterLocation: ""
   };
+  const activityNames = new Set(["General Issue"]);
   for (const row of ordered) {
     if (!values.name && String(row.requester_name || "").trim()) values.name = String(row.requester_name || "").trim();
     if (!values.requesterSegment && normalizeRequesterSegment(row.requester_segment)) values.requesterSegment = normalizeRequesterSegment(row.requester_segment);
     if (!values.folkGuideName && String(row.folk_guide_name || "").trim()) values.folkGuideName = String(row.folk_guide_name || "").trim();
     if (!values.preacherName && String(row.preacher_name || "").trim()) values.preacherName = String(row.preacher_name || "").trim();
     if (!values.requesterLocation && String(row.requester_location || "").trim()) values.requesterLocation = String(row.requester_location || "").trim();
+    if (String(row.request_activity_name || "").trim()) activityNames.add(String(row.request_activity_name || "").trim());
   }
 
   const missingFields = [];
@@ -137,6 +140,7 @@ function buildCatalogProfileFromRequestRows(rows) {
     exists: true,
     complete: missingFields.length === 0,
     missingFields,
+    requestActivityNames: Array.from(activityNames),
     ...values
   };
 }
@@ -1970,7 +1974,7 @@ async function catalogProfileLookup(supabase, payload) {
   if (requesterMobile.length !== 10) throw new Error("Mobile number is required");
   const { data, error } = await supabase
     .from("catalog_requests")
-    .select("requester_name, requester_mobile, requester_segment, folk_guide_name, preacher_name, requester_location, created_at")
+    .select("requester_name, requester_mobile, requester_segment, folk_guide_name, preacher_name, requester_location, request_activity_name, created_at")
     .eq("requester_mobile", requesterMobile)
     .order("created_at", { ascending: false })
     .limit(50);
@@ -2004,6 +2008,7 @@ async function createCatalogRequest(supabase, payload, currentUser) {
   const folkGuideName = String(payload.folkGuideName || "").trim();
   const preacherName = String(payload.preacherName || "").trim();
   const requesterLocation = String(payload.requesterLocation || payload.location || "").trim();
+  const requestActivityName = String(payload.requestActivityName || payload.activityName || "General Issue").trim() || "General Issue";
   if (!requesterSegment) throw new Error("Category is required");
   if (!requesterLocation) throw new Error("Location is required");
   if (requesterSegment === "FOLK" && !folkGuideName) throw new Error("Folk guide name is required");
@@ -2022,6 +2027,7 @@ async function createCatalogRequest(supabase, payload, currentUser) {
     folk_guide_name: folkGuideName,
     preacher_name: preacherName,
     requester_location: requesterLocation,
+    request_activity_name: requestActivityName,
     notes: String(payload.notes || "").trim(),
     status: "New",
     created_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null
@@ -2053,6 +2059,7 @@ async function createCatalogRequest(supabase, payload, currentUser) {
     folkGuideName: request.folk_guide_name,
     preacherName: request.preacher_name,
     requesterLocation: request.requester_location,
+    requestActivityName: request.request_activity_name || "General Issue",
     acceptedActivityId: request.accepted_activity_id || "",
     acceptedActivityCode: request.accepted_activity_code || "",
     acceptedDocumentId: request.accepted_document_id || "",
@@ -2103,6 +2110,7 @@ async function catalogRequestsList(supabase) {
       folkGuideName: row.folk_guide_name || "",
       preacherName: row.preacher_name || "",
       requesterLocation: row.requester_location || "",
+      requestActivityName: row.request_activity_name || "General Issue",
       acceptedActivityId: row.accepted_activity_id || "",
       acceptedActivityCode: row.accepted_activity_code || "",
       acceptedDocumentId: row.accepted_document_id || "",
@@ -2162,6 +2170,7 @@ async function catalogRequestsByMobile(supabase, payload) {
       folkGuideName: row.folk_guide_name || "",
       preacherName: row.preacher_name || "",
       requesterLocation: row.requester_location || "",
+      requestActivityName: row.request_activity_name || "General Issue",
       acceptedActivityId: row.accepted_activity_id || "",
       acceptedActivityCode: row.accepted_activity_code || "",
       acceptedDocumentId: row.accepted_document_id || "",
@@ -2202,7 +2211,7 @@ async function approveCatalogRequest(supabase, payload, currentUser) {
   if (!requestLines.length) throw new Error("This request has no item lines");
 
   const activityPayload = {
-    name: String(payload.activityName || payload.name || "").trim(),
+    name: String(payload.activityName || payload.name || requestRow.request_activity_name || "").trim(),
     type: String(payload.activityType || payload.type || "Stall").trim(),
     devoteeId: String(payload.devoteeId || "").trim(),
     warehouseId: String(payload.warehouseId || requestRow.source_warehouse_code || "").trim(),

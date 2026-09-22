@@ -496,6 +496,7 @@
       folkGuideName: String(payload.folkGuideName || "").trim(),
       preacherName: String(payload.preacherName || "").trim(),
       requesterLocation: String(payload.requesterLocation || payload.location || "").trim(),
+      requestActivityName: String(payload.requestActivityName || payload.activityName || "General Issue").trim() || "General Issue",
       notes: String(payload.notes || "").trim(),
       status: "New",
       totalQty: lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0),
@@ -543,7 +544,8 @@
         requesterSegment: "",
         folkGuideName: "",
         preacherName: "",
-        requesterLocation: ""
+        requesterLocation: "",
+        requestActivityNames: ["General Issue"]
       };
     }
     const profile = {
@@ -554,14 +556,17 @@
       requesterSegment: "",
       folkGuideName: "",
       preacherName: "",
-      requesterLocation: ""
+      requesterLocation: "",
+      requestActivityNames: ["General Issue"]
     };
+    const activityNames = new Set(["General Issue"]);
     for (const row of matches) {
       if (!profile.name && row.requesterName) profile.name = row.requesterName;
       if (!profile.requesterSegment && row.requesterSegment) profile.requesterSegment = row.requesterSegment;
       if (!profile.folkGuideName && row.folkGuideName) profile.folkGuideName = row.folkGuideName;
       if (!profile.preacherName && row.preacherName) profile.preacherName = row.preacherName;
       if (!profile.requesterLocation && row.requesterLocation) profile.requesterLocation = row.requesterLocation;
+      if (String(row.requestActivityName || "").trim()) activityNames.add(String(row.requestActivityName || "").trim());
     }
     const missingFields = [];
     if (!profile.name) missingFields.push("name");
@@ -571,6 +576,7 @@
     if (profile.requesterSegment === "CONGREGATION" && !profile.preacherName) missingFields.push("preacherName");
     profile.complete = missingFields.length === 0;
     profile.missingFields = missingFields;
+    profile.requestActivityNames = Array.from(activityNames);
     return profile;
   }
 
@@ -594,7 +600,7 @@
       throw new Error("This request is already processed");
     }
     const activity = createMockActivity({
-      name: String(payload.activityName || payload.name || "").trim(),
+      name: String(payload.activityName || payload.name || request.requestActivityName || "").trim(),
       type: String(payload.activityType || payload.type || "Stall").trim(),
       devoteeId: String(payload.devoteeId || "").trim(),
       startDate: payload.startDate || "",

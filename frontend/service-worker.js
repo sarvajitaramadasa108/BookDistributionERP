@@ -1,4 +1,4 @@
-const CACHE_NAME = "hkm-request-pwa-v1";
+const CACHE_NAME = "hkm-request-pwa-v2";
 const CORE_ASSETS = [
   "/request",
   "/request.html",

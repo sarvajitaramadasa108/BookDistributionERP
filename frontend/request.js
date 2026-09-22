@@ -37,6 +37,9 @@
     folkGuideName: "",
     preacherName: "",
     requesterLocation: "",
+    requestActivityChoice: "General Issue",
+    requestActivityName: "General Issue",
+    requestActivityOptions: ["General Issue"],
     requestSubmitting: false,
     submitted: false,
     successMessage: "",
@@ -125,6 +128,24 @@
     const number = Number(value || 0);
     if (!Number.isFinite(number)) return "Rs. 0";
     return `Rs. ${number.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  }
+
+  function uniqueActivityOptions(values) {
+    const options = ["General Issue"];
+    for (const value of values || []) {
+      const name = String(value || "").trim();
+      if (name && !options.some((option) => option.toLowerCase() === name.toLowerCase())) {
+        options.push(name);
+      }
+    }
+    return options;
+  }
+
+  function getCurrentRequestActivityName() {
+    if (state.requestActivityChoice === "__new__") {
+      return String(state.requestActivityName || "").trim();
+    }
+    return String(state.requestActivityChoice || state.requestActivityName || "General Issue").trim() || "General Issue";
   }
 
   function formatDateTime(value) {
@@ -295,6 +316,20 @@
       render();
       return;
     }
+    if (field === "requestActivityChoice") {
+      state.requestActivityChoice = value;
+      if (value === "__new__") {
+        state.requestActivityName = "";
+      } else {
+        state.requestActivityName = value || "General Issue";
+      }
+      render();
+      return;
+    }
+    if (field === "requestActivityName") {
+      state.requestActivityName = value;
+      return;
+    }
     state[field] = value;
     if (field === "search") {
       rerenderSearchPreservingFocus();
@@ -406,6 +441,10 @@
       state.folkGuideName = String(profile?.folkGuideName || "").trim();
       state.preacherName = String(profile?.preacherName || "").trim();
       state.requesterLocation = String(profile?.requesterLocation || "").trim();
+      state.requestActivityOptions = uniqueActivityOptions(profile?.requestActivityNames || []);
+      const preferredActivity = state.requestActivityOptions[0] || "General Issue";
+      state.requestActivityChoice = preferredActivity;
+      state.requestActivityName = preferredActivity;
       render();
     } catch (error) {
       showToast(error.message || "Could not verify mobile number");
@@ -445,6 +484,10 @@
       showToast("Location is required");
       return false;
     }
+    if (!getCurrentRequestActivityName()) {
+      showToast("Activity name is required");
+      return false;
+    }
     return true;
   }
 
@@ -467,6 +510,7 @@
         folkGuideName: String(state.folkGuideName || "").trim(),
         preacherName: String(state.preacherName || "").trim(),
         requesterLocation: String(state.requesterLocation || "").trim(),
+        requestActivityName: getCurrentRequestActivityName(),
         notes: String(state.notes || "").trim(),
         lines: state.cart.map((line) => ({
           erpCode: line.erpCode,
@@ -492,8 +536,10 @@
         requesterSegment: payload.requesterSegment,
         folkGuideName: payload.folkGuideName,
         preacherName: payload.preacherName,
-        requesterLocation: payload.requesterLocation
+        requesterLocation: payload.requesterLocation,
+        requestActivityNames: uniqueActivityOptions([...state.requestActivityOptions, payload.requestActivityName])
       };
+      state.requestActivityOptions = uniqueActivityOptions([...state.requestActivityOptions, payload.requestActivityName]);
       showToast("Request placed");
       render();
     } catch (error) {
@@ -545,6 +591,9 @@
     state.folkGuideName = "";
     state.preacherName = "";
     state.requesterLocation = "";
+    state.requestActivityChoice = "General Issue";
+    state.requestActivityName = "General Issue";
+    state.requestActivityOptions = ["General Issue"];
     state.requestSubmitting = false;
     state.submitted = false;
     state.successMessage = "";
@@ -590,11 +639,13 @@
   }
 
   function renderFloatingActions() {
+    const isHistory = state.view === "history";
+    const isCart = ["cart", "checkout", "submitted"].includes(state.view);
     return `
       <div class="floating-request-actions">
         ${state.installReady ? `<button class="segment" type="button" onclick="window.requestApp.installPwa()">Install App</button>` : ""}
-        <button class="segment" type="button" onclick="window.requestApp.openHistory()">My Requests</button>
-        <button class="segment active" type="button" onclick="window.requestApp.openCart()">Go to Cart (${cartTotalQty()})</button>
+        <button class="segment ${isHistory ? "active" : ""}" type="button" onclick="window.requestApp.openHistory()">My Requests</button>
+        <button class="segment ${isCart ? "active" : ""}" type="button" onclick="window.requestApp.openCart()">Go to Cart (${cartTotalQty()})</button>
       </div>
     `;
   }
@@ -606,8 +657,8 @@
         <div class="public-brand">
           <div class="public-mark">HKM</div>
           <div>
-            <div class="public-title">Book Distribution Requests</div>
-            <div class="public-subtitle">Browse, build your cart, and place requests for the ${escapeHtml(getWarehouseLabel())} warehouse.</div>
+            <div class="public-title">Book Distribution - HKM Vizag</div>
+            <div class="public-subtitle">Request books and devotional items from ${escapeHtml(getWarehouseLabel())}. Your details are remembered from your mobile number.</div>
           </div>
         </div>
       </header>
@@ -786,6 +837,32 @@
     return "";
   }
 
+  function renderActivityField() {
+    const options = uniqueActivityOptions(state.requestActivityOptions);
+    return `
+      <div class="grid-two request-activity-fields">
+        <label class="field">
+          <span>Activity Name</span>
+          <select onchange="window.requestApp.setField('requestActivityChoice', this.value)">
+            ${options.map((name) => `<option value="${escapeAttr(name)}"${state.requestActivityChoice === name ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+            <option value="__new__"${state.requestActivityChoice === "__new__" ? " selected" : ""}>Add New Activity</option>
+          </select>
+        </label>
+        ${state.requestActivityChoice === "__new__" ? `
+          <label class="field">
+            <span>New Activity</span>
+            <input type="text" value="${escapeAttr(state.requestActivityName)}" placeholder="Type activity name" oninput="window.requestApp.setField('requestActivityName', this.value)" autofocus>
+          </label>
+        ` : `
+          <div class="activity-help-card">
+            <strong>${escapeHtml(getCurrentRequestActivityName())}</strong>
+            <span>This will be used in backend issue entry approval.</span>
+          </div>
+        `}
+      </div>
+    `;
+  }
+
   function renderCheckoutView() {
     return `
       <section class="public-card request-main">
@@ -823,6 +900,7 @@
               </label>
             </div>
             ${profileNeedsExtraField(state.requesterSegment) ? `<div class="grid-two">${renderReferenceField()}</div>` : ""}
+            ${renderActivityField()}
             <div class="grid-two">
               <label class="field">
                 <span>Where do you stay?</span>
@@ -857,68 +935,84 @@
         </div>
       `;
     }
+    const groups = new Map();
+    for (const row of state.historyRows) {
+      const activityName = String(row.requestActivityName || "General Issue").trim() || "General Issue";
+      if (!groups.has(activityName)) groups.set(activityName, []);
+      groups.get(activityName).push(row);
+    }
     return `
-      <div class="history-table-wrap">
-        <table class="history-table">
-          <thead>
-            <tr>
-              <th>Request Date</th>
-              <th>Request ID</th>
-              <th>Status</th>
-              <th>Details</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${state.historyRows.map((row) => `
-              <tr>
-                <td>${escapeHtml(formatDateTime(row.createdAt))}</td>
-                <td>${escapeHtml(row.requestCode || row.requestId || "-")}</td>
-                <td>${escapeHtml(row.status || "New")}</td>
-                <td><button class="small-button" type="button" onclick="window.requestApp.toggleHistoryDetails('${escapeAttr(row.requestId)}')">${state.historyExpanded === row.requestId ? "Hide" : "Show"} Details</button></td>
-              </tr>
-              ${state.historyExpanded === row.requestId ? `
-                <tr class="history-detail-row">
-                  <td colspan="4">
-                    <div class="history-detail-card">
-                      <div class="detail-meta">
-                        <div><strong>Name:</strong> ${escapeHtml(row.requesterName || "-")}</div>
-                        <div><strong>Mobile:</strong> ${escapeHtml(row.requesterMobile || "-")}</div>
-                        <div><strong>Total Qty:</strong> ${escapeHtml(String(row.totalQty || 0))}</div>
-                        <div><strong>Total Worth:</strong> ${escapeHtml(money(row.totalAmount || 0))}</div>
+      <div class="history-activity-list">
+        ${Array.from(groups.entries()).map(([activityName, rows]) => {
+          const totalQty = rows.reduce((sum, row) => sum + Number(row.totalQty || 0), 0);
+          const totalAmount = rows.reduce((sum, row) => sum + Number(row.totalAmount || 0), 0);
+          return `
+            <section class="history-activity-card">
+              <div class="history-activity-header">
+                <div>
+                  <h3>${escapeHtml(activityName)}</h3>
+                  <p>${rows.length} request${rows.length === 1 ? "" : "s"} · ${totalQty} items · ${money(totalAmount)}</p>
+                </div>
+              </div>
+              <div class="history-request-list">
+                ${rows.map((row) => `
+                  <article class="history-request-card">
+                    <div class="history-request-main">
+                      <div>
+                        <strong>${escapeHtml(row.requestCode || row.requestId || "-")}</strong>
+                        <span>${escapeHtml(formatDateTime(row.createdAt))}</span>
                       </div>
-                      <div class="history-detail-table-wrap">
-                        <table class="history-detail-table">
-                          <thead>
-                            <tr>
-                              <th>ERP Code</th>
-                              <th>Item</th>
-                              <th>Category</th>
-                              <th>Qty</th>
-                              <th>Rate</th>
-                              <th>Amount</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            ${(row.lines || []).map((line) => `
-                              <tr>
-                                <td>${escapeHtml(line.erpCode || "-")}</td>
-                                <td>${escapeHtml(line.itemName || "-")}</td>
-                                <td>${escapeHtml(line.itemGroup === "PARAPHERNALIA" ? "Devotional" : "Books")}</td>
-                                <td>${escapeHtml(String(line.requestedQty || 0))}</td>
-                                <td>${escapeHtml(money(line.salePrice || 0))}</td>
-                                <td>${escapeHtml(money(line.lineTotal || 0))}</td>
-                              </tr>
-                            `).join("")}
-                          </tbody>
-                        </table>
-                      </div>
+                      <div class="history-request-status">${escapeHtml(row.status || "New")}</div>
                     </div>
-                  </td>
-                </tr>
-              ` : ""}
-            `).join("")}
-          </tbody>
-        </table>
+                    <div class="history-request-meta">
+                      <span>${escapeHtml(row.acceptedDocumentCode ? `Issue: ${row.acceptedDocumentCode}` : "Issue: Pending")}</span>
+                      <span>${escapeHtml(String(row.totalQty || 0))} qty</span>
+                      <span>${escapeHtml(money(row.totalAmount || 0))}</span>
+                    </div>
+                    <button class="small-button" type="button" onclick="window.requestApp.toggleHistoryDetails('${escapeAttr(row.requestId)}')">${state.historyExpanded === row.requestId ? "Hide" : "Show"} Issue Details</button>
+                    ${state.historyExpanded === row.requestId ? `
+                      <div class="history-detail-card">
+                        <div class="detail-meta">
+                          <div><strong>Name:</strong> ${escapeHtml(row.requesterName || "-")}</div>
+                          <div><strong>Mobile:</strong> ${escapeHtml(row.requesterMobile || "-")}</div>
+                          <div><strong>Issue Document:</strong> ${escapeHtml(row.acceptedDocumentCode || "Pending")}</div>
+                          <div><strong>Total Qty:</strong> ${escapeHtml(String(row.totalQty || 0))}</div>
+                          <div><strong>Total Worth:</strong> ${escapeHtml(money(row.totalAmount || 0))}</div>
+                        </div>
+                        <div class="history-detail-table-wrap">
+                          <table class="history-detail-table">
+                            <thead>
+                              <tr>
+                                <th>ERP Code</th>
+                                <th>Item</th>
+                                <th>Category</th>
+                                <th>Qty</th>
+                                <th>Rate</th>
+                                <th>Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              ${(row.lines || []).map((line) => `
+                                <tr>
+                                  <td>${escapeHtml(line.erpCode || "-")}</td>
+                                  <td>${escapeHtml(line.itemName || "-")}</td>
+                                  <td>${escapeHtml(line.itemGroup === "PARAPHERNALIA" ? "Devotional" : "Books")}</td>
+                                  <td>${escapeHtml(String(line.requestedQty || 0))}</td>
+                                  <td>${escapeHtml(money(line.salePrice || 0))}</td>
+                                  <td>${escapeHtml(money(line.lineTotal || 0))}</td>
+                                </tr>
+                              `).join("")}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ` : ""}
+                  </article>
+                `).join("")}
+              </div>
+            </section>
+          `;
+        }).join("")}
       </div>
     `;
   }

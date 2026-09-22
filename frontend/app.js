@@ -1092,6 +1092,7 @@
         row.itemGroup,
         row.requesterName,
         row.requesterMobile,
+        row.requestActivityName,
         row.status,
         row.notes,
         ...(row.lines || []).flatMap((line) => [line.erpCode, line.itemName, line.itemGroup])
@@ -1163,6 +1164,7 @@
               <th>Category</th>
               <th>Warehouse</th>
               <th>Name</th>
+              <th>Activity</th>
               <th>Mobile</th>
               <th>Items</th>
               <th>Qty</th>
@@ -1179,6 +1181,7 @@
                 <td>${escapeHtml(requestGroupLabel(row.itemGroup))}</td>
                 <td>${escapeHtml(row.sourceWarehouseName || row.sourceWarehouseCode || "-")}</td>
                 <td>${escapeHtml(row.requesterName || "-")}</td>
+                <td>${escapeHtml(row.requestActivityName || "General Issue")}</td>
                 <td>${escapeHtml(row.requesterMobile || "-")}</td>
                 <td>${escapeHtml((row.lines || []).length ? row.lines.map((line) => line.itemName).join(", ") : "-")}</td>
                 <td>${Number(row.totalQty || 0)}</td>
@@ -1210,6 +1213,7 @@
                 <div><strong>Name:</strong> ${escapeHtml(detail.requesterName || "-")}</div>
                 <div><strong>Mobile:</strong> ${escapeHtml(detail.requesterMobile || "-")}</div>
                 <div><strong>Category:</strong> ${escapeHtml(detail.requesterSegment || "-")}</div>
+                <div><strong>Activity:</strong> ${escapeHtml(detail.requestActivityName || "General Issue")}</div>
                 <div><strong>Location:</strong> ${escapeHtml(detail.requesterLocation || "-")}</div>
                 ${detail.folkGuideName ? `<div><strong>Folk Guide:</strong> ${escapeHtml(detail.folkGuideName)}</div>` : ""}
                 ${detail.preacherName ? `<div><strong>Preacher:</strong> ${escapeHtml(detail.preacherName)}</div>` : ""}
@@ -5501,9 +5505,10 @@
       warehouse.warehouseId === detail.sourceWarehouseCode || warehouse.rowId === detail.sourceWarehouseId
     )?.warehouseId || detail.sourceWarehouseCode || "";
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active || warehouse.warehouseId === defaultWarehouseId);
+    const requestedActivityName = String(detail.requestActivityName || "General Issue").trim() || "General Issue";
     const draft = {
       requestId: detail.requestId,
-      activityName: detail.requesterName ? `${detail.requesterName} Request` : "",
+      activityName: detail.requesterName ? `${detail.requesterName} - ${requestedActivityName}` : requestedActivityName,
       activityType: "Stall",
       devoteeId: "",
       warehouseId: defaultWarehouseId,
@@ -5528,6 +5533,7 @@
           <div class="wide-field detail-meta" style="margin-top:0;">
             <div><strong>Request:</strong> ${escapeHtml(detail.requestCode || "-")}</div>
             <div><strong>Name:</strong> ${escapeHtml(detail.requesterName || "-")}</div>
+            <div><strong>Requested Activity:</strong> ${escapeHtml(requestedActivityName)}</div>
             <div><strong>Mobile:</strong> ${escapeHtml(detail.requesterMobile || "-")}</div>
             <div><strong>Worth:</strong> ${money(Number(detail.totalAmount || 0))}</div>
           </div>
