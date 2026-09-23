@@ -1160,6 +1160,10 @@ function documentTypeRequiresActivity(documentType) {
   return ["ISSUE", "COMPLIMENTARY", "RETURN", "UNSETTLED_OPENING", "ADJUSTMENT"].includes(documentType);
 }
 
+function publicDevoteeCodeForMobile(mobile) {
+  return `MOB-${normalizeMobile(mobile)}`;
+}
+
 function parseSettlementEditNote(note) {
   const text = String(note || "").trim();
   const parts = text.split("|");
@@ -1303,7 +1307,7 @@ async function createDocument(supabase, payload, currentUser) {
   const itemGroup = String(payload.itemGroup || "BOOK").trim().toUpperCase();
   const adjustmentDirection = String(payload.adjustmentDirection || payload.adjustmentMode || "").trim().toUpperCase();
   if (!lines.length) throw new Error("At least one document line is required");
-  const activityRow = documentTypeRequiresActivity(documentType) ? await resolveActivityRow(supabase, payload.activityId) : null;
+  const activityRow = (documentTypeRequiresActivity(documentType) || payload.activityId) ? await resolveActivityRow(supabase, payload.activityId) : null;
   if (documentTypeRequiresActivity(documentType) && !activityRow) throw new Error("Activity is required for this document");
   if ((documentType === "OPENING" || documentType === "UNSETTLED_OPENING" || documentType === "PURCHASE") && !payload.toWarehouseId && !payload.fromWarehouseId) {
     throw new Error("Warehouse is required");
@@ -2710,6 +2714,206 @@ async function submitWarehouseSale(supabase, payload, currentUser) {
   return saleEntryDetail(supabase, { documentId: created.documentId });
 }
 
+async function resolveTestWarehouse(supabase) {
+  const row = await resolveWarehouseRow(supabase, "TEST");
+  if (!row) throw new Error("Test warehouse is not configured");
+  return row;
+}
+
+async function publicProfileLookup(supabase, payload) {
+  const mobile = normalizeMobile(payload.mobile || payload.requesterMobile || "");
+  if (mobile.length !== 10) throw new Error("Mobile number is required");
+  const { data, error } = await supabase
+    .from("public_request_profiles")
+    .select("*")
+    .eq("mobile", mobile)
+    .maybeSingle();
+  if (error) throw error;
+  return {
+    exists: Boolean(data),
+    mobile,
+    name: data?.name || "",
+    age: data?.age || "",
+    category: data?.category || "",
+    preacherName: data?.preacher_name || "",
+    location: data?.location || ""
+  };
+}
+
+async function ensurePublicProfileAndDevotee(supabase, payload) {
+  const mobile = normalizeMobile(payload.mobile || payload.requesterMobile || "");
+  if (mobile.length !== 10) throw new Error("Mobile number is required");
+  const name = String(payload.name || payload.requesterName || "").trim();
+  const category = normalizeRequesterSegment(payload.category || payload.requesterSegment || "");
+  const preacherName = String(payload.preacherName || payload.folkGuideName || "").trim();
+  const location = String(payload.location || payload.requesterLocation || "").trim();
+  const age = payload.age === "" || payload.age === undefined || payload.age === null ? null : Number(payload.age);
+  if (!name) throw new Error("Name is required");
+  if (!category) throw new Error("Category is required");
+  if (!location) throw new Error("Location is required");
+  if (["FOLK", "CONGREGATION"].includes(category) && !preacherName) throw new Error("Preacher name is required");
+
+  const devoteeCode = publicDevoteeCodeForMobile(mobile);
+  const { data: devotee, error: devoteeError } = await supabase
+    .from("devotees")
+    .upsert({
+      devotee_code: devoteeCode,
+      devotee_name: name,
+      active: true
+    }, { onConflict: "devotee_code" })
+    .select("*")
+    .single();
+  if (devoteeError) throw devoteeError;
+
+  const { data, error } = await supabase
+    .from("public_request_profiles")
+    .upsert({
+      mobile,
+      name,
+      age: Number.isFinite(age) ? age : null,
+      category,
+      preacher_name: preacherName,
+      location,
+      devotee_id: devotee.id
+    }, { onConflict: "mobile" })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return {
+    exists: true,
+    mobile,
+    name: data.name || "",
+    age: data.age || "",
+    category: data.category || "",
+    preacherName: data.preacher_name || "",
+    location: data.location || "",
+    devoteeId: devotee.devotee_code
+  };
+}
+
+async function publicActivitySummaries(supabase, payload) {
+  const profile = await publicProfileLookup(supabase, payload);
+  if (!profile.exists) return [];
+  const testWarehouse = await resolveTestWarehouse(supabase);
+  const devoteeCode = publicDevoteeCodeForMobile(profile.mobile);
+  const context = await getSettlementContext(supabase);
+  const devotee = (context.devotees || []).find((row) => row.devotee_code === devoteeCode);
+  if (!devotee) return [];
+  return (context.activities || [])
+    .filter((activity) => activity.devotee_id === devotee.id && activity.warehouse_id === testWarehouse.id)
+    .map((activity) => buildSettlementSummaryForActivity(activity, context))
+    .map((row) => ({
+      ...row,
+      publicStatus: row.settledAt ? "Closed" : row.activityStatus === "Completed" ? "Settlement Pending" : row.summary.returnQty > 0 ? "Return Pending" : "Running"
+    }))
+    .sort((a, b) => String(b.activityCode || "").localeCompare(String(a.activityCode || "")));
+}
+
+async function publicActivityStock(supabase, payload) {
+  const activityId = String(payload.activityId || "").trim();
+  if (!activityId) throw new Error("Activity is required");
+  const rows = await getActivityUnsettled(supabase);
+  const targetRows = rows.filter((row) => [row.activityId, row.activityName].some((value) => String(value || "") === activityId));
+  const items = await itemsPublicList(supabase, {});
+  const itemByCode = Object.fromEntries((items || []).map((item) => [String(item.erpCode || ""), item]));
+  return targetRows
+    .filter((row) => Number(row.unsettledQty || 0) > 0)
+    .map((row) => {
+      const item = itemByCode[row.bookId] || {};
+      return {
+        ...row,
+        itemName: item.name || row.bookId,
+        salePrice: Number(item.salePrice || 0),
+        availableQty: Number(row.unsettledQty || 0)
+      };
+    })
+    .sort((a, b) => String(a.itemName || "").localeCompare(String(b.itemName || "")));
+}
+
+async function publicSubmitRequest(supabase, payload) {
+  const profile = await ensurePublicProfileAndDevotee(supabase, payload);
+  const testWarehouse = await resolveTestWarehouse(supabase);
+  const requestActivityName = String(payload.requestActivityName || payload.activityName || "General Issue").trim() || "General Issue";
+  return createCatalogRequest(supabase, {
+    ...payload,
+    sourceWarehouseId: testWarehouse.warehouse_code,
+    sourceWarehouseName: testWarehouse.warehouse_name,
+    requesterName: profile.name,
+    requesterMobile: profile.mobile,
+    requesterSegment: profile.category,
+    folkGuideName: profile.category === "FOLK" ? profile.preacherName : "",
+    preacherName: profile.category === "CONGREGATION" ? profile.preacherName : "",
+    requesterLocation: profile.location,
+    requestActivityName
+  }, null);
+}
+
+async function publicSubmitActivitySale(supabase, payload) {
+  const profile = await publicProfileLookup(supabase, payload);
+  if (!profile.exists) throw new Error("Profile not found");
+  const testWarehouse = await resolveTestWarehouse(supabase);
+  const activityRef = String(payload.activityId || "").trim();
+  if (!activityRef) throw new Error("Activity is required");
+  const activityRow = await resolveActivityRow(supabase, activityRef);
+  if (!activityRow) throw new Error("Activity not found");
+  const stockRows = await publicActivityStock(supabase, { activityId: activityRow.id });
+  const stockByCode = Object.fromEntries(stockRows.map((row) => [String(row.bookId || ""), row]));
+  const lines = (Array.isArray(payload.lines) ? payload.lines : [])
+    .map((line) => {
+      const code = String(line.erpCode || line.bookId || "").trim();
+      const stock = stockByCode[code] || {};
+      return {
+        bookId: code,
+        quantity: Number(line.quantity || 0),
+        rate: Number(line.rate !== undefined ? line.rate : stock.salePrice || 0)
+      };
+    })
+    .filter((line) => line.bookId && line.quantity > 0);
+  if (!lines.length) throw new Error("Add at least one item");
+  for (const line of lines) {
+    if (line.quantity > Number(stockByCode[line.bookId]?.availableQty || 0)) {
+      throw new Error(`Sale quantity exceeds activity stock for ${line.bookId}`);
+    }
+  }
+  const paymentMethod = String(payload.paymentMethod || "").trim().toUpperCase();
+  const cashAmount = Number(payload.cashAmount || 0);
+  const onlineAmount = Number(payload.onlineAmount || 0);
+  if (!["CASH", "ONLINE", "MIXED"].includes(paymentMethod)) throw new Error("Select payment method");
+  const expectedTotalAmount = lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.rate || 0), 0);
+  if (Math.abs(expectedTotalAmount - cashAmount - onlineAmount) > 0.01) throw new Error("Payment total must match sale amount");
+  const created = await createDocument(supabase, {
+    documentType: "SALE",
+    documentDate: payload.documentDate || nowIso(),
+    fromWarehouseId: testWarehouse.warehouse_code,
+    activityId: activityRow.activity_code,
+    status: "Posted",
+    notes: `Public sale by ${profile.name} (${profile.mobile})`,
+    lines
+  }, null);
+  if (cashAmount > 0 || onlineAmount > 0) {
+    const { data: doc } = await supabase.from("documents").select("id").eq("document_code", created.documentId).single();
+    if (doc) {
+      const { error: paymentError } = await supabase.from("sale_entry_payments").insert({
+        document_id: doc.id,
+        payment_date: toDateOnly(payload.paymentDate || nowIso()),
+        cash_amount: cashAmount,
+        online_amount: onlineAmount,
+        notes: `[SALE_COLLECTION] Public activity sale (${paymentMethod})`
+      });
+      if (paymentError) throw paymentError;
+      const { error: activityPaymentError } = await supabase.from("activity_settlement_payments").insert({
+        activity_id: activityRow.id,
+        payment_date: toDateOnly(payload.paymentDate || nowIso()),
+        cash_amount: cashAmount,
+        online_amount: onlineAmount,
+        notes: `[PUBLIC_ACTIVITY_SALE] ${created.documentId} (${paymentMethod})`
+      });
+      if (activityPaymentError) throw activityPaymentError;
+    }
+  }
+  return { documentId: created.documentId };
+}
+
 async function getActivityUnsettled(supabase) {
   const { data: documents } = await supabase.from("documents").select("*");
   const { data: lines } = await supabase.from("document_lines").select("*");
@@ -3673,7 +3877,13 @@ async function main(request) {
       "catalog.items",
       "catalog.profileLookup",
       "catalog.submit",
-      "catalog.requestsByMobile"
+      "catalog.requestsByMobile",
+      "publicTest.profileLookup",
+      "publicTest.profileSave",
+      "publicTest.activities",
+      "publicTest.activityStock",
+      "publicTest.submitRequest",
+      "publicTest.submitSale"
     ]);
     const currentUser = await requireCurrentUser(supabase, payload, publicActions.has(action));
 
@@ -3812,6 +4022,18 @@ async function main(request) {
         return json(200, { ok: true, data: await createCatalogRequest(supabase, payload, currentUser) });
       case "catalog.requestsByMobile":
         return json(200, { ok: true, data: await catalogRequestsByMobile(supabase, payload) });
+      case "publicTest.profileLookup":
+        return json(200, { ok: true, data: await publicProfileLookup(supabase, payload) });
+      case "publicTest.profileSave":
+        return json(200, { ok: true, data: await ensurePublicProfileAndDevotee(supabase, payload) });
+      case "publicTest.activities":
+        return json(200, { ok: true, data: await publicActivitySummaries(supabase, payload) });
+      case "publicTest.activityStock":
+        return json(200, { ok: true, data: await publicActivityStock(supabase, payload) });
+      case "publicTest.submitRequest":
+        return json(200, { ok: true, data: await publicSubmitRequest(supabase, payload) });
+      case "publicTest.submitSale":
+        return json(200, { ok: true, data: await publicSubmitActivitySale(supabase, payload) });
       case "requests.list":
         return json(200, { ok: true, data: await catalogRequestsList(supabase) });
       case "requests.approve":

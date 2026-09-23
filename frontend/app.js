@@ -28,6 +28,7 @@
     purchaseLines: [],
     purchaseImportName: "",
     documents: [],
+    stockDocumentWarehouseFilter: "",
     requests: [],
     saleEntries: [],
     saleEntryDayPayments: [],
@@ -38,6 +39,7 @@
     saleEntryDetail: null,
     requestSearch: "",
     requestGroupFilter: "all",
+    requestWarehouseFilter: "",
     requestDetailId: "",
     requestApprovalDraft: null,
     onlineClasses: [],
@@ -1080,8 +1082,12 @@
   function filteredRequests() {
     const query = String(state.requestSearch || "").trim().toLowerCase();
     const groupFilter = String(state.requestGroupFilter || "all").toUpperCase();
+    const warehouseFilter = String(state.requestWarehouseFilter || "").trim();
     return (state.requests || []).filter((row) => {
       if (groupFilter !== "ALL" && String(row.itemGroup || "").toUpperCase() !== groupFilter) {
+        return false;
+      }
+      if (warehouseFilter && ![row.sourceWarehouseCode, row.sourceWarehouseName, row.sourceWarehouseId].some((value) => String(value || "") === warehouseFilter)) {
         return false;
       }
       if (!query) return true;
@@ -1135,6 +1141,13 @@
         <div class="panel-body">
           <div class="toolbar">
             <label class="field compact-field">
+              <span>Warehouse</span>
+              <select onchange="window.erpApp.setRequestWarehouseFilter(this.value)">
+                <option value="">Select warehouse</option>
+                ${state.warehouses.filter((warehouse) => warehouse.active !== false).map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${state.requestWarehouseFilter === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name || warehouse.warehouseId)}</option>`).join("")}
+              </select>
+            </label>
+            <label class="field compact-field">
               <span>Search</span>
               <input id="requestSearchInput" type="search" value="${escapeAttribute(state.requestSearch)}" placeholder="Search request, name, mobile, item..." oninput="window.erpApp.setRequestSearch(this.value)">
             </label>
@@ -1147,7 +1160,7 @@
               </select>
             </label>
           </div>
-          ${detail ? requestDetailMarkup(detail) : (rows.length ? requestsTable(rows) : '<div class="empty-state">No requests found.</div>')}
+          ${!state.requestWarehouseFilter ? '<div class="empty-state">Select a warehouse to view requests.</div>' : detail ? requestDetailMarkup(detail) : (rows.length ? requestsTable(rows) : '<div class="empty-state">No requests found.</div>')}
         </div>
       </section>
     `;
@@ -1346,6 +1359,15 @@
   function setDocumentSearch(value) {
     state.documentSearch = value;
     rerenderContentKeepingFocus("documentSearchInput", renderDocumentsMarkup);
+  }
+
+  function setStockDocumentWarehouseFilter(value) {
+    state.stockDocumentWarehouseFilter = value || "";
+    state.pendingSettlementActivityId = "";
+    state.pendingSettlementDetails = null;
+    state.settledActivityId = "";
+    state.settledActivityDetails = null;
+    content.innerHTML = renderDocumentsMarkup();
   }
 
   function setPendingSettlementSearch(value) {
@@ -3099,9 +3121,13 @@
 
   function getFilteredDocumentRows() {
     const query = String(state.documentSearch || "").trim().toLowerCase();
+    const warehouseFilter = String(state.stockDocumentWarehouseFilter || "").trim();
     return (state.documents || [])
       .map(enrichDocumentRow)
       .filter((row) => {
+        if (warehouseFilter && ![row.fromWarehouseId, row.toWarehouseId].some((value) => String(value || "") === warehouseFilter)) {
+          return false;
+        }
         if (!query) return true;
         const haystack = [
           row.documentId,
@@ -3118,9 +3144,55 @@
       .sort((a, b) => String(b.createdAt || b.documentDate || b.documentId || "").localeCompare(String(a.createdAt || a.documentDate || a.documentId || "")));
   }
 
+  function getWarehouseScopedPendingSettlements() {
+    const warehouseFilter = String(state.stockDocumentWarehouseFilter || "").trim();
+    if (!warehouseFilter) return [];
+    const selected = state.warehouses.find((warehouse) => warehouse.warehouseId === warehouseFilter || warehouse.rowId === warehouseFilter) || {};
+    return (state.pendingSettlements || []).filter((row) =>
+      [row.warehouseId, row.warehouseCode, row.warehouseName].some((value) => [warehouseFilter, selected.rowId, selected.name].includes(String(value || "")))
+    );
+  }
+
+  function getWarehouseScopedSettledActivities() {
+    const warehouseFilter = String(state.stockDocumentWarehouseFilter || "").trim();
+    if (!warehouseFilter) return [];
+    const selected = state.warehouses.find((warehouse) => warehouse.warehouseId === warehouseFilter || warehouse.rowId === warehouseFilter) || {};
+    return getFilteredSettledActivities().filter((row) =>
+      [row.warehouseId, row.warehouseCode, row.warehouseName].some((value) => [warehouseFilter, selected.rowId, selected.name].includes(String(value || "")))
+    );
+  }
+
+  function stockWarehouseSelectorMarkup() {
+    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active !== false);
+    return `
+      <div class="toolbar" style="margin-bottom:12px;">
+        <label class="field compact-field">
+          <span>Select Warehouse</span>
+          <select onchange="window.erpApp.setStockDocumentWarehouseFilter(this.value)">
+            <option value="">Select warehouse</option>
+            ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${state.stockDocumentWarehouseFilter === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name || warehouse.warehouseId)}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+    `;
+  }
+
+  function getSelectedStockDocumentWarehouseId() {
+    const selected = state.warehouses.find((warehouse) => warehouse.warehouseId === state.stockDocumentWarehouseFilter);
+    return selected ? selected.warehouseId : "";
+  }
+
+  function scopeStockDocumentWarehouses(warehouses) {
+    const selectedWarehouseId = getSelectedStockDocumentWarehouseId();
+    const active = (warehouses || []).filter((warehouse) => warehouse.active !== false);
+    return selectedWarehouseId ? active.filter((warehouse) => warehouse.warehouseId === selectedWarehouseId) : active;
+  }
+
   function renderDocumentsMarkup() {
     const rows = getFilteredDocumentRows();
-    const settledRows = getFilteredSettledActivities();
+    const pendingRows = getWarehouseScopedPendingSettlements();
+    const settledRows = getWarehouseScopedSettledActivities();
+    const selectedWarehouse = state.warehouses.find((warehouse) => warehouse.warehouseId === state.stockDocumentWarehouseFilter);
     return `
       <section class="card">
         <div class="panel-header">
@@ -3132,12 +3204,14 @@
           </div>
         </div>
         <div class="panel-body">
+          ${stockWarehouseSelectorMarkup()}
+          ${!selectedWarehouse ? '<div class="empty-state">Select a warehouse to view and operate stock documents.</div>' : `
           ${state.documentsMode === "pending" ? `
             <div class="grid metrics">
-              ${metric("Pending Activities", state.pendingSettlements.length, "Completed activities with settlement dues")}
-              ${metric("Pending Amount", money(state.pendingSettlements.reduce((sum, row) => sum + Number(row.summary?.pendingAmount || 0), 0)), "Total amount still to be collected")}
-              ${metric("Paid So Far", money(state.pendingSettlements.reduce((sum, row) => sum + Number(row.summary?.paidTotalAmount || 0), 0)), "Cash plus online received")}
-              ${metric("Returned Qty", state.pendingSettlements.reduce((sum, row) => sum + Number(row.summary?.returnQty || 0), 0), "Returned quantity across pending activities")}
+              ${metric("Pending Activities", pendingRows.length, "Completed activities with settlement dues")}
+              ${metric("Pending Amount", money(pendingRows.reduce((sum, row) => sum + Number(row.summary?.pendingAmount || 0), 0)), "Total amount still to be collected")}
+              ${metric("Paid So Far", money(pendingRows.reduce((sum, row) => sum + Number(row.summary?.paidTotalAmount || 0), 0)), "Cash plus online received")}
+              ${metric("Returned Qty", pendingRows.reduce((sum, row) => sum + Number(row.summary?.returnQty || 0), 0), "Returned quantity across pending activities")}
             </div>
             <div class="section-gap">
               ${state.pendingSettlementActivityId ? pendingSettlementDetailMarkup(state.pendingSettlementDetails) : `
@@ -3147,7 +3221,7 @@
                     <input id="pendingSettlementSearchInput" type="search" value="${escapeAttribute(state.pendingSettlementSearch)}" placeholder="Search activity or devotee" oninput="window.erpApp.setPendingSettlementSearch(this.value)">
                   </label>
                 </div>
-                ${pendingSettlementSummaryMarkup(getFilteredPendingSettlements())}
+                ${pendingSettlementSummaryMarkup(getFilteredPendingSettlements().filter((row) => pendingRows.some((pending) => pending.activityId === row.activityId)))}
               `}
             </div>
           ` : state.documentsMode === "settled" ? `
@@ -3194,6 +3268,7 @@
               </div>
               ${rows.length ? documentsTable(rows) : '<div class="empty-state">No stock documents found.</div>'}
             </div>
+          `}
           `}
         </div>
       </section>
@@ -4840,6 +4915,12 @@
     content.innerHTML = renderRequestsMarkup();
   }
 
+  async function setRequestWarehouseFilter(value) {
+    state.requestWarehouseFilter = value || "";
+    state.requestDetailId = "";
+    content.innerHTML = renderRequestsMarkup();
+  }
+
   async function setSaleEntrySearch(value) {
     state.saleEntrySearch = value || "";
     const currentValue = String(value || "");
@@ -5846,10 +5927,11 @@
 
   function openIssueForm() {
     void ensureDocumentItemMastersLoaded().catch(() => {});
+    const selectedWarehouseId = getSelectedStockDocumentWarehouseId();
     state.issueDocumentType = "ISSUE";
     state.issueDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
-      fromWarehouseId: "",
+      fromWarehouseId: selectedWarehouseId,
       activityId: "",
       notes: "",
       itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
@@ -5862,10 +5944,11 @@
 
   function openComplimentaryForm() {
     void ensureDocumentItemMastersLoaded().catch(() => {});
+    const selectedWarehouseId = getSelectedStockDocumentWarehouseId();
     state.issueDocumentType = "COMPLIMENTARY";
     state.issueDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
-      fromWarehouseId: "",
+      fromWarehouseId: selectedWarehouseId,
       activityId: "",
       notes: "",
       itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
@@ -5882,10 +5965,11 @@
 
   function openSaleForm() {
     void ensureDocumentItemMastersLoaded().catch(() => {});
-    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && !isMainWarehouseName(warehouse.name));
+    const selectedWarehouseId = getSelectedStockDocumentWarehouseId();
+    const activeWarehouses = scopeStockDocumentWarehouses(state.warehouses.filter((warehouse) => !isMainWarehouseName(warehouse.name)));
     state.saleDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
-      warehouseId: activeWarehouses[0]?.warehouseId || "",
+      warehouseId: selectedWarehouseId || activeWarehouses[0]?.warehouseId || "",
       notes: "",
       itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
@@ -5901,9 +5985,10 @@
 
   function openOpeningStockForm() {
     void ensureDocumentItemMastersLoaded().catch(() => {});
+    const selectedWarehouseId = getSelectedStockDocumentWarehouseId();
     state.openingDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
-      toWarehouseId: state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || "",
+      toWarehouseId: selectedWarehouseId || state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || "",
       notes: "Opening stock as on date",
       itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
@@ -5918,9 +6003,10 @@
 
   function openPurchaseForm() {
     void ensureDocumentItemMastersLoaded().catch(() => {});
+    const selectedWarehouseId = getSelectedStockDocumentWarehouseId();
     state.purchaseDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
-      toWarehouseId: state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || state.warehouses[0]?.warehouseId || "",
+      toWarehouseId: selectedWarehouseId || state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || state.warehouses[0]?.warehouseId || "",
       notes: "",
       itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
     };
@@ -5941,7 +6027,7 @@
   }
 
   function renderPurchaseModal() {
-    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
+    const activeWarehouses = scopeStockDocumentWarehouses(state.warehouses);
     const draft = state.purchaseDraft;
 
     modalRoot.innerHTML = `
@@ -6492,7 +6578,7 @@
   function renderOpeningStockModal() {
     const itemGroup = normalizeItemGroup(state.openingDraft.itemGroup || "BOOK");
     const hasAnyItems = state.books.some((item) => item.active !== false) || state.devotionalItems.some((item) => item.active !== false);
-    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
+    const activeWarehouses = scopeStockDocumentWarehouses(state.warehouses);
     const draft = state.openingDraft;
 
     modalRoot.innerHTML = `
@@ -7119,7 +7205,7 @@
   function renderUnsettledOpeningModal() {
     const itemGroup = normalizeItemGroup(state.unsettledDraft.itemGroup || "BOOK");
     const hasAnyItems = state.books.some((item) => item.active !== false) || state.devotionalItems.some((item) => item.active !== false);
-    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
+    const activeWarehouses = scopeStockDocumentWarehouses(state.warehouses);
     const openActivities = state.activities.filter((activity) => activity.status !== "Completed" && activity.status !== "Cancelled");
     const draft = state.unsettledDraft;
 
@@ -7285,7 +7371,7 @@
 
   function renderSaleModal() {
     const itemGroup = normalizeItemGroup(state.saleDraft.itemGroup || "BOOK");
-    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active && !isMainWarehouseName(warehouse.name));
+    const activeWarehouses = scopeStockDocumentWarehouses(state.warehouses.filter((warehouse) => !isMainWarehouseName(warehouse.name)));
     const draft = state.saleDraft;
     const warehouseId = draft.warehouseId || "";
     const hasAnyItems = state.books.some((item) => item.active !== false) || state.devotionalItems.some((item) => item.active !== false);
@@ -7433,7 +7519,7 @@
   }
 
   function renderIssueModal() {
-    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
+    const activeWarehouses = scopeStockDocumentWarehouses(state.warehouses);
     const issueActivities = getIssueActivityOptions();
     const draft = state.issueDraft;
     const isComplimentary = state.issueDocumentType === "COMPLIMENTARY";
@@ -7593,10 +7679,11 @@
 
   function openReceiveForm() {
     void ensureDocumentItemMastersLoaded().catch(() => {});
+    const selectedWarehouseId = getSelectedStockDocumentWarehouseId();
     const activityId = getIssuedActivityOptions()[0]?.activityId || "";
     state.receiveDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
-      toWarehouseId: state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || "",
+      toWarehouseId: selectedWarehouseId || state.warehouses.find((warehouse) => isMainWarehouseName(warehouse.name))?.warehouseId || "",
       activityId,
       notes: "",
       returnSettlement: "RETURNS_PENDING",
@@ -7619,7 +7706,7 @@
   function renderReceiveModal() {
     const itemGroup = normalizeItemGroup(state.receiveDraft.itemGroup || "BOOK");
     const hasAnyItems = state.books.some((item) => item.active !== false) || state.devotionalItems.some((item) => item.active !== false);
-    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
+    const activeWarehouses = scopeStockDocumentWarehouses(state.warehouses);
     const issuedActivities = getIssuedActivityOptions();
     const draft = state.receiveDraft;
     const returnableItems = draft.activityId ? getReturnableItemsForActivity(draft.activityId, itemGroup) : [];
@@ -7828,9 +7915,10 @@
 
   function openTransferForm() {
     void ensureDocumentItemMastersLoaded().catch(() => {});
+    const selectedWarehouseId = getSelectedStockDocumentWarehouseId();
     state.transferDraft = {
       documentDate: new Date().toISOString().slice(0, 10),
-      fromWarehouseId: "",
+      fromWarehouseId: selectedWarehouseId,
       toWarehouseId: "",
       notes: "",
       itemGroup: normalizeItemGroup(state.documentEntryGroup || "BOOK")
@@ -7847,7 +7935,7 @@
 
   function renderTransferModal() {
     const itemGroup = normalizeItemGroup(state.transferDraft.itemGroup || "BOOK");
-    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active);
+    const activeWarehouses = scopeStockDocumentWarehouses(state.warehouses);
     const draft = state.transferDraft;
     const fromWarehouseId = draft.fromWarehouseId || "";
     const hasAnyItems = state.books.some((item) => item.active !== false) || state.devotionalItems.some((item) => item.active !== false);
@@ -8549,6 +8637,7 @@
     setOnlineClassSearch,
     setRequestSearch,
     setRequestGroupFilter,
+    setRequestWarehouseFilter,
     setSaleEntrySearch,
     setSaleEntryWarehouseFilter,
     setSaleEntryMonthFilter,
@@ -8572,6 +8661,7 @@
     backToComplimentarySummary,
     setDocumentsMode,
     setDocumentSearch,
+    setStockDocumentWarehouseFilter,
     setPendingSettlementSearch,
     setSettledActivitySearch,
     previewDocumentPdf,

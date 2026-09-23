@@ -39,6 +39,19 @@ create table if not exists public.devotees (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.public_request_profiles (
+  id uuid primary key default gen_random_uuid(),
+  mobile text not null unique,
+  name text not null default '',
+  age integer,
+  category text not null default '',
+  preacher_name text not null default '',
+  location text not null default '',
+  devotee_id uuid references public.devotees(id) on update cascade on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.warehouses (
   id uuid primary key default gen_random_uuid(),
   warehouse_code text not null unique,
@@ -291,6 +304,7 @@ create index if not exists idx_activity_settlement_payments_created_at on public
 create index if not exists idx_online_class_registrations_created_at on public.online_class_registrations (created_at desc);
 create index if not exists idx_online_class_registrations_warehouse on public.online_class_registrations (source_warehouse_id, created_at desc);
 create index if not exists idx_online_class_registrations_item on public.online_class_registrations (item_id);
+create index if not exists idx_public_request_profiles_mobile on public.public_request_profiles (mobile);
 create index if not exists idx_catalog_requests_created_at on public.catalog_requests (created_at desc);
 create index if not exists idx_catalog_requests_warehouse on public.catalog_requests (source_warehouse_id, created_at desc);
 create index if not exists idx_catalog_requests_mobile on public.catalog_requests (requester_mobile, created_at desc);
@@ -376,6 +390,11 @@ for each row execute function public.set_updated_at();
 drop trigger if exists trg_online_class_registrations_updated_at on public.online_class_registrations;
 create trigger trg_online_class_registrations_updated_at
 before update on public.online_class_registrations
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_public_request_profiles_updated_at on public.public_request_profiles;
+create trigger trg_public_request_profiles_updated_at
+before update on public.public_request_profiles
 for each row execute function public.set_updated_at();
 
 drop trigger if exists trg_catalog_requests_updated_at on public.catalog_requests;

@@ -1,0 +1,12 @@
+{
+  "name": "Test Book Distribution",
+  "short_name": "Test Distribution",
+  "description": "Test warehouse request, stock tracking, and activity sale entry app.",
+  "start_url": "/testdistribution",
+  "display": "standalone",
+  "background_color": "#f5e3c7",
+  "theme_color": "#7b3f1d",
+  "scope": "/",
+  "orientation": "portrait",
+  "icons": []
+}

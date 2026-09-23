@@ -49,6 +49,22 @@
       "dest": "/frontend/request.html"
     },
     {
+      "src": "/testdistribution",
+      "dest": "/frontend/test-distribution.html"
+    },
+    {
+      "src": "/testdistribution/",
+      "dest": "/frontend/test-distribution.html"
+    },
+    {
+      "src": "/test-distribution.html",
+      "dest": "/frontend/test-distribution.html"
+    },
+    {
+      "src": "/test-distribution.webmanifest",
+      "dest": "/frontend/test-distribution.webmanifest"
+    },
+    {
       "src": "/kkdsales",
       "dest": "/frontend/sales-kakinada.html"
     },

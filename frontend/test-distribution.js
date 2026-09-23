@@ -1,0 +1,776 @@
+(function () {
+  const root = document.getElementById("testRoot");
+  const overlay = document.getElementById("loadingOverlay");
+  const toastStack = document.getElementById("toastStack");
+  const config = window.ERP_CONFIG || {};
+  const TEST_WAREHOUSE = "TEST";
+  const PREACHERS = Array.isArray(config.publicRequestPreachers) ? config.publicRequestPreachers : [];
+  const FOLK_GUIDES = Array.isArray(config.publicRequestFolkGuides) ? config.publicRequestFolkGuides : [];
+
+  const state = {
+    screen: "phone",
+    view: "request",
+    itemGroup: "BOOK",
+    search: "",
+    profile: null,
+    mobile: "",
+    profileForm: {
+      name: "",
+      age: "",
+      category: "FOLK",
+      preacherName: "",
+      location: ""
+    },
+    catalogByGroup: { BOOK: [], PARAPHERNALIA: [] },
+    activities: [],
+    selectedRequestActivity: "General Issue",
+    customRequestActivity: "",
+    cart: [],
+    activityDetailId: "",
+    saleActivityId: "",
+    activityStock: [],
+    saleCart: [],
+    salePayment: {
+      open: false,
+      method: "CASH",
+      cashAmount: ""
+    },
+    loading: false
+  };
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function escapeAttr(value) {
+    return escapeHtml(value).replace(/`/g, "&#96;");
+  }
+
+  function money(value) {
+    const number = Number(value || 0);
+    return `Rs. ${number.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+  }
+
+  function qty(value) {
+    const number = Number(value || 0);
+    return number.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  }
+
+  function normalizeMobile(value) {
+    return String(value || "").replace(/\D/g, "").slice(-10);
+  }
+
+  function normalizeText(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function setLoading(value, label) {
+    state.loading = value;
+    if (!overlay) return;
+    overlay.classList.toggle("hidden", !value);
+    const text = overlay.querySelector("span");
+    if (text) text.textContent = label || "Loading...";
+  }
+
+  function showToast(message) {
+    if (!toastStack) return;
+    const item = document.createElement("div");
+    item.className = "toast";
+    item.textContent = message;
+    toastStack.appendChild(item);
+    setTimeout(() => {
+      item.classList.add("hide");
+      setTimeout(() => item.remove(), 240);
+    }, 2400);
+  }
+
+  function lineTotal(line) {
+    return Number(line.quantity || 0) * Number(line.salePrice || line.rate || 0);
+  }
+
+  function collectionTotal(lines) {
+    return (lines || []).reduce((sum, line) => sum + lineTotal(line), 0);
+  }
+
+  function cartQty(lines) {
+    return (lines || []).reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+  }
+
+  function activityStatus(summary) {
+    const raw = String(summary.publicStatus || summary.status || "").trim();
+    if (raw) return raw;
+    if (Number(summary.totalSaleAmount || 0) > 0) return "Settlement Pending";
+    if (Number(summary.totalReturnedAmount || 0) > 0) return "Return Pending";
+    if (Number(summary.totalIssuedAmount || 0) > 0) return "Running";
+    return "Open";
+  }
+
+  function activityOptions() {
+    const options = ["Add another activity", "General Issue"];
+    for (const activity of state.activities || []) {
+      const status = normalizeText(activityStatus(activity));
+      if (status === "closed" || status === "settled") continue;
+      const name = String(activity.activityName || activity.name || "").trim();
+      if (name && !options.some((option) => normalizeText(option) === normalizeText(name))) {
+        options.push(name);
+      }
+    }
+    return options;
+  }
+
+  function profilePayload(extra) {
+    const form = state.profile || state.profileForm || {};
+    const category = String(form.category || "").toUpperCase();
+    return {
+      mobile: state.mobile,
+      name: form.name,
+      age: form.age,
+      category,
+      preacherName: form.preacherName,
+      location: form.location,
+      ...(extra || {})
+    };
+  }
+
+  async function api(action, payload) {
+    return window.erpApi.request(action, payload || {});
+  }
+
+  async function lookupProfile() {
+    const mobile = normalizeMobile(document.getElementById("publicMobile")?.value || state.mobile);
+    if (mobile.length !== 10) {
+      showToast("Enter 10 digit mobile number");
+      return;
+    }
+    state.mobile = mobile;
+    try {
+      setLoading(true, "Checking profile...");
+      const result = await api("publicTest.profileLookup", { mobile });
+      if (result.exists) {
+        state.profile = result;
+        state.profileForm = {
+          name: result.name || "",
+          age: result.age || "",
+          category: result.category || "FOLK",
+          preacherName: result.preacherName || "",
+          location: result.location || ""
+        };
+        await loadHomeData();
+        state.screen = "home";
+      } else {
+        state.screen = "profile";
+      }
+      render();
+    } catch (error) {
+      showToast(error.message || "Could not check profile");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveProfile() {
+    const form = state.profileForm;
+    if (!form.name.trim()) return showToast("Name is required");
+    if (!form.age || Number(form.age) <= 0) return showToast("Age is required");
+    if (!form.category) return showToast("Category is required");
+    if (["FOLK", "CONGREGATION"].includes(String(form.category).toUpperCase()) && !form.preacherName.trim()) {
+      return showToast("Preacher name is required");
+    }
+    if (!form.location.trim()) return showToast("Location is required");
+    try {
+      setLoading(true, "Saving profile...");
+      const result = await api("publicTest.profileSave", profilePayload());
+      state.profile = result;
+      await loadHomeData();
+      state.screen = "home";
+      render();
+    } catch (error) {
+      showToast(error.message || "Could not save profile");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadHomeData() {
+    const [books, items, activities] = await Promise.all([
+      api("catalog.items", { itemGroup: "BOOK", sourceWarehouseId: TEST_WAREHOUSE }),
+      api("catalog.items", { itemGroup: "PARAPHERNALIA", sourceWarehouseId: TEST_WAREHOUSE }),
+      api("publicTest.activities", profilePayload())
+    ]);
+    state.catalogByGroup.BOOK = books || [];
+    state.catalogByGroup.PARAPHERNALIA = items || [];
+    state.activities = activities || [];
+    if (!state.saleActivityId && state.activities.length) {
+      state.saleActivityId = state.activities[0].activityId || "";
+    }
+  }
+
+  async function refreshActivities() {
+    state.activities = await api("publicTest.activities", profilePayload());
+  }
+
+  async function loadActivityStock(activityId) {
+    const selected = activityId || state.saleActivityId;
+    if (!selected) {
+      state.activityStock = [];
+      return;
+    }
+    state.activityStock = await api("publicTest.activityStock", profilePayload({ activityId: selected }));
+  }
+
+  function filteredCatalog() {
+    const search = normalizeText(state.search);
+    return (state.catalogByGroup[state.itemGroup] || []).filter((item) => {
+      if (!search) return true;
+      return [item.name, item.bookName, item.erpCode, item.bookId, item.category, item.bookType]
+        .some((value) => normalizeText(value).includes(search));
+    });
+  }
+
+  function filteredSaleStock() {
+    const search = normalizeText(state.search);
+    return (state.activityStock || []).filter((item) => {
+      if (!search) return true;
+      return [item.name, item.bookName, item.erpCode, item.bookId, item.itemGroup]
+        .some((value) => normalizeText(value).includes(search));
+    });
+  }
+
+  function addToCart(item, target) {
+    const cart = target === "sale" ? state.saleCart : state.cart;
+    const code = item.erpCode || item.bookId;
+    const existing = cart.find((line) => line.erpCode === code);
+    if (existing) {
+      existing.quantity += 1;
+    } else {
+      cart.push({
+        erpCode: code,
+        bookId: code,
+        itemName: item.name || item.bookName,
+        name: item.name || item.bookName,
+        itemGroup: item.itemGroup || state.itemGroup,
+        salePrice: Number(item.salePrice || 0),
+        rate: Number(item.salePrice || 0),
+        availableQty: Number(item.availableQty || 0),
+        quantity: 1
+      });
+    }
+    render();
+  }
+
+  function setLineQty(target, code, value) {
+    const cart = target === "sale" ? state.saleCart : state.cart;
+    const line = cart.find((item) => item.erpCode === code);
+    if (!line) return;
+    line.quantity = Math.max(0, Number(value || 0));
+    if (line.quantity <= 0) {
+      const index = cart.indexOf(line);
+      cart.splice(index, 1);
+    }
+    render();
+  }
+
+  async function submitRequest() {
+    if (!state.cart.length) return showToast("Add items to cart");
+    const choice = state.selectedRequestActivity;
+    const requestActivityName = choice === "Add another activity"
+      ? String(state.customRequestActivity || "").trim()
+      : String(choice || "General Issue").trim();
+    if (!requestActivityName) return showToast("Enter activity name");
+    try {
+      setLoading(true, "Placing request...");
+      const result = await api("publicTest.submitRequest", profilePayload({
+        requestActivityName,
+        lines: state.cart
+      }));
+      state.cart = [];
+      state.selectedRequestActivity = requestActivityName;
+      state.customRequestActivity = "";
+      await refreshActivities();
+      state.view = "track";
+      render();
+      showToast(`Request placed: ${result.requestCode || "Done"}`);
+    } catch (error) {
+      showToast(error.message || "Could not place request");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function openSalePayment() {
+    if (!state.saleActivityId) return showToast("Select activity");
+    if (!state.saleCart.length) return showToast("Add items to sale");
+    state.salePayment = { open: true, method: "CASH", cashAmount: "" };
+    render();
+  }
+
+  async function submitSale() {
+    const total = collectionTotal(state.saleCart);
+    const method = state.salePayment.method;
+    const cash = method === "CASH" ? total : method === "ONLINE" ? 0 : Number(state.salePayment.cashAmount || 0);
+    const online = total - cash;
+    if (cash < 0 || online < 0) return showToast("Invalid payment split");
+    try {
+      setLoading(true, "Posting sale...");
+      const result = await api("publicTest.submitSale", profilePayload({
+        activityId: state.saleActivityId,
+        paymentMethod: method,
+        cashAmount: cash,
+        onlineAmount: online,
+        lines: state.saleCart
+      }));
+      state.saleCart = [];
+      state.salePayment.open = false;
+      await Promise.all([refreshActivities(), loadActivityStock(state.saleActivityId)]);
+      render();
+      showToast(`Sale posted: ${result.documentId}`);
+    } catch (error) {
+      showToast(error.message || "Could not post sale");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function renderPhone() {
+    return `
+      <section class="public-hero">
+        <div class="brand-pill">Test Warehouse</div>
+        <h1>Book Distribution Track</h1>
+        <p>Enter your mobile number to request stock, track activity stock, and post sales.</p>
+      </section>
+      <section class="public-card">
+        <label class="field-label" for="publicMobile">Mobile Number</label>
+        <input id="publicMobile" class="public-input" inputmode="numeric" maxlength="10" value="${escapeAttr(state.mobile)}" placeholder="10 digit mobile number">
+        <button class="primary wide" data-action="lookupProfile">Continue</button>
+      </section>
+    `;
+  }
+
+  function renderProfile() {
+    const form = state.profileForm;
+    const category = String(form.category || "").toUpperCase();
+    const preacherOptions = (category === "FOLK" ? FOLK_GUIDES : PREACHERS).filter(Boolean);
+    return `
+      <section class="public-card">
+        <h1>Your Details</h1>
+        <label class="field-label">Name</label>
+        <input class="public-input" data-profile-field="name" value="${escapeAttr(form.name)}">
+        <label class="field-label">Age</label>
+        <input class="public-input" data-profile-field="age" type="number" min="1" value="${escapeAttr(form.age)}">
+        <label class="field-label">Category</label>
+        <select class="public-input" data-profile-field="category">
+          ${["FOLK", "Congregation", "FTM"].map((option) => `<option value="${escapeAttr(option)}" ${normalizeText(option) === normalizeText(form.category) ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+        </select>
+        ${["FOLK", "CONGREGATION"].includes(category) ? `
+          <label class="field-label">Preacher Name</label>
+          ${preacherOptions.length ? `
+            <select class="public-input" data-profile-field="preacherName">
+              <option value="">Select preacher</option>
+              ${preacherOptions.map((option) => `<option value="${escapeAttr(option)}" ${option === form.preacherName ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+            </select>
+          ` : `<input class="public-input" data-profile-field="preacherName" value="${escapeAttr(form.preacherName)}" placeholder="Preacher name">`}
+        ` : ""}
+        <label class="field-label">Location</label>
+        <input class="public-input" data-profile-field="location" value="${escapeAttr(form.location)}">
+        <button class="primary wide" data-action="saveProfile">Save and Continue</button>
+      </section>
+    `;
+  }
+
+  function renderNav() {
+    const items = [
+      ["request", "Place A Request"],
+      ["track", "My Stock Track"],
+      ["sale", "Enter Sale"],
+      ["reports", "Reports"]
+    ];
+    return `
+      <header class="sales-topbar test-topbar">
+        <div>
+          <div class="brand-chip">TEST</div>
+          <h1>Distribution Track</h1>
+        </div>
+        <button class="ghost small" data-action="logoutProfile">Change Phone</button>
+      </header>
+      <nav class="sales-tabs">
+        ${items.map(([view, label]) => `<button class="${state.view === view ? "active" : ""}" data-view="${view}">${label}</button>`).join("")}
+      </nav>
+    `;
+  }
+
+  function renderGroupToggle() {
+    return `
+      <div class="category-tabs">
+        <button class="${state.itemGroup === "BOOK" ? "active" : ""}" data-group="BOOK">Books</button>
+        <button class="${state.itemGroup === "PARAPHERNALIA" ? "active" : ""}" data-group="PARAPHERNALIA">Devotional Items</button>
+      </div>
+    `;
+  }
+
+  function renderSearch() {
+    return `<input class="public-input sticky-search" data-search-input value="${escapeAttr(state.search)}" placeholder="Search item name or code">`;
+  }
+
+  function renderCatalogCard(item, target) {
+    const code = item.erpCode || item.bookId;
+    const inCart = (target === "sale" ? state.saleCart : state.cart).find((line) => line.erpCode === code);
+    return `
+      <article class="product-card compact-product">
+        <div>
+          <h3>${escapeHtml(item.name || item.bookName)}</h3>
+          <p>${escapeHtml(code)} · ${money(item.salePrice)}</p>
+          <p>${qty(item.availableQty)} available</p>
+        </div>
+        <button class="secondary" data-add-${target}="${escapeAttr(code)}">${inCart ? `Added (${qty(inCart.quantity)})` : "Add"}</button>
+      </article>
+    `;
+  }
+
+  function renderRequest() {
+    const rows = filteredCatalog();
+    return `
+      <div class="floating-action"><button class="primary" data-action="showRequestCart">Go to Cart (${cartQty(state.cart)})</button></div>
+      <section class="public-card">
+        <h2>Place A Request</h2>
+        ${renderGroupToggle()}
+        ${renderSearch()}
+      </section>
+      <section class="product-grid single-column">
+        ${rows.map((item) => renderCatalogCard(item, "request")).join("") || `<div class="empty-state">No stock found.</div>`}
+      </section>
+    `;
+  }
+
+  function renderRequestCart() {
+    const options = activityOptions();
+    return `
+      <section class="public-card">
+        <h2>Request Cart</h2>
+        ${state.cart.map((line) => `
+          <div class="cart-row">
+            <div><strong>${escapeHtml(line.itemName)}</strong><p>${money(line.salePrice)} · ${escapeHtml(line.erpCode)}</p></div>
+            <input class="qty-input" type="number" min="0" value="${escapeAttr(line.quantity)}" data-cart-qty="${escapeAttr(line.erpCode)}">
+          </div>
+        `).join("") || `<div class="empty-state">Your cart is empty.</div>`}
+        <label class="field-label">Activity Name</label>
+        <select class="public-input" data-request-activity>
+          ${options.map((option) => `<option value="${escapeAttr(option)}" ${option === state.selectedRequestActivity ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+        </select>
+        ${state.selectedRequestActivity === "Add another activity" ? `<input class="public-input" data-custom-request-activity value="${escapeAttr(state.customRequestActivity)}" placeholder="Type activity name">` : ""}
+        <div class="button-row">
+          <button class="secondary" data-action="backToRequest">Back</button>
+          <button class="primary" data-action="submitRequest">Place Request</button>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderTrack() {
+    const detail = state.activities.find((activity) => activity.activityId === state.activityDetailId);
+    if (detail) return renderActivityDetail(detail);
+    return `
+      <section class="public-card">
+        <h2>My Stock Track</h2>
+        <p class="muted">Activity-wise issue, return, and sale status.</p>
+      </section>
+      <section class="activity-list">
+        ${state.activities.map((activity) => `
+          <article class="public-card activity-card">
+            <div class="split-row">
+              <div>
+                <h3>${escapeHtml(activity.activityName || "Activity")}</h3>
+                <p>${escapeHtml(activityStatus(activity))}</p>
+              </div>
+              <button class="secondary small" data-detail-activity="${escapeAttr(activity.activityId)}">Details</button>
+            </div>
+            <div class="metric-grid">
+              <div><span>Issues</span><strong>${qty(activity.issueCount || activity.documentCount || 0)}</strong></div>
+              <div><span>Issued</span><strong>${money(activity.totalIssuedAmount)}</strong></div>
+              <div><span>Returned</span><strong>${money(activity.totalReturnedAmount)}</strong></div>
+              <div><span>Sale</span><strong>${money(activity.totalSaleAmount)}</strong></div>
+            </div>
+          </article>
+        `).join("") || `<div class="empty-state">No activities yet.</div>`}
+      </section>
+    `;
+  }
+
+  function renderActivityDetail(activity) {
+    const docs = activity.documents || [];
+    const books = activity.books || [];
+    return `
+      <section class="public-card">
+        <button class="ghost small" data-action="backToTrack">Back</button>
+        <h2>${escapeHtml(activity.activityName || "Activity")}</h2>
+        <p>${escapeHtml(activityStatus(activity))}</p>
+        <div class="metric-grid">
+          <div><span>Issued</span><strong>${money(activity.totalIssuedAmount)}</strong></div>
+          <div><span>Returned</span><strong>${money(activity.totalReturnedAmount)}</strong></div>
+          <div><span>Sale</span><strong>${money(activity.totalSaleAmount)}</strong></div>
+          <div><span>Available</span><strong>${money(activity.availableAmount)}</strong></div>
+        </div>
+      </section>
+      <section class="public-card">
+        <h3>Issues and Returns</h3>
+        ${docs.map((doc) => `
+          <div class="cart-row">
+            <div><strong>${escapeHtml(doc.documentCode || doc.documentId || "-")}</strong><p>${escapeHtml(doc.documentType || "")} · ${escapeHtml(doc.documentDate || "")}</p></div>
+            <strong>${money(doc.amount)}</strong>
+          </div>
+        `).join("") || `<p class="muted">No documents found.</p>`}
+      </section>
+      <section class="public-card table-scroll">
+        <h3>Item Details</h3>
+        <table class="mini-table">
+          <thead><tr><th>Item</th><th>Issued</th><th>Return</th><th>Sale</th><th>Bal</th></tr></thead>
+          <tbody>
+            ${books.map((book) => `<tr><td>${escapeHtml(book.name || book.bookName || book.erpCode)}</td><td>${qty(book.issuedQty)}</td><td>${qty(book.returnedQty)}</td><td>${qty(book.saleQty)}</td><td>${qty(book.availableQty)}</td></tr>`).join("")}
+          </tbody>
+        </table>
+      </section>
+    `;
+  }
+
+  function renderSale() {
+    const total = collectionTotal(state.saleCart);
+    return `
+      <div class="floating-action"><button class="primary" data-action="openSalePayment">Post Sale (${money(total)})</button></div>
+      <section class="public-card">
+        <h2>Enter Sale</h2>
+        <label class="field-label">Running Activity</label>
+        <select class="public-input" data-sale-activity>
+          <option value="">Select activity</option>
+          ${state.activities.map((activity) => `<option value="${escapeAttr(activity.activityId)}" ${activity.activityId === state.saleActivityId ? "selected" : ""}>${escapeHtml(activity.activityName || "Activity")}</option>`).join("")}
+        </select>
+        ${renderSearch()}
+      </section>
+      <section class="public-card">
+        <h3>Sale Cart</h3>
+        ${state.saleCart.map((line) => `
+          <div class="cart-row">
+            <div><strong>${escapeHtml(line.itemName)}</strong><p>${money(line.salePrice)} · ${escapeHtml(line.erpCode)}</p></div>
+            <input class="qty-input" type="number" min="0" value="${escapeAttr(line.quantity)}" data-sale-qty="${escapeAttr(line.erpCode)}">
+          </div>
+        `).join("") || `<p class="muted">Select items below.</p>`}
+      </section>
+      <section class="product-grid single-column">
+        ${filteredSaleStock().map((item) => renderCatalogCard(item, "sale")).join("") || `<div class="empty-state">Select an activity to see available stock.</div>`}
+      </section>
+      ${state.salePayment.open ? renderPaymentPanel() : ""}
+    `;
+  }
+
+  function renderPaymentPanel() {
+    const total = collectionTotal(state.saleCart);
+    const method = state.salePayment.method;
+    const cash = method === "CASH" ? total : method === "ONLINE" ? 0 : Number(state.salePayment.cashAmount || 0);
+    const online = total - cash;
+    return `
+      <div class="modal-backdrop">
+        <section class="public-card payment-card">
+          <div class="split-row"><h2>Payment Method</h2><strong>${money(total)}</strong></div>
+          <div class="category-tabs vertical">
+            ${["CASH", "ONLINE", "MIXED"].map((option) => `<button class="${method === option ? "active" : ""}" data-payment-method="${option}">${escapeHtml(option)}</button>`).join("")}
+          </div>
+          ${method === "MIXED" ? `
+            <label class="field-label">Cash Received</label>
+            <input class="public-input" inputmode="decimal" data-sale-cash value="${escapeAttr(state.salePayment.cashAmount)}" placeholder="Enter cash amount">
+          ` : ""}
+          <div class="metric-grid">
+            <div><span>Cash</span><strong>${money(cash)}</strong></div>
+            <div><span>Online</span><strong>${money(online)}</strong></div>
+          </div>
+          <div class="button-row">
+            <button class="secondary" data-action="closeSalePayment">Back</button>
+            <button class="primary" data-action="submitSale">Done and Post Sale</button>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function renderReports() {
+    return `
+      <section class="public-card">
+        <h2>Reports</h2>
+        <p class="muted">Reports will be added in the next stage.</p>
+      </section>
+    `;
+  }
+
+  function renderHome() {
+    const body = state.view === "requestCart" ? renderRequestCart()
+      : state.view === "request" ? renderRequest()
+      : state.view === "track" ? renderTrack()
+      : state.view === "sale" ? renderSale()
+      : renderReports();
+    return `${renderNav()}${body}`;
+  }
+
+  function render() {
+    if (!root) return;
+    root.innerHTML = state.screen === "phone" ? renderPhone()
+      : state.screen === "profile" ? renderProfile()
+      : renderHome();
+  }
+
+  function findItem(code, target) {
+    if (target === "sale") return (state.activityStock || []).find((item) => String(item.erpCode || item.bookId) === String(code));
+    return (state.catalogByGroup[state.itemGroup] || []).find((item) => String(item.erpCode || item.bookId) === String(code));
+  }
+
+  root.addEventListener("click", async (event) => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    const action = button.dataset.action;
+    if (button.dataset.view) {
+      state.view = button.dataset.view;
+      state.search = "";
+      if (state.view === "sale") {
+        try {
+          setLoading(true, "Loading activity stock...");
+          await loadActivityStock();
+        } catch (error) {
+          showToast(error.message || "Could not load activity stock");
+        } finally {
+          setLoading(false);
+        }
+      }
+      render();
+      return;
+    }
+    if (button.dataset.group) {
+      state.itemGroup = button.dataset.group;
+      render();
+      return;
+    }
+    if (button.dataset.addRequest) {
+      const item = findItem(button.dataset.addRequest, "request");
+      if (item) addToCart(item, "request");
+      return;
+    }
+    if (button.dataset.addSale) {
+      const item = findItem(button.dataset.addSale, "sale");
+      if (item) addToCart(item, "sale");
+      return;
+    }
+    if (button.dataset.detailActivity) {
+      state.activityDetailId = button.dataset.detailActivity;
+      render();
+      return;
+    }
+    if (button.dataset.paymentMethod) {
+      state.salePayment.method = button.dataset.paymentMethod;
+      render();
+      return;
+    }
+    if (action === "lookupProfile") await lookupProfile();
+    if (action === "saveProfile") await saveProfile();
+    if (action === "logoutProfile") {
+      state.screen = "phone";
+      state.profile = null;
+      render();
+    }
+    if (action === "showRequestCart") {
+      state.view = "requestCart";
+      render();
+    }
+    if (action === "backToRequest") {
+      state.view = "request";
+      render();
+    }
+    if (action === "submitRequest") await submitRequest();
+    if (action === "backToTrack") {
+      state.activityDetailId = "";
+      render();
+    }
+    if (action === "openSalePayment") openSalePayment();
+    if (action === "closeSalePayment") {
+      state.salePayment.open = false;
+      render();
+    }
+    if (action === "submitSale") await submitSale();
+  });
+
+  root.addEventListener("input", (event) => {
+    const input = event.target;
+    if (input.id === "publicMobile") {
+      state.mobile = normalizeMobile(input.value);
+      input.value = state.mobile;
+      return;
+    }
+    if (input.dataset.profileField) {
+      state.profileForm[input.dataset.profileField] = input.value;
+      if (input.dataset.profileField === "category") {
+        state.profileForm.preacherName = "";
+        render();
+      }
+      return;
+    }
+    if (input.dataset.searchInput !== undefined) {
+      state.search = input.value;
+      const section = input.closest(".public-card")?.nextElementSibling;
+      if (section && section.classList.contains("product-grid")) {
+        const rows = state.view === "sale" ? filteredSaleStock().map((item) => renderCatalogCard(item, "sale")) : filteredCatalog().map((item) => renderCatalogCard(item, "request"));
+        section.innerHTML = rows.join("") || `<div class="empty-state">No stock found.</div>`;
+      }
+      return;
+    }
+    if (input.dataset.cartQty) {
+      setLineQty("request", input.dataset.cartQty, input.value);
+      return;
+    }
+    if (input.dataset.saleQty) {
+      setLineQty("sale", input.dataset.saleQty, input.value);
+      return;
+    }
+    if (input.dataset.customRequestActivity !== undefined) {
+      state.customRequestActivity = input.value;
+      return;
+    }
+    if (input.dataset.saleCash !== undefined) {
+      state.salePayment.cashAmount = input.value;
+    }
+  });
+
+  root.addEventListener("change", async (event) => {
+    const input = event.target;
+    if (input.dataset.profileField) {
+      state.profileForm[input.dataset.profileField] = input.value;
+      if (input.dataset.profileField === "category") {
+        state.profileForm.preacherName = "";
+        render();
+      }
+      return;
+    }
+    if (input.dataset.requestActivity !== undefined) {
+      state.selectedRequestActivity = input.value;
+      render();
+      return;
+    }
+    if (input.dataset.saleActivity !== undefined) {
+      state.saleActivityId = input.value;
+      state.saleCart = [];
+      try {
+        setLoading(true, "Loading activity stock...");
+        await loadActivityStock(state.saleActivityId);
+        render();
+      } catch (error) {
+        showToast(error.message || "Could not load activity stock");
+      } finally {
+        setLoading(false);
+      }
+    }
+  });
+
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/test-distribution-sw.js").catch(() => {});
+  }
+
+  render();
+})();
