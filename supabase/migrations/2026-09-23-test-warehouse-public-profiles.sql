@@ -19,6 +19,15 @@ create trigger trg_public_request_profiles_updated_at
 before update on public.public_request_profiles
 for each row execute function public.set_updated_at();
 
+alter table public.public_request_profiles enable row level security;
+
+drop policy if exists "public_request_profiles_all_access" on public.public_request_profiles;
+create policy "public_request_profiles_all_access"
+on public.public_request_profiles
+for all
+using (true)
+with check (true);
+
 do $$
 declare
   test_warehouse_id uuid;

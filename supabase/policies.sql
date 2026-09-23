@@ -15,6 +15,7 @@ alter table public.sale_day_payments enable row level security;
 alter table public.online_class_registrations enable row level security;
 alter table public.catalog_requests enable row level security;
 alter table public.catalog_request_lines enable row level security;
+alter table public.public_request_profiles enable row level security;
 alter table public.user_sessions enable row level security;
 
 drop policy if exists "users_all_access" on public.users;
@@ -111,6 +112,13 @@ with check (true);
 drop policy if exists "catalog_request_lines_all_access" on public.catalog_request_lines;
 create policy "catalog_request_lines_all_access"
 on public.catalog_request_lines
+for all
+using (true)
+with check (true);
+
+drop policy if exists "public_request_profiles_all_access" on public.public_request_profiles;
+create policy "public_request_profiles_all_access"
+on public.public_request_profiles
 for all
 using (true)
 with check (true);
