@@ -2103,6 +2103,37 @@ body.public-mode .loading-overlay {
   height: 100%;
 }
 
+#testRoot .sale-cart-panel {
+  padding-block: 18px;
+}
+
+#testRoot .compact-sale-cart {
+  display: grid;
+  gap: 8px;
+  max-height: 188px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+#testRoot .compact-cart-row {
+  grid-template-columns: minmax(0, 1fr) 82px;
+  align-items: center;
+  padding: 9px 10px;
+}
+
+#testRoot .compact-cart-row strong,
+#testRoot .compact-cart-row p {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#testRoot .compact-cart-row input {
+  width: 82px;
+  min-height: 38px;
+}
+
 #testRoot .request-qty-row {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) 34px;

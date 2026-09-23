@@ -342,8 +342,11 @@
       return;
     }
     const existing = cart.find((line) => line.erpCode === code);
+    const availableQty = Number(item.availableQty || 0);
     if (existing) {
-      existing.quantity += addQty;
+      existing.quantity = availableQty > 0
+        ? Math.min(Number(existing.quantity || 0) + addQty, availableQty)
+        : Number(existing.quantity || 0) + addQty;
     } else {
       cart.push({
         erpCode: code,
@@ -353,11 +356,59 @@
         itemGroup: item.itemGroup || state.itemGroup,
         salePrice: Number(item.salePrice || 0),
         rate: Number(item.salePrice || 0),
-        availableQty: Number(item.availableQty || 0),
-        quantity: addQty
+        availableQty,
+        quantity: availableQty > 0 ? Math.min(addQty, availableQty) : addQty
       });
     }
+    const updated = cart.find((line) => line.erpCode === code);
+    if (updated && target === "sale") {
+      showToast(`Sale cart: ${qty(updated.quantity)} ${updated.itemName}`);
+    }
     render();
+  }
+
+  function applyPostedSale(lines, beforeStock, beforeBooks) {
+    const soldByCode = new Map();
+    for (const line of lines || []) {
+      const code = String(line.erpCode || line.bookId || "");
+      soldByCode.set(code, Number(soldByCode.get(code) || 0) + Number(line.quantity || 0));
+    }
+    const beforeStockByCode = new Map((beforeStock || []).map((item) => [String(item.erpCode || item.bookId || ""), Number(item.availableQty || 0)]));
+    const beforeBookByCode = new Map((beforeBooks || []).map((book) => [String(book.erpCode || book.bookId || ""), Number(book.availableQty || book.unsettledQty || 0)]));
+    state.activityStock = (state.activityStock || [])
+      .map((item) => {
+        const code = String(item.erpCode || item.bookId || "");
+        const soldQty = Number(soldByCode.get(code) || 0);
+        if (!soldQty) return item;
+        const expectedAvailable = Math.max(Number(beforeStockByCode.get(code) || item.availableQty || 0) - soldQty, 0);
+        const nextAvailable = Math.min(Number(item.availableQty || 0), expectedAvailable);
+        return {
+          ...item,
+          availableQty: nextAvailable,
+          unsettledQty: nextAvailable
+        };
+      })
+      .filter((item) => Number(item.availableQty || 0) > 0);
+    const activity = (state.activities || []).find((row) => row.activityId === state.saleActivityId);
+    if (!activity) return;
+    activity.books = (activity.books || []).map((book) => {
+      const code = String(book.erpCode || book.bookId || "");
+      const soldQty = Number(soldByCode.get(code) || 0);
+      if (!soldQty) return book;
+      const expectedAvailable = Math.max(Number(beforeBookByCode.get(code) || book.availableQty || book.unsettledQty || 0) - soldQty, 0);
+      const currentAvailable = Number(book.availableQty || book.unsettledQty || 0);
+      const nextAvailable = Math.min(currentAvailable, expectedAvailable);
+      const appliedSaleQty = Math.max(currentAvailable - nextAvailable, 0);
+      const nextSale = Number(book.actualSaleQty || book.soldQty || 0) + appliedSaleQty;
+      return {
+        ...book,
+        actualSaleQty: nextSale,
+        soldQty: nextSale,
+        saleQty: nextSale,
+        availableQty: nextAvailable,
+        unsettledQty: nextAvailable
+      };
+    });
   }
 
   function setLineQty(target, code, value) {
@@ -412,6 +463,10 @@
     const cash = method === "CASH" ? total : method === "ONLINE" ? 0 : Number(state.salePayment.cashAmount || 0);
     const online = total - cash;
     if (cash < 0 || online < 0) return showToast("Invalid payment split");
+    const postedLines = state.saleCart.map((line) => ({ ...line }));
+    const beforeStock = (state.activityStock || []).map((item) => ({ ...item }));
+    const beforeActivity = (state.activities || []).find((row) => row.activityId === state.saleActivityId);
+    const beforeBooks = (beforeActivity?.books || []).map((book) => ({ ...book }));
     try {
       setLoading(true, "Posting sale...");
       const result = await api("publicTest.submitSale", profilePayload({
@@ -424,6 +479,7 @@
       state.saleCart = [];
       state.salePayment.open = false;
       await Promise.all([refreshActivities(), loadActivityStock(state.saleActivityId)]);
+      applyPostedSale(postedLines, beforeStock, beforeBooks);
       render();
       showToast(`Sale posted: ${result.documentId}`);
     } catch (error) {
@@ -710,17 +766,19 @@
         </select>
         ${renderSearch()}
       </section>
-      <section class="public-card">
+      <section class="public-card sale-cart-panel">
         <div class="public-card-header compact-header">
           <h3>Post Sale Cart</h3>
           <div class="public-tag">${cartQty(state.saleCart)} items · ${money(total)}</div>
         </div>
-        ${state.saleCart.map((line) => `
-          <div class="cart-row">
-            <div><strong>${escapeHtml(line.itemName)}</strong><p>${money(line.salePrice)} · ${escapeHtml(line.erpCode)}</p></div>
-            <input class="qty-input" type="number" min="0" value="${escapeAttr(line.quantity)}" data-sale-qty="${escapeAttr(line.erpCode)}">
-          </div>
-        `).join("") || `<p class="muted">Select items below.</p>`}
+        <div class="compact-sale-cart">
+          ${state.saleCart.map((line) => `
+            <div class="cart-row compact-cart-row">
+              <div><strong>${escapeHtml(line.itemName)}</strong><p>${money(line.salePrice)} · ${escapeHtml(line.erpCode)}</p></div>
+              <input class="qty-input" type="number" min="0" value="${escapeAttr(line.quantity)}" data-sale-qty="${escapeAttr(line.erpCode)}">
+            </div>
+          `).join("") || `<p class="muted">Select items below.</p>`}
+        </div>
       </section>
       <section class="catalog-grid compact-grid test-catalog-grid sale-catalog-grid">
         ${filteredSaleStock().map((item) => renderCatalogCard(item, "sale")).join("") || `<div class="empty-state">Select an activity to see available stock.</div>`}
