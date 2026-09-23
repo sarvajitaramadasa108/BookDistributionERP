@@ -697,12 +697,18 @@
     if (button.dataset.view) {
       state.view = button.dataset.view;
       state.search = "";
-      if (state.view === "sale") {
+      if (state.view === "track" || state.view === "sale") {
         try {
-          setLoading(true, "Loading activity stock...");
-          await loadActivityStock();
+          setLoading(true, state.view === "sale" ? "Loading activity stock..." : "Loading activities...");
+          await refreshActivities();
+          if (!state.saleActivityId && state.activities.length) {
+            state.saleActivityId = state.activities[0].activityId || "";
+          }
+          if (state.view === "sale") {
+            await loadActivityStock();
+          }
         } catch (error) {
-          showToast(error.message || "Could not load activity stock");
+          showToast(error.message || "Could not load activities");
         } finally {
           setLoading(false);
         }

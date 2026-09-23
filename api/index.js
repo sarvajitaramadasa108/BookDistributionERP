@@ -2798,9 +2798,18 @@ async function publicActivitySummaries(supabase, payload) {
   const devoteeCode = publicDevoteeCodeForMobile(profile.mobile);
   const context = await getSettlementContext(supabase);
   const devotee = (context.devotees || []).find((row) => row.devotee_code === devoteeCode);
-  if (!devotee) return [];
+  const { data: acceptedRequests, error: requestError } = await supabase
+    .from("catalog_requests")
+    .select("accepted_activity_id")
+    .eq("requester_mobile", profile.mobile)
+    .not("accepted_activity_id", "is", null);
+  if (requestError) throw requestError;
+  const acceptedActivityIds = new Set((acceptedRequests || []).map((row) => row.accepted_activity_id).filter(Boolean));
   return (context.activities || [])
-    .filter((activity) => activity.devotee_id === devotee.id && activity.warehouse_id === testWarehouse.id)
+    .filter((activity) => {
+      if (activity.warehouse_id !== testWarehouse.id) return false;
+      return acceptedActivityIds.has(activity.id) || (devotee && activity.devotee_id === devotee.id);
+    })
     .map((activity) => buildSettlementSummaryForActivity(activity, context))
     .map((row) => ({
       ...row,
