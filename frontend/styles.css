@@ -2095,6 +2095,36 @@ body.public-mode .loading-overlay {
   min-height: 40px;
 }
 
+#testRoot .request-qty-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 34px;
+  gap: 6px;
+  align-items: center;
+}
+
+#testRoot .qty-step-button,
+#testRoot .request-picker-qty {
+  min-height: 36px;
+  border: 1px solid rgba(133, 82, 44, 0.18);
+  border-radius: 10px;
+  background: #fffdf8;
+  color: #4a250f;
+  font-weight: 800;
+}
+
+#testRoot .qty-step-button {
+  cursor: pointer;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+#testRoot .request-picker-qty {
+  width: 100%;
+  padding: 7px 8px;
+  text-align: center;
+}
+
 #testRoot .test-sale-list,
 #testRoot .activity-list {
   display: grid;

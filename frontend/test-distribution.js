@@ -22,6 +22,7 @@
       location: ""
     },
     catalogByGroup: { BOOK: [], PARAPHERNALIA: [] },
+    requestQtyByCode: {},
     activities: [],
     selectedRequestActivity: "General Issue",
     customRequestActivity: "",
@@ -67,6 +68,10 @@
 
   function normalizeText(value) {
     return String(value || "").trim().toLowerCase();
+  }
+
+  function selectorSafe(value) {
+    return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   }
 
   function normalizeDriveImageUrl(url) {
@@ -251,12 +256,31 @@
     });
   }
 
-  function addToCart(item, target) {
+  function getPickerQty(code) {
+    const value = Number(state.requestQtyByCode[code] || 1);
+    return Number.isFinite(value) && value > 0 ? value : 1;
+  }
+
+  function setPickerQty(code, value) {
+    const item = findItem(code, "request");
+    const max = Number(item?.availableQty || 0);
+    const number = Math.max(1, Math.floor(Number(value || 1)));
+    state.requestQtyByCode[code] = max > 0 ? Math.min(number, max) : number;
+  }
+
+  function adjustPickerQty(code, delta) {
+    setPickerQty(code, getPickerQty(code) + delta);
+    const input = root.querySelector(`[data-request-picker-qty="${selectorSafe(code)}"]`);
+    if (input) input.value = state.requestQtyByCode[code];
+  }
+
+  function addToCart(item, target, quantity) {
     const cart = target === "sale" ? state.saleCart : state.cart;
     const code = item.erpCode || item.bookId;
+    const addQty = Math.max(1, Number(quantity || 1));
     const existing = cart.find((line) => line.erpCode === code);
     if (existing) {
-      existing.quantity += 1;
+      existing.quantity += addQty;
     } else {
       cart.push({
         erpCode: code,
@@ -267,7 +291,7 @@
         salePrice: Number(item.salePrice || 0),
         rate: Number(item.salePrice || 0),
         availableQty: Number(item.availableQty || 0),
-        quantity: 1
+        quantity: addQty
       });
     }
     render();
@@ -445,6 +469,11 @@
             <div class="catalog-stats compact-stats">
               <span>${money(item.salePrice)}</span>
               <span>${qty(availableQty)} available</span>
+            </div>
+            <div class="request-qty-row">
+              <button class="qty-step-button" type="button" data-request-qty-minus="${escapeAttr(code)}" aria-label="Decrease quantity">-</button>
+              <input class="request-picker-qty" type="number" min="1" ${availableQty > 0 ? `max="${escapeAttr(availableQty)}"` : ""} value="${escapeAttr(getPickerQty(code))}" data-request-picker-qty="${escapeAttr(code)}">
+              <button class="qty-step-button" type="button" data-request-qty-plus="${escapeAttr(code)}" aria-label="Increase quantity">+</button>
             </div>
             <button class="button small-button" type="button" data-add-${target}="${escapeAttr(code)}">${inCart ? `Added (${qty(inCart.quantity)})` : "Add"}</button>
           </div>
@@ -688,7 +717,15 @@
     }
     if (button.dataset.addRequest) {
       const item = findItem(button.dataset.addRequest, "request");
-      if (item) addToCart(item, "request");
+      if (item) addToCart(item, "request", getPickerQty(button.dataset.addRequest));
+      return;
+    }
+    if (button.dataset.requestQtyMinus) {
+      adjustPickerQty(button.dataset.requestQtyMinus, -1);
+      return;
+    }
+    if (button.dataset.requestQtyPlus) {
+      adjustPickerQty(button.dataset.requestQtyPlus, 1);
       return;
     }
     if (button.dataset.addSale) {
@@ -762,6 +799,11 @@
       }
       return;
     }
+    if (input.dataset.requestPickerQty !== undefined) {
+      setPickerQty(input.dataset.requestPickerQty, input.value);
+      input.value = state.requestQtyByCode[input.dataset.requestPickerQty];
+      return;
+    }
     if (input.dataset.cartQty) {
       setLineQty("request", input.dataset.cartQty, input.value);
       return;
@@ -776,6 +818,13 @@
     }
     if (input.dataset.saleCash !== undefined) {
       state.salePayment.cashAmount = input.value;
+    }
+  });
+
+  root.addEventListener("focusin", (event) => {
+    const input = event.target;
+    if (input.dataset?.requestPickerQty !== undefined) {
+      setTimeout(() => input.select(), 0);
     }
   });
 
