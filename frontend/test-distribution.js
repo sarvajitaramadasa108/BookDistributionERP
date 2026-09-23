@@ -69,6 +69,16 @@
     return String(value || "").trim().toLowerCase();
   }
 
+  function normalizeDriveImageUrl(url) {
+    const raw = String(url || "").trim();
+    if (!raw) return "";
+    const fileMatch = raw.match(/\/file\/d\/([^/]+)/i) || raw.match(/[?&]id=([^&]+)/i);
+    if (raw.includes("drive.google.com") && fileMatch) {
+      return `/api/image?url=${encodeURIComponent(raw)}`;
+    }
+    return raw;
+  }
+
   function setLoading(value, label) {
     state.loading = value;
     if (!overlay) return;
@@ -338,15 +348,15 @@
 
   function renderPhone() {
     return `
-      <section class="public-hero">
-        <div class="brand-pill">Test Warehouse</div>
+      <section class="public-hero test-hero">
+        <div class="public-tag">Test Warehouse</div>
         <h1>Book Distribution Track</h1>
         <p>Enter your mobile number to request stock, track activity stock, and post sales.</p>
       </section>
       <section class="public-card">
         <label class="field-label" for="publicMobile">Mobile Number</label>
         <input id="publicMobile" class="public-input" inputmode="numeric" maxlength="10" value="${escapeAttr(state.mobile)}" placeholder="10 digit mobile number">
-        <button class="primary wide" data-action="lookupProfile">Continue</button>
+        <button class="button wide" data-action="lookupProfile">Continue</button>
       </section>
     `;
   }
@@ -377,7 +387,7 @@
         ` : ""}
         <label class="field-label">Location</label>
         <input class="public-input" data-profile-field="location" value="${escapeAttr(form.location)}">
-        <button class="primary wide" data-action="saveProfile">Save and Continue</button>
+        <button class="button wide" data-action="saveProfile">Save and Continue</button>
       </section>
     `;
   }
@@ -390,24 +400,24 @@
       ["reports", "Reports"]
     ];
     return `
-      <header class="sales-topbar test-topbar">
+      <header class="test-app-header">
         <div>
-          <div class="brand-chip">TEST</div>
+          <div class="public-tag">TEST</div>
           <h1>Distribution Track</h1>
         </div>
-        <button class="ghost small" data-action="logoutProfile">Change Phone</button>
+        <button class="button secondary small-button" data-action="logoutProfile">Change Phone</button>
       </header>
-      <nav class="sales-tabs">
-        ${items.map(([view, label]) => `<button class="${state.view === view ? "active" : ""}" data-view="${view}">${label}</button>`).join("")}
+      <nav class="test-nav">
+        ${items.map(([view, label]) => `<button class="segment ${state.view === view ? "active" : ""}" data-view="${view}">${label}</button>`).join("")}
       </nav>
     `;
   }
 
   function renderGroupToggle() {
     return `
-      <div class="category-tabs">
-        <button class="${state.itemGroup === "BOOK" ? "active" : ""}" data-group="BOOK">Books</button>
-        <button class="${state.itemGroup === "PARAPHERNALIA" ? "active" : ""}" data-group="PARAPHERNALIA">Devotional Items</button>
+      <div class="segmented category-segmented">
+        <button class="segment ${state.itemGroup === "BOOK" ? "active" : ""}" data-group="BOOK">Books</button>
+        <button class="segment ${state.itemGroup === "PARAPHERNALIA" ? "active" : ""}" data-group="PARAPHERNALIA">Devotional Items</button>
       </div>
     `;
   }
@@ -419,14 +429,36 @@
   function renderCatalogCard(item, target) {
     const code = item.erpCode || item.bookId;
     const inCart = (target === "sale" ? state.saleCart : state.cart).find((line) => line.erpCode === code);
+    const availableQty = Number(item.availableQty || 0);
+    const imageUrl = target === "request" ? normalizeDriveImageUrl(item.imageUrl) : "";
+    const fallback = String(item.name || item.bookName || "Item").split(" ").slice(0, 2).map((part) => part[0] || "").join("").toUpperCase();
+    if (target === "request") {
+      return `
+        <article class="catalog-card compact-card ${availableQty > 0 ? "" : "sold-out"}">
+          <div class="catalog-image compact-image">
+            ${imageUrl ? `<img src="${escapeAttr(imageUrl)}" alt="${escapeAttr(item.name || item.bookName)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.classList.remove('hidden')">` : ""}
+            <div class="catalog-fallback ${imageUrl ? "hidden" : ""}">${escapeHtml(fallback)}</div>
+          </div>
+          <div class="catalog-body">
+            <div class="catalog-name small-name">${escapeHtml(item.name || item.bookName || "-")}</div>
+            <div class="catalog-meta">${escapeHtml(code)}</div>
+            <div class="catalog-stats compact-stats">
+              <span>${money(item.salePrice)}</span>
+              <span>${qty(availableQty)} available</span>
+            </div>
+            <button class="button small-button" type="button" data-add-${target}="${escapeAttr(code)}">${inCart ? `Added (${qty(inCart.quantity)})` : "Add"}</button>
+          </div>
+        </article>
+      `;
+    }
     return `
-      <article class="product-card compact-product">
+      <article class="test-sale-card">
         <div>
           <h3>${escapeHtml(item.name || item.bookName)}</h3>
           <p>${escapeHtml(code)} · ${money(item.salePrice)}</p>
-          <p>${qty(item.availableQty)} available</p>
+          <p>${qty(availableQty)} available</p>
         </div>
-        <button class="secondary" data-add-${target}="${escapeAttr(code)}">${inCart ? `Added (${qty(inCart.quantity)})` : "Add"}</button>
+        <button class="button secondary" data-add-${target}="${escapeAttr(code)}">${inCart ? `Added (${qty(inCart.quantity)})` : "Add"}</button>
       </article>
     `;
   }
@@ -434,13 +466,18 @@
   function renderRequest() {
     const rows = filteredCatalog();
     return `
-      <div class="floating-action"><button class="primary" data-action="showRequestCart">Go to Cart (${cartQty(state.cart)})</button></div>
+      <div class="floating-request-actions test-floating-actions"><button class="segment active" data-action="showRequestCart">Go to Cart (${cartQty(state.cart)})</button></div>
       <section class="public-card">
-        <h2>Place A Request</h2>
-        ${renderGroupToggle()}
-        ${renderSearch()}
+        <div class="public-card-header compact-header">
+          <h2>Place A Request</h2>
+          <div class="public-tag">${state.itemGroup === "BOOK" ? "Books" : "Devotional Items"}</div>
+        </div>
+        <div class="catalog-toolbar">
+          <div>${renderGroupToggle()}</div>
+          ${renderSearch()}
+        </div>
       </section>
-      <section class="product-grid single-column">
+      <section class="catalog-grid compact-grid test-catalog-grid">
         ${rows.map((item) => renderCatalogCard(item, "request")).join("") || `<div class="empty-state">No stock found.</div>`}
       </section>
     `;
@@ -463,8 +500,8 @@
         </select>
         ${state.selectedRequestActivity === "Add another activity" ? `<input class="public-input" data-custom-request-activity value="${escapeAttr(state.customRequestActivity)}" placeholder="Type activity name">` : ""}
         <div class="button-row">
-          <button class="secondary" data-action="backToRequest">Back</button>
-          <button class="primary" data-action="submitRequest">Place Request</button>
+          <button class="button secondary" data-action="backToRequest">Back</button>
+          <button class="button" data-action="submitRequest">Place Request</button>
         </div>
       </section>
     `;
@@ -486,7 +523,7 @@
                 <h3>${escapeHtml(activity.activityName || "Activity")}</h3>
                 <p>${escapeHtml(activityStatus(activity))}</p>
               </div>
-              <button class="secondary small" data-detail-activity="${escapeAttr(activity.activityId)}">Details</button>
+              <button class="button secondary small-button" data-detail-activity="${escapeAttr(activity.activityId)}">Details</button>
             </div>
             <div class="metric-grid">
               <div><span>Issues</span><strong>${qty(activity.issueCount || activity.documentCount || 0)}</strong></div>
@@ -505,7 +542,7 @@
     const books = activity.books || [];
     return `
       <section class="public-card">
-        <button class="ghost small" data-action="backToTrack">Back</button>
+        <button class="button secondary small-button" data-action="backToTrack">Back</button>
         <h2>${escapeHtml(activity.activityName || "Activity")}</h2>
         <p>${escapeHtml(activityStatus(activity))}</p>
         <div class="metric-grid">
@@ -539,7 +576,7 @@
   function renderSale() {
     const total = collectionTotal(state.saleCart);
     return `
-      <div class="floating-action"><button class="primary" data-action="openSalePayment">Post Sale (${money(total)})</button></div>
+      <div class="floating-request-actions test-floating-actions"><button class="segment active" data-action="openSalePayment">Post Sale (${money(total)})</button></div>
       <section class="public-card">
         <h2>Enter Sale</h2>
         <label class="field-label">Running Activity</label>
@@ -558,7 +595,7 @@
           </div>
         `).join("") || `<p class="muted">Select items below.</p>`}
       </section>
-      <section class="product-grid single-column">
+      <section class="test-sale-list">
         ${filteredSaleStock().map((item) => renderCatalogCard(item, "sale")).join("") || `<div class="empty-state">Select an activity to see available stock.</div>`}
       </section>
       ${state.salePayment.open ? renderPaymentPanel() : ""}
@@ -574,8 +611,8 @@
       <div class="modal-backdrop">
         <section class="public-card payment-card">
           <div class="split-row"><h2>Payment Method</h2><strong>${money(total)}</strong></div>
-          <div class="category-tabs vertical">
-            ${["CASH", "ONLINE", "MIXED"].map((option) => `<button class="${method === option ? "active" : ""}" data-payment-method="${option}">${escapeHtml(option)}</button>`).join("")}
+          <div class="payment-method-grid">
+            ${["CASH", "ONLINE", "MIXED"].map((option) => `<button class="payment-method-button ${method === option ? "active" : ""}" data-payment-method="${option}">${escapeHtml(option)}</button>`).join("")}
           </div>
           ${method === "MIXED" ? `
             <label class="field-label">Cash Received</label>
@@ -586,8 +623,8 @@
             <div><span>Online</span><strong>${money(online)}</strong></div>
           </div>
           <div class="button-row">
-            <button class="secondary" data-action="closeSalePayment">Back</button>
-            <button class="primary" data-action="submitSale">Done and Post Sale</button>
+            <button class="button secondary" data-action="closeSalePayment">Back</button>
+            <button class="button" data-action="submitSale">Done and Post Sale</button>
           </div>
         </section>
       </div>
@@ -714,9 +751,13 @@
     }
     if (input.dataset.searchInput !== undefined) {
       state.search = input.value;
-      const section = input.closest(".public-card")?.nextElementSibling;
-      if (section && section.classList.contains("product-grid")) {
-        const rows = state.view === "sale" ? filteredSaleStock().map((item) => renderCatalogCard(item, "sale")) : filteredCatalog().map((item) => renderCatalogCard(item, "request"));
+      const section = state.view === "sale"
+        ? root.querySelector(".test-sale-list")
+        : root.querySelector(".test-catalog-grid");
+      if (section) {
+        const rows = state.view === "sale"
+          ? filteredSaleStock().map((item) => renderCatalogCard(item, "sale"))
+          : filteredCatalog().map((item) => renderCatalogCard(item, "request"));
         section.innerHTML = rows.join("") || `<div class="empty-state">No stock found.</div>`;
       }
       return;
