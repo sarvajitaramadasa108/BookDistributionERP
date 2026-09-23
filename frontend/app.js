@@ -6980,7 +6980,10 @@
   async function importActivityBulkFile(file, kind) {
     if (!file) return;
     const isReceive = kind === "receive";
+    let loadingStarted = false;
     try {
+      setLoading(true, "Reading Excel file and preparing bulk upload...");
+      loadingStarted = true;
       await ensureActivityMastersLoaded();
       await ensureDocumentItemMastersLoaded();
       const parsed = await parseSpreadsheetRows(file);
@@ -7014,20 +7017,25 @@
         return;
       }
 
-      setLoading(true, "Posting bulk stock documents...");
-      try {
-        const result = await window.erpApi.request("documents.importActivityBulk", payload);
-        invalidateCurrentStockCache();
-        closeModal();
-        content.innerHTML = await renderDocuments();
-        const warnings = result.errors && result.errors.length ? ` (${result.errors.length} skipped)` : "";
-        showToast(`Bulk upload posted ${result.created || entries.length} document(s)${warnings}`);
-      } finally {
-        setLoading(false);
-      }
+      const itemRows = entries.reduce((sum, entry) => sum + Number((entry.lines || []).length || 0), 0);
+      const totalQty = entries.reduce((entrySum, entry) => entrySum + (entry.lines || []).reduce((lineSum, line) => lineSum + Number(line.quantity || 0), 0), 0);
+      const label = documentType === "RETURN" ? "return" : documentType === "COMPLIMENTARY" ? "complimentary issue" : "issue";
+      setLoading(
+        true,
+        `Posting bulk ${label} documents...\n${entries.length} activities, ${itemRows} item rows, total qty ${totalQty}.\nPlease wait. Large uploads can take a few minutes.`
+      );
+      const result = await window.erpApi.request("documents.importActivityBulk", payload);
+      invalidateCurrentStockCache();
+      closeModal();
+      content.innerHTML = await renderDocuments();
+      const warnings = result.errors && result.errors.length ? ` (${result.errors.length} skipped)` : "";
+      showToast(`Bulk upload posted ${result.created || entries.length} document(s)${warnings}`);
     } catch (error) {
       showToast(error.message || "Could not import bulk stock document");
     } finally {
+      if (loadingStarted) {
+        setLoading(false);
+      }
       const input = document.getElementById(isReceive ? "receiveBulkImportInput" : "issueBulkImportInput");
       if (input) {
         input.value = "";

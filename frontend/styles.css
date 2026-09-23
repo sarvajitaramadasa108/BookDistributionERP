@@ -620,7 +620,7 @@ tbody tr:hover td {
 
 .loading-card {
   min-width: 240px;
-  max-width: min(92vw, 320px);
+  max-width: min(92vw, 420px);
   display: grid;
   justify-items: center;
   gap: 12px;
@@ -632,6 +632,11 @@ tbody tr:hover td {
   color: var(--blue-900);
   font-weight: 700;
   text-align: center;
+}
+
+.loading-card span {
+  white-space: pre-line;
+  line-height: 1.45;
 }
 
 .loader {
