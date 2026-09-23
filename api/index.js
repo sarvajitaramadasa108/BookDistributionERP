@@ -1470,7 +1470,7 @@ async function createDocument(supabase, payload, currentUser) {
     await syncActivitySettlementStatus(supabase, activityRow.id);
   }
 
-  return { documentId: doc.document_code };
+  return { documentId: doc.document_code, documentRowId: doc.id };
 }
 
 async function correctDocument(supabase, payload, currentUser) {
@@ -2791,6 +2791,86 @@ async function ensurePublicProfileAndDevotee(supabase, payload) {
   };
 }
 
+async function publicAcceptedActivityLineMap(supabase, mobile) {
+  const requesterMobile = normalizeMobile(mobile || "");
+  if (requesterMobile.length !== 10) return new Map();
+  const { data: requests, error: requestError } = await supabase
+    .from("catalog_requests")
+    .select("id, request_code, request_activity_name, accepted_activity_id, accepted_activity_code, accepted_document_code, accepted_at")
+    .eq("requester_mobile", requesterMobile)
+    .not("accepted_activity_id", "is", null);
+  if (requestError) throw requestError;
+  const requestIds = (requests || []).map((row) => row.id).filter(Boolean);
+  if (!requestIds.length) return new Map();
+  const { data: lines, error: lineError } = await supabase
+    .from("catalog_request_lines")
+    .select("*")
+    .in("request_id", requestIds)
+    .order("line_no", { ascending: true });
+  if (lineError) throw lineError;
+  const requestById = Object.fromEntries((requests || []).map((row) => [row.id, row]));
+  const map = new Map();
+  for (const line of lines || []) {
+    const request = requestById[line.request_id];
+    if (!request || !request.accepted_activity_id) continue;
+    const key = request.accepted_activity_id;
+    const bucket = map.get(key) || {
+      activityId: key,
+      activityCode: request.accepted_activity_code || "",
+      activityName: request.request_activity_name || "General Issue",
+      documents: [],
+      booksByCode: new Map(),
+      totalQty: 0,
+      totalAmount: 0
+    };
+    const code = line.item_erp_code || "";
+    const qty = Number(line.requested_qty || 0);
+    const rate = Number(line.sale_price || 0);
+    const existing = bucket.booksByCode.get(code) || {
+      bookId: code,
+      erpCode: code,
+      bookName: line.item_name || code,
+      name: line.item_name || code,
+      itemGroup: line.item_group || "BOOK",
+      issueQty: 0,
+      issuedQty: 0,
+      returnQty: 0,
+      returnedQty: 0,
+      saleQty: 0,
+      actualSaleQty: 0,
+      complimentaryQty: 0,
+      availableQty: 0,
+      amount: 0,
+      salePrice: rate
+    };
+    existing.issueQty += qty;
+    existing.issuedQty += qty;
+    existing.availableQty += qty;
+    existing.amount += qty * rate;
+    bucket.booksByCode.set(code, existing);
+    bucket.totalQty += qty;
+    bucket.totalAmount += qty * rate;
+    if (!bucket.documents.some((doc) => doc.documentId === request.accepted_document_code || doc.documentId === request.request_code)) {
+      bucket.documents.push({
+        documentId: request.accepted_document_code || request.request_code,
+        documentType: "ISSUE",
+        documentDate: request.accepted_at || "",
+        warehouseName: "",
+        issueQty: 0,
+        returnQty: 0,
+        saleQty: 0,
+        complimentaryQty: 0,
+        amount: 0
+      });
+    }
+    const doc = bucket.documents[bucket.documents.length - 1];
+    doc.issueQty += qty;
+    doc.amount += qty * rate;
+    map.set(key, bucket);
+  }
+  return map;
+}
+
 async function publicActivitySummaries(supabase, payload) {
   const profile = await publicProfileLookup(supabase, payload);
   if (!profile.exists) return [];
@@ -2798,6 +2878,7 @@ async function publicActivitySummaries(supabase, payload) {
   const devoteeCode = publicDevoteeCodeForMobile(profile.mobile);
   const context = await getSettlementContext(supabase);
   const devotee = (context.devotees || []).find((row) => row.devotee_code === devoteeCode);
+  const acceptedLineMap = await publicAcceptedActivityLineMap(supabase, profile.mobile);
   const { data: acceptedRequests, error: requestError } = await supabase
     .from("catalog_requests")
     .select("accepted_activity_id")
@@ -2815,6 +2896,38 @@ async function publicActivitySummaries(supabase, payload) {
       ...row,
       publicStatus: row.settledAt ? "Closed" : row.activityStatus === "Completed" ? "Settlement Pending" : row.summary.returnQty > 0 ? "Return Pending" : "Running"
     }))
+    .map((row) => {
+      const fallback = acceptedLineMap.get(row.activityId);
+      if (!fallback || Number(row.summary?.issueQty || 0) > 0) return row;
+      const movementByCode = new Map((row.books || []).map((book) => [book.bookId, book]));
+      const fallbackBooks = Array.from(fallback.booksByCode.values()).map((book) => {
+        const movement = movementByCode.get(book.bookId) || {};
+        const actualSaleQty = Number(movement.actualSaleQty || movement.saleQty || 0);
+        const returnedQty = Number(movement.returnedQty || movement.returnQty || 0);
+        const complimentaryQty = Number(movement.complimentaryQty || 0);
+        return {
+          ...book,
+          returnedQty,
+          returnQty: returnedQty,
+          actualSaleQty,
+          complimentaryQty,
+          availableQty: Math.max(Number(book.issuedQty || 0) - returnedQty - actualSaleQty - complimentaryQty, 0)
+        };
+      });
+      const saleQty = fallbackBooks.reduce((sum, book) => sum + Number(book.availableQty || 0), 0);
+      return {
+        ...row,
+        summary: {
+          ...row.summary,
+          issueQty: fallback.totalQty,
+          saleDueAmount: fallback.totalAmount,
+          saleQty,
+          pendingAmount: Math.max(fallback.totalAmount - Number(row.summary?.paidTotalAmount || 0), 0)
+        },
+        documents: [...fallback.documents, ...(row.documents || [])],
+        books: fallbackBooks
+      };
+    })
     .sort((a, b) => String(b.activityCode || "").localeCompare(String(a.activityCode || "")));
 }
 
@@ -2832,7 +2945,7 @@ async function publicActivityStock(supabase, payload) {
   const targetRows = rows.filter((row) => [row.activityId, row.activityCode, row.activityName].some((value) => activityRefs.has(String(value || ""))));
   const items = await itemsPublicList(supabase, {});
   const itemByCode = Object.fromEntries((items || []).map((item) => [String(item.erpCode || ""), item]));
-  return targetRows
+  const mappedRows = targetRows
     .filter((row) => Number(row.unsettledQty || 0) > 0)
     .map((row) => {
       const item = itemByCode[row.bookId] || {};
@@ -2845,6 +2958,28 @@ async function publicActivityStock(supabase, payload) {
       };
     })
     .sort((a, b) => String(a.itemName || "").localeCompare(String(b.itemName || "")));
+  if (mappedRows.length) return mappedRows;
+  const mobile = normalizeMobile(payload.mobile || payload.requesterMobile || "");
+  const fallbackMap = await publicAcceptedActivityLineMap(supabase, mobile);
+  const fallback = Array.from(fallbackMap.values()).find((row) =>
+    [row.activityId, row.activityCode, row.activityName].some((value) => activityRefs.has(String(value || "")))
+  );
+  if (!fallback) return [];
+  const movementByCode = new Map(targetRows.map((row) => [row.bookId, row]));
+  return Array.from(fallback.booksByCode.values())
+    .map((row) => {
+      const movement = movementByCode.get(row.bookId) || {};
+      const availableQty = Math.max(Number(row.issuedQty || 0) - Number(movement.returnedQty || 0) - Number(movement.soldQty || 0) - Number(movement.complimentaryQty || 0), 0);
+      const item = itemByCode[row.bookId] || {};
+      return {
+        ...row,
+        salePrice: Number(item.salePrice || row.salePrice || 0),
+        availableQty,
+        unsettledQty: availableQty
+      };
+    })
+    .filter((row) => Number(row.availableQty || 0) > 0)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
 }
 
 async function publicSubmitRequest(supabase, payload) {
@@ -2873,7 +3008,7 @@ async function publicSubmitActivitySale(supabase, payload) {
   if (!activityRef) throw new Error("Activity is required");
   const activityRow = await resolveActivityRow(supabase, activityRef);
   if (!activityRow) throw new Error("Activity not found");
-  const stockRows = await publicActivityStock(supabase, { activityId: activityRow.id });
+  const stockRows = await publicActivityStock(supabase, { activityId: activityRow.id, mobile: profile.mobile });
   const stockByCode = Object.fromEntries(stockRows.map((row) => [String(row.bookId || ""), row]));
   const lines = (Array.isArray(payload.lines) ? payload.lines : [])
     .map((line) => {
