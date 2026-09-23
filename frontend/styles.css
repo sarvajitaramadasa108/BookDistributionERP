@@ -2095,6 +2095,14 @@ body.public-mode .loading-overlay {
   min-height: 40px;
 }
 
+#testRoot .sale-catalog-card {
+  align-content: stretch;
+}
+
+#testRoot .sale-catalog-card .catalog-body {
+  height: 100%;
+}
+
 #testRoot .request-qty-row {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) 34px;

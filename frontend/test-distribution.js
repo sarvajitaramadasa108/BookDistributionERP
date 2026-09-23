@@ -23,6 +23,7 @@
     },
     catalogByGroup: { BOOK: [], PARAPHERNALIA: [] },
     requestQtyByCode: {},
+    saleQtyByCode: {},
     activities: [],
     selectedRequestActivity: "General Issue",
     customRequestActivity: "",
@@ -307,22 +308,29 @@
     });
   }
 
-  function getPickerQty(code) {
-    const value = Number(state.requestQtyByCode[code] || 1);
+  function pickerState(target) {
+    return target === "sale" ? state.saleQtyByCode : state.requestQtyByCode;
+  }
+
+  function getPickerQty(code, target = "request") {
+    const values = pickerState(target);
+    const value = Number(values[code] || 1);
     return Number.isFinite(value) && value > 0 ? value : 1;
   }
 
-  function setPickerQty(code, value) {
-    const item = findItem(code, "request");
+  function setPickerQty(code, value, target = "request") {
+    const values = pickerState(target);
+    const item = findItem(code, target);
     const max = Number(item?.availableQty || 0);
     const number = Math.max(1, Math.floor(Number(value || 1)));
-    state.requestQtyByCode[code] = max > 0 ? Math.min(number, max) : number;
+    values[code] = max > 0 ? Math.min(number, max) : number;
   }
 
-  function adjustPickerQty(code, delta) {
-    setPickerQty(code, getPickerQty(code) + delta);
-    const input = root.querySelector(`[data-request-picker-qty="${selectorSafe(code)}"]`);
-    if (input) input.value = state.requestQtyByCode[code];
+  function adjustPickerQty(code, delta, target = "request") {
+    setPickerQty(code, getPickerQty(code, target) + delta, target);
+    const attr = target === "sale" ? "data-sale-picker-qty" : "data-request-picker-qty";
+    const input = root.querySelector(`[${attr}="${selectorSafe(code)}"]`);
+    if (input) input.value = pickerState(target)[code];
   }
 
   function addToCart(item, target, quantity) {
@@ -531,6 +539,26 @@
         </article>
       `;
     }
+    if (target === "sale") {
+      return `
+        <article class="catalog-card compact-card sale-catalog-card ${availableQty > 0 ? "" : "sold-out"}">
+          <div class="catalog-body">
+            <div class="catalog-name small-name">${escapeHtml(item.name || item.bookName || "-")}</div>
+            <div class="catalog-meta">${escapeHtml(code)}</div>
+            <div class="catalog-stats compact-stats">
+              <span>${money(item.salePrice)}</span>
+              <span>${qty(availableQty)} available</span>
+            </div>
+            <div class="request-qty-row">
+              <button class="qty-step-button" type="button" data-sale-qty-minus="${escapeAttr(code)}" aria-label="Decrease quantity">-</button>
+              <input class="request-picker-qty" type="number" min="1" ${availableQty > 0 ? `max="${escapeAttr(availableQty)}"` : ""} value="${escapeAttr(getPickerQty(code, "sale"))}" data-sale-picker-qty="${escapeAttr(code)}">
+              <button class="qty-step-button" type="button" data-sale-qty-plus="${escapeAttr(code)}" aria-label="Increase quantity">+</button>
+            </div>
+            <button class="button small-button" type="button" data-add-sale="${escapeAttr(code)}">${inCart ? `Added (${qty(inCart.quantity)})` : "Add"}</button>
+          </div>
+        </article>
+      `;
+    }
     return `
       <article class="test-sale-card">
         <div>
@@ -679,7 +707,10 @@
         ${renderSearch()}
       </section>
       <section class="public-card">
-        <h3>Sale Cart</h3>
+        <div class="public-card-header compact-header">
+          <h3>Post Sale Cart</h3>
+          <div class="public-tag">${cartQty(state.saleCart)} items · ${money(total)}</div>
+        </div>
         ${state.saleCart.map((line) => `
           <div class="cart-row">
             <div><strong>${escapeHtml(line.itemName)}</strong><p>${money(line.salePrice)} · ${escapeHtml(line.erpCode)}</p></div>
@@ -687,7 +718,7 @@
           </div>
         `).join("") || `<p class="muted">Select items below.</p>`}
       </section>
-      <section class="test-sale-list">
+      <section class="catalog-grid compact-grid test-catalog-grid sale-catalog-grid">
         ${filteredSaleStock().map((item) => renderCatalogCard(item, "sale")).join("") || `<div class="empty-state">Select an activity to see available stock.</div>`}
       </section>
       ${state.salePayment.open ? renderPaymentPanel() : ""}
@@ -799,7 +830,15 @@
     }
     if (button.dataset.addSale) {
       const item = findItem(button.dataset.addSale, "sale");
-      if (item) addToCart(item, "sale");
+      if (item) addToCart(item, "sale", getPickerQty(button.dataset.addSale, "sale"));
+      return;
+    }
+    if (button.dataset.saleQtyMinus) {
+      adjustPickerQty(button.dataset.saleQtyMinus, -1, "sale");
+      return;
+    }
+    if (button.dataset.saleQtyPlus) {
+      adjustPickerQty(button.dataset.saleQtyPlus, 1, "sale");
       return;
     }
     if (button.dataset.detailActivity) {
@@ -858,7 +897,7 @@
     if (input.dataset.searchInput !== undefined) {
       state.search = input.value;
       const section = state.view === "sale"
-        ? root.querySelector(".test-sale-list")
+        ? root.querySelector(".sale-catalog-grid")
         : root.querySelector(".test-catalog-grid");
       if (section) {
         const rows = state.view === "sale"
@@ -869,8 +908,13 @@
       return;
     }
     if (input.dataset.requestPickerQty !== undefined) {
-      setPickerQty(input.dataset.requestPickerQty, input.value);
+      setPickerQty(input.dataset.requestPickerQty, input.value, "request");
       input.value = state.requestQtyByCode[input.dataset.requestPickerQty];
+      return;
+    }
+    if (input.dataset.salePickerQty !== undefined) {
+      setPickerQty(input.dataset.salePickerQty, input.value, "sale");
+      input.value = state.saleQtyByCode[input.dataset.salePickerQty];
       return;
     }
     if (input.dataset.cartQty) {
@@ -893,6 +937,9 @@
   root.addEventListener("focusin", (event) => {
     const input = event.target;
     if (input.dataset?.requestPickerQty !== undefined) {
+      setTimeout(() => input.select(), 0);
+    }
+    if (input.dataset?.salePickerQty !== undefined) {
       setTimeout(() => input.select(), 0);
     }
   });
