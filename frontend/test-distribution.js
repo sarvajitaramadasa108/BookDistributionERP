@@ -314,15 +314,15 @@
 
   function getPickerQty(code, target = "request") {
     const values = pickerState(target);
-    const value = Number(values[code] || 1);
-    return Number.isFinite(value) && value > 0 ? value : 1;
+    const value = Number(values[code] ?? 0);
+    return Number.isFinite(value) && value > 0 ? value : 0;
   }
 
   function setPickerQty(code, value, target = "request") {
     const values = pickerState(target);
     const item = findItem(code, target);
     const max = Number(item?.availableQty || 0);
-    const number = Math.max(1, Math.floor(Number(value || 1)));
+    const number = Math.max(0, Math.floor(Number(value || 0)));
     values[code] = max > 0 ? Math.min(number, max) : number;
   }
 
@@ -336,7 +336,11 @@
   function addToCart(item, target, quantity) {
     const cart = target === "sale" ? state.saleCart : state.cart;
     const code = item.erpCode || item.bookId;
-    const addQty = Math.max(1, Number(quantity || 1));
+    const addQty = Math.max(0, Number(quantity || 0));
+    if (addQty <= 0) {
+      showToast("Enter quantity before adding");
+      return;
+    }
     const existing = cart.find((line) => line.erpCode === code);
     if (existing) {
       existing.quantity += addQty;
@@ -531,7 +535,7 @@
             </div>
             <div class="request-qty-row">
               <button class="qty-step-button" type="button" data-request-qty-minus="${escapeAttr(code)}" aria-label="Decrease quantity">-</button>
-              <input class="request-picker-qty" type="number" min="1" ${availableQty > 0 ? `max="${escapeAttr(availableQty)}"` : ""} value="${escapeAttr(getPickerQty(code))}" data-request-picker-qty="${escapeAttr(code)}">
+              <input class="request-picker-qty" type="number" min="0" ${availableQty > 0 ? `max="${escapeAttr(availableQty)}"` : ""} value="${escapeAttr(getPickerQty(code))}" data-request-picker-qty="${escapeAttr(code)}">
               <button class="qty-step-button" type="button" data-request-qty-plus="${escapeAttr(code)}" aria-label="Increase quantity">+</button>
             </div>
             <button class="button small-button" type="button" data-add-${target}="${escapeAttr(code)}">${inCart ? `Added (${qty(inCart.quantity)})` : "Add"}</button>
@@ -551,7 +555,7 @@
             </div>
             <div class="request-qty-row">
               <button class="qty-step-button" type="button" data-sale-qty-minus="${escapeAttr(code)}" aria-label="Decrease quantity">-</button>
-              <input class="request-picker-qty" type="number" min="1" ${availableQty > 0 ? `max="${escapeAttr(availableQty)}"` : ""} value="${escapeAttr(getPickerQty(code, "sale"))}" data-sale-picker-qty="${escapeAttr(code)}">
+              <input class="request-picker-qty" type="number" min="0" ${availableQty > 0 ? `max="${escapeAttr(availableQty)}"` : ""} value="${escapeAttr(getPickerQty(code, "sale"))}" data-sale-picker-qty="${escapeAttr(code)}">
               <button class="qty-step-button" type="button" data-sale-qty-plus="${escapeAttr(code)}" aria-label="Increase quantity">+</button>
             </div>
             <button class="button small-button" type="button" data-add-sale="${escapeAttr(code)}">${inCart ? `Added (${qty(inCart.quantity)})` : "Add"}</button>
