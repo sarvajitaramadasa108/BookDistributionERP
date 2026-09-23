@@ -2821,8 +2821,15 @@ async function publicActivitySummaries(supabase, payload) {
 async function publicActivityStock(supabase, payload) {
   const activityId = String(payload.activityId || "").trim();
   if (!activityId) throw new Error("Activity is required");
+  const activityRow = await resolveActivityRow(supabase, activityId);
+  const activityRefs = new Set([
+    activityId,
+    activityRow?.id,
+    activityRow?.activity_code,
+    activityRow?.activity_name
+  ].filter(Boolean).map((value) => String(value)));
   const rows = await getActivityUnsettled(supabase);
-  const targetRows = rows.filter((row) => [row.activityId, row.activityName].some((value) => String(value || "") === activityId));
+  const targetRows = rows.filter((row) => [row.activityId, row.activityCode, row.activityName].some((value) => activityRefs.has(String(value || ""))));
   const items = await itemsPublicList(supabase, {});
   const itemByCode = Object.fromEntries((items || []).map((item) => [String(item.erpCode || ""), item]));
   return targetRows
@@ -2831,7 +2838,8 @@ async function publicActivityStock(supabase, payload) {
       const item = itemByCode[row.bookId] || {};
       return {
         ...row,
-        itemName: item.name || row.bookId,
+        name: item.name || row.bookName || row.bookId,
+        itemName: item.name || row.bookName || row.bookId,
         salePrice: Number(item.salePrice || 0),
         availableQty: Number(row.unsettledQty || 0)
       };
@@ -2951,8 +2959,10 @@ async function getActivityUnsettled(supabase) {
       devoteeId: devotee.devotee_code || activity.devotee_id || "",
       devoteeName: devotee.devotee_name || "",
       activityId: doc.activity_id,
+      activityCode: activity.activity_code || "",
       activityName: activity.activity_name || doc.activity_id,
       bookId: item.erp_code || line.item_id,
+      bookName: item.item_name || item.erp_code || line.item_id,
       itemGroup: item.item_group || "BOOK",
       warehouseId: doc.from_warehouse_id || doc.to_warehouse_id || "",
       issuedQty: 0,
@@ -3200,8 +3210,15 @@ function buildSettlementSummaryForActivity(activity, context) {
   const bookRows = Array.from(bookIndex.values())
     .map((row) => {
       const finalSaleQty = Math.max(Number(row.issueQty || 0) - Number(row.returnQty || 0) - Number(row.complimentaryQty || 0), 0);
+      const actualSaleQty = Number(row.saleQty || 0);
+      const availableQty = Math.max(Number(row.issueQty || 0) - Number(row.returnQty || 0) - actualSaleQty - Number(row.complimentaryQty || 0), 0);
       return {
         ...row,
+        name: row.bookName,
+        issuedQty: Number(row.issueQty || 0),
+        returnedQty: Number(row.returnQty || 0),
+        actualSaleQty,
+        availableQty,
         saleQty: finalSaleQty
       };
     })

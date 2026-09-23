@@ -595,7 +595,7 @@
         <table class="mini-table">
           <thead><tr><th>Item</th><th>Issued</th><th>Return</th><th>Sale</th><th>Bal</th></tr></thead>
           <tbody>
-            ${books.map((book) => `<tr><td>${escapeHtml(book.name || book.bookName || book.erpCode)}</td><td>${qty(book.issuedQty)}</td><td>${qty(book.returnedQty)}</td><td>${qty(book.saleQty)}</td><td>${qty(book.availableQty)}</td></tr>`).join("")}
+            ${books.map((book) => `<tr><td>${escapeHtml(book.name || book.bookName || book.erpCode || book.bookId)}</td><td>${qty(book.issuedQty || book.issueQty)}</td><td>${qty(book.returnedQty || book.returnQty)}</td><td>${qty(book.actualSaleQty || 0)}</td><td>${qty(book.availableQty || book.unsettledQty || 0)}</td></tr>`).join("") || `<tr><td colspan="5">No item stock rows found for this activity.</td></tr>`}
           </tbody>
         </table>
       </section>
