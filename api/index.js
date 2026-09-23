@@ -3279,6 +3279,7 @@ function buildSettlementSummaryForActivity(activity, context) {
         bookId: item.erp_code || line.item_id,
         bookName: item.item_name || line.item_id,
         itemGroup: item.item_group || "BOOK",
+        salePrice: price,
         issueQty: 0,
         returnQty: 0,
         saleQty: 0,

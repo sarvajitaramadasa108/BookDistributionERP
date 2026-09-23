@@ -125,6 +125,57 @@
     return "Open";
   }
 
+  function bookPrice(book) {
+    const explicit = Number(book.salePrice || book.rate || 0);
+    if (Number.isFinite(explicit) && explicit > 0) return explicit;
+    const issuedQty = Number(book.issuedQty || book.issueQty || 0);
+    const amount = Number(book.amount || 0);
+    return issuedQty > 0 ? Math.abs(amount) / issuedQty : 0;
+  }
+
+  function bookActivityNumbers(book) {
+    const price = bookPrice(book);
+    const issueQty = Number(book.issuedQty || book.issueQty || 0);
+    const returnQty = Number(book.returnedQty || book.returnQty || 0);
+    const saleQty = Number(book.actualSaleQty || book.soldQty || 0);
+    const balanceQty = Math.max(Number(book.availableQty || book.unsettledQty || 0), 0);
+    return {
+      price,
+      issueQty,
+      returnQty,
+      saleQty,
+      balanceQty,
+      issueWorth: issueQty * price,
+      returnWorth: returnQty * price,
+      saleWorth: saleQty * price,
+      balanceWorth: balanceQty * price
+    };
+  }
+
+  function activityWorth(activity) {
+    const rows = activity.books || [];
+    const totals = rows.reduce((sum, book) => {
+      const values = bookActivityNumbers(book);
+      sum.issueWorth += values.issueWorth;
+      sum.returnWorth += values.returnWorth;
+      sum.saleWorth += values.saleWorth;
+      sum.balanceWorth += values.balanceWorth;
+      sum.issueQty += values.issueQty;
+      sum.returnQty += values.returnQty;
+      sum.saleQty += values.saleQty;
+      sum.balanceQty += values.balanceQty;
+      return sum;
+    }, { issueWorth: 0, returnWorth: 0, saleWorth: 0, balanceWorth: 0, issueQty: 0, returnQty: 0, saleQty: 0, balanceQty: 0 });
+    if (!rows.length && activity.summary) {
+      totals.issueQty = Number(activity.summary.issueQty || 0);
+      totals.returnQty = Number(activity.summary.returnQty || 0);
+      totals.saleQty = Number(activity.summary.saleQty || 0);
+      totals.issueWorth = Number(activity.summary.saleDueAmount || 0);
+      totals.balanceWorth = Math.max(totals.issueWorth - totals.returnWorth - totals.saleWorth, 0);
+    }
+    return totals;
+  }
+
   function activityOptions() {
     const options = ["Add another activity", "General Issue"];
     for (const activity of state.activities || []) {
@@ -545,7 +596,9 @@
         <p class="muted">Activity-wise issue, return, and sale status.</p>
       </section>
       <section class="activity-list">
-        ${state.activities.map((activity) => `
+        ${state.activities.map((activity) => {
+          const totals = activityWorth(activity);
+          return `
           <article class="public-card activity-card">
             <div class="split-row">
               <div>
@@ -555,13 +608,13 @@
               <button class="button secondary small-button" data-detail-activity="${escapeAttr(activity.activityId)}">Details</button>
             </div>
             <div class="metric-grid">
-              <div><span>Issues</span><strong>${qty(activity.issueCount || activity.documentCount || 0)}</strong></div>
-              <div><span>Issued</span><strong>${money(activity.totalIssuedAmount)}</strong></div>
-              <div><span>Returned</span><strong>${money(activity.totalReturnedAmount)}</strong></div>
-              <div><span>Sale</span><strong>${money(activity.totalSaleAmount)}</strong></div>
+              <div><span>Issue Worth</span><strong>${money(totals.issueWorth)}</strong></div>
+              <div><span>Return Worth</span><strong>${money(totals.returnWorth)}</strong></div>
+              <div><span>Sale Worth</span><strong>${money(totals.saleWorth)}</strong></div>
+              <div><span>Balance Worth</span><strong>${money(totals.balanceWorth)}</strong></div>
             </div>
           </article>
-        `).join("") || `<div class="empty-state">No activities yet.</div>`}
+        `; }).join("") || `<div class="empty-state">No activities yet.</div>`}
       </section>
     `;
   }
@@ -569,16 +622,17 @@
   function renderActivityDetail(activity) {
     const docs = activity.documents || [];
     const books = activity.books || [];
+    const totals = activityWorth(activity);
     return `
       <section class="public-card">
         <button class="button secondary small-button" data-action="backToTrack">Back</button>
         <h2>${escapeHtml(activity.activityName || "Activity")}</h2>
         <p>${escapeHtml(activityStatus(activity))}</p>
         <div class="metric-grid">
-          <div><span>Issued</span><strong>${money(activity.totalIssuedAmount)}</strong></div>
-          <div><span>Returned</span><strong>${money(activity.totalReturnedAmount)}</strong></div>
-          <div><span>Sale</span><strong>${money(activity.totalSaleAmount)}</strong></div>
-          <div><span>Available</span><strong>${money(activity.availableAmount)}</strong></div>
+          <div><span>Issue Worth</span><strong>${money(totals.issueWorth)}</strong></div>
+          <div><span>Return Worth</span><strong>${money(totals.returnWorth)}</strong></div>
+          <div><span>Sale Worth</span><strong>${money(totals.saleWorth)}</strong></div>
+          <div><span>Balance Worth</span><strong>${money(totals.balanceWorth)}</strong></div>
         </div>
       </section>
       <section class="public-card">
@@ -593,9 +647,18 @@
       <section class="public-card table-scroll">
         <h3>Item Details</h3>
         <table class="mini-table">
-          <thead><tr><th>Item</th><th>Issued</th><th>Return</th><th>Sale</th><th>Bal</th></tr></thead>
+          <thead><tr><th>Item</th><th>Issue</th><th>Return</th><th>Sale</th><th>Balance</th></tr></thead>
           <tbody>
-            ${books.map((book) => `<tr><td>${escapeHtml(book.name || book.bookName || book.erpCode || book.bookId)}</td><td>${qty(book.issuedQty || book.issueQty)}</td><td>${qty(book.returnedQty || book.returnQty)}</td><td>${qty(book.actualSaleQty || 0)}</td><td>${qty(book.availableQty || book.unsettledQty || 0)}</td></tr>`).join("") || `<tr><td colspan="5">No item stock rows found for this activity.</td></tr>`}
+            ${books.map((book) => {
+              const values = bookActivityNumbers(book);
+              return `<tr>
+                <td>${escapeHtml(book.name || book.bookName || book.erpCode || book.bookId)}</td>
+                <td>${qty(values.issueQty)}<br><strong>${money(values.issueWorth)}</strong></td>
+                <td>${qty(values.returnQty)}<br><strong>${money(values.returnWorth)}</strong></td>
+                <td>${qty(values.saleQty)}<br><strong>${money(values.saleWorth)}</strong></td>
+                <td>${qty(values.balanceQty)}<br><strong>${money(values.balanceWorth)}</strong></td>
+              </tr>`;
+            }).join("") || `<tr><td colspan="5">No item stock rows found for this activity.</td></tr>`}
           </tbody>
         </table>
       </section>
