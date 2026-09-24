@@ -2879,6 +2879,15 @@ async function publicActivitySummaries(supabase, payload) {
   const context = await getSettlementContext(supabase);
   const devotee = (context.devotees || []).find((row) => row.devotee_code === devoteeCode);
   const acceptedLineMap = await publicAcceptedActivityLineMap(supabase, profile.mobile);
+  const movementRows = await getActivityUnsettled(supabase);
+  const movementByActivity = new Map();
+  for (const row of movementRows || []) {
+    const key = String(row.activityId || "");
+    if (!key) continue;
+    const bucket = movementByActivity.get(key) || new Map();
+    bucket.set(String(row.bookId || ""), row);
+    movementByActivity.set(key, bucket);
+  }
   const { data: acceptedRequests, error: requestError } = await supabase
     .from("catalog_requests")
     .select("accepted_activity_id")
@@ -2896,6 +2905,31 @@ async function publicActivitySummaries(supabase, payload) {
       ...row,
       publicStatus: row.settledAt ? "Closed" : row.activityStatus === "Completed" ? "Settlement Pending" : row.summary.returnQty > 0 ? "Return Pending" : "Running"
     }))
+    .map((row) => {
+      const movementByCode = movementByActivity.get(row.activityId);
+      if (!movementByCode || !row.books?.length) return row;
+      return {
+        ...row,
+        books: row.books.map((book) => {
+          const movement = movementByCode.get(String(book.bookId || ""));
+          if (!movement) return book;
+          const actualSaleQty = Number(movement.soldQty || movement.actualSaleQty || book.actualSaleQty || 0);
+          const returnedQty = Number(movement.returnedQty || book.returnedQty || book.returnQty || 0);
+          const complimentaryQty = Number(movement.complimentaryQty || book.complimentaryQty || 0);
+          const availableQty = Math.max(Number(movement.unsettledQty || 0), 0);
+          return {
+            ...book,
+            returnedQty,
+            returnQty: returnedQty,
+            actualSaleQty,
+            soldQty: actualSaleQty,
+            complimentaryQty,
+            availableQty,
+            unsettledQty: availableQty
+          };
+        })
+      };
+    })
     .map((row) => {
       const fallback = acceptedLineMap.get(row.activityId);
       if (!fallback || Number(row.summary?.issueQty || 0) > 0) return row;
@@ -2929,6 +2963,64 @@ async function publicActivitySummaries(supabase, payload) {
       };
     })
     .sort((a, b) => String(b.activityCode || "").localeCompare(String(a.activityCode || "")));
+}
+
+async function publicActivityReports(supabase, payload) {
+  const profile = await publicProfileLookup(supabase, payload);
+  if (!profile.exists) return {
+    todayBookSales: 0,
+    todayDevotionalSales: 0,
+    totalBookSales: 0,
+    totalDevotionalSales: 0,
+    totalCashToBeSettled: 0,
+    totalOnlineToBeSettled: 0
+  };
+  const testWarehouse = await resolveTestWarehouse(supabase);
+  const devoteeCode = publicDevoteeCodeForMobile(profile.mobile);
+  const context = await getSettlementContext(supabase);
+  const devotee = (context.devotees || []).find((row) => row.devotee_code === devoteeCode);
+  const { data: acceptedRequests, error: requestError } = await supabase
+    .from("catalog_requests")
+    .select("accepted_activity_id")
+    .eq("requester_mobile", profile.mobile)
+    .not("accepted_activity_id", "is", null);
+  if (requestError) throw requestError;
+  const acceptedActivityIds = new Set((acceptedRequests || []).map((row) => row.accepted_activity_id).filter(Boolean));
+  const accessibleActivityIds = new Set((context.activities || [])
+    .filter((activity) => activity.warehouse_id === testWarehouse.id)
+    .filter((activity) => acceptedActivityIds.has(activity.id) || (devotee && activity.devotee_id === devotee.id))
+    .map((activity) => activity.id));
+  const docsById = new Map((context.documents || []).map((doc) => [doc.id, doc]));
+  const itemsById = new Map((context.items || []).map((item) => [item.id, item]));
+  const today = toDateOnly(nowIso());
+  const report = {
+    todayBookSales: 0,
+    todayDevotionalSales: 0,
+    totalBookSales: 0,
+    totalDevotionalSales: 0,
+    totalCashToBeSettled: 0,
+    totalOnlineToBeSettled: 0
+  };
+  for (const line of context.lines || []) {
+    const doc = docsById.get(line.document_id);
+    if (!doc || doc.document_type !== "SALE" || !isCountableDocument(doc) || !accessibleActivityIds.has(doc.activity_id)) continue;
+    const item = itemsById.get(line.item_id) || {};
+    const amount = Number(line.quantity || 0) * Number(line.rate || item.sale_price || 0);
+    const isBook = String(item.item_group || "BOOK").toUpperCase() === "BOOK";
+    if (isBook) {
+      report.totalBookSales += amount;
+      if (toDateOnly(doc.document_date) === today) report.todayBookSales += amount;
+    } else {
+      report.totalDevotionalSales += amount;
+      if (toDateOnly(doc.document_date) === today) report.todayDevotionalSales += amount;
+    }
+  }
+  for (const payment of context.payments || []) {
+    if (!accessibleActivityIds.has(payment.activity_id)) continue;
+    report.totalCashToBeSettled += Number(payment.cash_amount || 0);
+    report.totalOnlineToBeSettled += Number(payment.online_amount || 0);
+  }
+  return report;
 }
 
 async function publicActivityStock(supabase, payload) {
@@ -4045,7 +4137,8 @@ async function main(request) {
       "publicTest.activities",
       "publicTest.activityStock",
       "publicTest.submitRequest",
-      "publicTest.submitSale"
+      "publicTest.submitSale",
+      "publicTest.reports"
     ]);
     const currentUser = await requireCurrentUser(supabase, payload, publicActions.has(action));
 
@@ -4196,6 +4289,8 @@ async function main(request) {
         return json(200, { ok: true, data: await publicSubmitRequest(supabase, payload) });
       case "publicTest.submitSale":
         return json(200, { ok: true, data: await publicSubmitActivitySale(supabase, payload) });
+      case "publicTest.reports":
+        return json(200, { ok: true, data: await publicActivityReports(supabase, payload) });
       case "requests.list":
         return json(200, { ok: true, data: await catalogRequestsList(supabase) });
       case "requests.approve":

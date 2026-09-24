@@ -37,6 +37,7 @@
       method: "CASH",
       cashAmount: ""
     },
+    reports: null,
     loading: false
   };
 
@@ -177,6 +178,16 @@
     return totals;
   }
 
+  function activityGroupSales(group) {
+    return (state.activities || []).reduce((sum, activity) => {
+      return sum + (activity.books || []).reduce((activitySum, book) => {
+        const itemGroup = String(book.itemGroup || "BOOK").toUpperCase();
+        if (itemGroup !== group) return activitySum;
+        return activitySum + bookActivityNumbers(book).saleWorth;
+      }, 0);
+    }, 0);
+  }
+
   function activityOptions() {
     const options = ["Add another activity", "General Issue"];
     for (const activity of state.activities || []) {
@@ -264,14 +275,16 @@
   }
 
   async function loadHomeData() {
-    const [books, items, activities] = await Promise.all([
+    const [books, items, activities, reports] = await Promise.all([
       api("catalog.items", { itemGroup: "BOOK", sourceWarehouseId: TEST_WAREHOUSE }),
       api("catalog.items", { itemGroup: "PARAPHERNALIA", sourceWarehouseId: TEST_WAREHOUSE }),
-      api("publicTest.activities", profilePayload())
+      api("publicTest.activities", profilePayload()),
+      api("publicTest.reports", profilePayload())
     ]);
     state.catalogByGroup.BOOK = books || [];
     state.catalogByGroup.PARAPHERNALIA = items || [];
     state.activities = activities || [];
+    state.reports = reports || null;
     if (!state.saleActivityId && state.activities.length) {
       state.saleActivityId = state.activities[0].activityId || "";
     }
@@ -279,6 +292,10 @@
 
   async function refreshActivities() {
     state.activities = await api("publicTest.activities", profilePayload());
+  }
+
+  async function refreshReports() {
+    state.reports = await api("publicTest.reports", profilePayload());
   }
 
   async function loadActivityStock(activityId) {
@@ -478,7 +495,7 @@
       }));
       state.saleCart = [];
       state.salePayment.open = false;
-      await Promise.all([refreshActivities(), loadActivityStock(state.saleActivityId)]);
+      await Promise.all([refreshActivities(), refreshReports(), loadActivityStock(state.saleActivityId)]);
       applyPostedSale(postedLines, beforeStock, beforeBooks);
       render();
       showToast(`Sale posted: ${result.documentId}`);
@@ -817,10 +834,24 @@
   }
 
   function renderReports() {
+    const report = state.reports || {};
+    const totalBookSales = Number(report.totalBookSales ?? activityGroupSales("BOOK") ?? 0);
+    const totalDevotionalSales = Number(report.totalDevotionalSales ?? activityGroupSales("PARAPHERNALIA") ?? 0);
+    const metrics = [
+      ["Today's Book Sales", Number(report.todayBookSales || 0)],
+      ["Today's Devotional Sales", Number(report.todayDevotionalSales || 0)],
+      ["Total Book Sales", totalBookSales],
+      ["Total Devotional Sales", totalDevotionalSales],
+      ["Total Cash to be Settled", Number(report.totalCashToBeSettled || 0)],
+      ["Total Online to be Settled", Number(report.totalOnlineToBeSettled || 0)]
+    ];
     return `
       <section class="public-card">
         <h2>Reports</h2>
-        <p class="muted">Reports will be added in the next stage.</p>
+        <p class="muted">Sale and settlement view for your running activities.</p>
+        <div class="metric-grid report-metric-grid">
+          ${metrics.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${money(value)}</strong></div>`).join("")}
+        </div>
       </section>
     `;
   }
@@ -853,10 +884,14 @@
     if (button.dataset.view) {
       state.view = button.dataset.view;
       state.search = "";
-      if (state.view === "track" || state.view === "sale") {
+      if (state.view === "track" || state.view === "sale" || state.view === "reports") {
         try {
-          setLoading(true, state.view === "sale" ? "Loading activity stock..." : "Loading activities...");
-          await refreshActivities();
+          setLoading(true, state.view === "sale" ? "Loading activity stock..." : state.view === "reports" ? "Loading reports..." : "Loading activities...");
+          if (state.view === "reports") {
+            await Promise.all([refreshActivities(), refreshReports()]);
+          } else {
+            await refreshActivities();
+          }
           if (!state.saleActivityId && state.activities.length) {
             state.saleActivityId = state.activities[0].activityId || "";
           }
