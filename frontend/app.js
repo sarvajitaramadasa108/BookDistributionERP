@@ -582,6 +582,7 @@
                   <div class="row-actions">
                     ${canEditActivityLinkedDocument(row.activityId) ? `<button class="small-button" type="button" onclick="window.erpApp.openDocumentEditForm('${escapeAttribute(row.documentId)}')">Edit</button>` : ""}
                     <button class="small-button" type="button" onclick="window.erpApp.previewDocumentPdf('${escapeAttribute(row.documentId)}')">PDF</button>
+                    <button class="small-button" type="button" onclick="window.erpApp.downloadStockDocumentExcel('${escapeAttribute(row.documentId)}')">Excel</button>
                   </div>
                 </td>
               </tr>
@@ -8304,6 +8305,28 @@
     return start || end || "-";
   }
 
+  function getPreparedStockDocumentRows(detail) {
+    return (Array.isArray(detail?.lines) ? detail.lines : []).map((line) => {
+      const item = getItem(line.erpCode || line.rawItemId || "");
+      const quantity = Number(line.quantity || 0);
+      const fallbackRate = Number(line.salePrice || item.salePrice || item.mrp || item["Sale Price"] || 0);
+      const rate = Number(line.rate || fallbackRate || 0);
+      return {
+        ...line,
+        bookName: line.bookName || line.itemName || item.name || item.bookName || item["Book Name"] || "",
+        bookType: line.bookType || line.itemType || item.bookType || item.category || item["Book Type"] || "",
+        quantity,
+        rate,
+        amount: Number(line.amount || quantity * rate)
+      };
+    });
+  }
+
+  function stockDocumentFileName(detail, extension) {
+    const safeId = String(detail?.documentId || "stock-document").replace(/[\\/:*?"<>|]+/g, "_");
+    return `${safeId}.${extension}`;
+  }
+
   async function previewDocumentPdf(documentId) {
     if (!documentId) {
       showToast("Document not found");
@@ -8389,20 +8412,7 @@
         y += noteBoxHeight + 2;
       }
 
-      const rows = (Array.isArray(detail.lines) ? detail.lines : []).map((line) => {
-        const item = getItem(line.erpCode || line.rawItemId || "");
-        const quantity = Number(line.quantity || 0);
-        const fallbackRate = Number(line.salePrice || item.salePrice || item.mrp || item["Sale Price"] || 0);
-        const rate = Number(line.rate || fallbackRate || 0);
-        return {
-          ...line,
-          bookName: line.bookName || line.itemName || item.name || item.bookName || item["Book Name"] || "",
-          bookType: line.bookType || line.itemType || item.bookType || item.category || item["Book Type"] || "",
-          quantity,
-          rate,
-          amount: Number(line.amount || quantity * rate)
-        };
-      });
+      const rows = getPreparedStockDocumentRows(detail);
       const usesItems = rows.some((line) => String(line.itemGroup || "").toUpperCase() === "PARAPHERNALIA");
       const rowLabel = usesItems ? "Item" : "Book";
       const body = rows.map((line, index) => ([
@@ -8475,7 +8485,7 @@
         pdf.text(`Total Amount: ${money(totalAmount)}`, margin + 3, finalY + 13);
       }
 
-      const safeFileName = String(detail.documentId || "stock-document").replace(/[\\/:*?"<>|]+/g, "_");
+      const safeFileName = stockDocumentFileName(detail, "pdf").replace(/\.pdf$/i, "");
       const blob = pdf.output("blob");
       const url = URL.createObjectURL(blob);
       previewWindow.location.href = url;
@@ -8494,6 +8504,75 @@
 
   async function downloadDocumentPdf(documentId) {
     return previewDocumentPdf(documentId);
+  }
+
+  async function downloadStockDocumentExcel(documentId) {
+    if (!documentId) {
+      showToast("Document not found");
+      return;
+    }
+    if (!window.XLSX || !window.XLSX.utils) {
+      showToast("Excel library is not loaded");
+      return;
+    }
+    try {
+      setLoading(true);
+      await ensureDocumentItemMastersLoaded();
+      const detail = await window.erpApi.request("documents.detail", { documentId });
+      const rows = getPreparedStockDocumentRows(detail);
+      const totalQty = rows.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+      const totalAmount = rows.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+      const matrix = [
+        ["HARE KRISHNA MOVEMENT VISAKHAPATNAM"],
+        ["Stock Document"],
+        [],
+        ["Stock Doc ID", detail.documentId || ""],
+        ["Type", documentTypeLabel(detail.documentType)],
+        ["Date", toInputDate(detail.documentDate) || ""],
+        ["Status", detail.status || "Posted"],
+        ["Activity ID", detail.activityId || ""],
+        ["Activity Name", detail.activityName || ""],
+        ["From", detail.fromWarehouseName || detail.fromWarehouseId || ""],
+        ["To", detail.toWarehouseName || detail.toWarehouseId || ""],
+        ["Notes", detail.notes || ""],
+        [],
+        ["SNo", "ERP Code", "Item Name", "Category", "Qty", "Rate", "Amount"],
+        ...rows.map((line, index) => [
+          index + 1,
+          line.erpCode || "",
+          line.bookName || "",
+          line.bookType || "",
+          Number(line.quantity || 0),
+          Number(line.rate || 0),
+          Number(line.amount || 0)
+        ]),
+        [],
+        ["", "", "", "Total", totalQty, "", totalAmount]
+      ];
+      const sheet = window.XLSX.utils.aoa_to_sheet(matrix);
+      sheet["!cols"] = [
+        { wch: 10 },
+        { wch: 16 },
+        { wch: 42 },
+        { wch: 24 },
+        { wch: 10 },
+        { wch: 12 },
+        { wch: 14 }
+      ];
+      sheet["!autofilter"] = {
+        ref: window.XLSX.utils.encode_range({
+          s: { r: 13, c: 0 },
+          e: { r: Math.max(13, 13 + rows.length), c: 6 }
+        })
+      };
+      const workbook = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(workbook, sheet, "Stock Document");
+      window.XLSX.writeFile(workbook, stockDocumentFileName(detail, "xlsx"));
+    } catch (error) {
+      showToast(error.message || "Could not download stock document Excel");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function metric(label, value, note) {
@@ -8752,6 +8831,7 @@
     setSettledActivitySearch,
     previewDocumentPdf,
     downloadDocumentPdf,
+    downloadStockDocumentExcel,
     showPendingSettlementDetails,
     showSettledActivityDetails,
     markPendingSettlementReturnsComplete,
