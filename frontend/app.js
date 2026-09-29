@@ -244,6 +244,7 @@
             <div class="row-actions">
               <button class="small-button" type="button" onclick="document.getElementById('bookImportInput').click()">Import Excel</button>
               <button class="small-button" type="button" onclick="window.erpApp.downloadBookSample()">Download Sample</button>
+              <button class="small-button" type="button" onclick="window.erpApp.downloadCurrentStockMaster('BOOK')">Download Current Stock</button>
               <button class="button" type="button" onclick="window.erpApp.openBookForm()">Add Book</button>
             </div>
           ` : ""}
@@ -2207,6 +2208,7 @@
             <div class="row-actions">
               <button class="small-button" type="button" onclick="document.getElementById('devotionalImportInput').click()">Import Excel</button>
               <button class="small-button" type="button" onclick="window.erpApp.downloadDevotionalItemSample()">Download Sample</button>
+              <button class="small-button" type="button" onclick="window.erpApp.downloadCurrentStockMaster('PARAPHERNALIA')">Download Current Stock</button>
               <button class="button" type="button" onclick="window.erpApp.openDevotionalItemForm()">Add Item</button>
             </div>
           ` : ""}
@@ -6289,6 +6291,79 @@
     URL.revokeObjectURL(url);
   }
 
+  async function downloadCurrentStockMaster(itemGroup) {
+    const normalizedGroup = normalizeItemGroup(itemGroup || "BOOK");
+    const isBookGroup = normalizedGroup === "BOOK";
+    if (!window.XLSX || !window.XLSX.utils) {
+      showToast("Excel library is not loaded");
+      return;
+    }
+    try {
+      setLoading(true);
+      if (isBookGroup && !state.books.length) {
+        state.books = await window.erpApi.request(isMainAdmin() ? "books.adminList" : "books.list");
+      }
+      if (!isBookGroup && !state.devotionalItems.length) {
+        state.devotionalItems = await window.erpApi.request(isMainAdmin() ? "items.adminList" : "items.list", { itemGroup: "PARAPHERNALIA" });
+      }
+      if (!state.warehouses.length) {
+        state.warehouses = await window.erpApi.request("warehouses.list");
+      }
+      await loadCurrentStock();
+
+      const items = (isBookGroup ? state.books : state.devotionalItems)
+        .slice()
+        .sort((a, b) => String(a.erpCode || a.bookId || "").localeCompare(String(b.erpCode || b.bookId || "")));
+      const warehouses = state.warehouses
+        .filter((warehouse) => warehouse.active !== false)
+        .slice()
+        .sort((a, b) => String(a.name || a.warehouseId || "").localeCompare(String(b.name || b.warehouseId || "")));
+      const stockByKey = new Map();
+      for (const row of state.currentStock || []) {
+        const key = `${String(row.bookId || "").trim()}|${String(row.warehouseId || "").trim()}`;
+        stockByKey.set(key, Number(row.quantity || 0));
+      }
+
+      const header = ["ERP Code", isBookGroup ? "Book Name" : "Item Name", isBookGroup ? "Book Type" : "Item Type", "Sale Price", ...warehouses.map((warehouse) => warehouse.name || warehouse.warehouseId), "Total Qty"];
+      const rows = [header];
+      for (const item of items) {
+        const code = item.erpCode || item.bookId || "";
+        const warehouseQtys = warehouses.map((warehouse) => Number(stockByKey.get(`${code}|${warehouse.warehouseId}`) || 0));
+        rows.push([
+          code,
+          item.name || item.bookName || "",
+          item.bookType || item.category || "",
+          Number(item.salePrice || 0),
+          ...warehouseQtys,
+          warehouseQtys.reduce((sum, value) => sum + Number(value || 0), 0)
+        ]);
+      }
+
+      const sheet = window.XLSX.utils.aoa_to_sheet(rows);
+      const colWidths = [
+        { wch: 14 },
+        { wch: 42 },
+        { wch: 24 },
+        { wch: 12 },
+        ...warehouses.map((warehouse) => ({ wch: Math.max(12, Math.min(26, String(warehouse.name || warehouse.warehouseId || "").length + 2)) })),
+        { wch: 12 }
+      ];
+      sheet["!cols"] = colWidths;
+      sheet["!autofilter"] = { ref: window.XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length - 1, c: header.length - 1 } }) };
+      const workbook = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(workbook, sheet, isBookGroup ? "Book Stock" : "Devotional Stock");
+      const today = new Date().toISOString().slice(0, 10);
+      const filename = isBookGroup
+        ? `book-current-stock-${today}.xlsx`
+        : `devotional-current-stock-${today}.xlsx`;
+      window.XLSX.writeFile(workbook, filename);
+    } catch (error) {
+      showToast(error.message || "Could not download current stock");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function importBookFile(file) {
     if (!file) return;
     try {
@@ -8604,6 +8679,7 @@
     logout,
     navigate,
     downloadBookSample,
+    downloadCurrentStockMaster,
     importBookFile,
     downloadDevotionalItemSample,
     importDevotionalItemFile,
