@@ -3943,6 +3943,119 @@ async function getActivityMonthlyReport(supabase, payload) {
   };
 }
 
+async function getActivityDocumentReport(supabase, payload) {
+  const activityRef = String(payload.activityId || "").trim();
+  if (!activityRef) throw new Error("Activity is required");
+  const { data: activities } = await supabase.from("activities").select("*");
+  const { data: devotees } = await supabase.from("devotees").select("*");
+  const { data: warehouses } = await supabase.from("warehouses").select("*");
+  const { data: items } = await supabase.from("items").select("*");
+  const { data: documents } = await supabase.from("documents").select("*");
+  const { data: lines } = await supabase.from("document_lines").select("*");
+  const activity = (activities || []).find((row) => row.activity_code === activityRef || row.id === activityRef);
+  if (!activity) throw new Error("Activity not found");
+  const itemById = Object.fromEntries((items || []).map((row) => [row.id, row]));
+  const devoteeById = Object.fromEntries((devotees || []).map((row) => [row.id, row]));
+  const warehouseById = Object.fromEntries((warehouses || []).map((row) => [row.id, row]));
+  const docs = (documents || [])
+    .filter((doc) => doc.activity_id === activity.id && isCountableDocument(doc))
+    .sort((a, b) => String(a.document_date || "").localeCompare(String(b.document_date || "")) || String(a.document_code || "").localeCompare(String(b.document_code || "")));
+  const docIds = new Set(docs.map((doc) => doc.id));
+  const documentRows = docs.map((doc) => ({
+    documentId: doc.document_code,
+    documentType: doc.document_type,
+    documentDate: doc.document_date,
+    status: doc.status,
+    notes: doc.notes || "",
+    fromWarehouseName: warehouseById[doc.from_warehouse_id || ""]?.warehouse_name || "",
+    toWarehouseName: warehouseById[doc.to_warehouse_id || ""]?.warehouse_name || ""
+  }));
+  const index = new Map();
+  for (const line of lines || []) {
+    if (!docIds.has(line.document_id)) continue;
+    const doc = docs.find((row) => row.id === line.document_id);
+    if (!doc) continue;
+    const item = itemById[line.item_id] || {};
+    const key = item.erp_code || line.item_id;
+    const qty = Number(line.quantity || 0);
+    const rate = Number(line.rate || item.sale_price || 0);
+    const row = index.get(key) || {
+      bookId: item.erp_code || line.item_id,
+      bookName: item.item_name || line.item_id,
+      bookType: item.item_type || "",
+      itemGroup: item.item_group || "BOOK",
+      salePrice: Number(item.sale_price || 0),
+      issueQty: 0,
+      returnQty: 0,
+      saleQty: 0,
+      complimentaryQty: 0,
+      adjustmentQty: 0,
+      docMap: {}
+    };
+    if (!row.docMap[doc.document_code]) {
+      row.docMap[doc.document_code] = {
+        documentId: doc.document_code,
+        documentType: doc.document_type,
+        documentDate: doc.document_date,
+        quantity: 0
+      };
+    }
+    row.docMap[doc.document_code].quantity += qty;
+    if (doc.document_type === "ISSUE" || doc.document_type === "UNSETTLED_OPENING") {
+      row.issueQty += qty;
+    } else if (doc.document_type === "RETURN") {
+      row.returnQty += qty;
+    } else if (doc.document_type === "SALE") {
+      row.saleQty += qty;
+    } else if (doc.document_type === "COMPLIMENTARY") {
+      row.complimentaryQty += qty;
+    } else if (doc.document_type === "ADJUSTMENT") {
+      row.adjustmentQty += qty;
+    }
+    index.set(key, row);
+  }
+  const rows = Array.from(index.values())
+    .map((row) => {
+      const balanceQty = Number(row.issueQty || 0) - Number(row.returnQty || 0) - Number(row.saleQty || 0) - Number(row.complimentaryQty || 0);
+      return {
+        ...row,
+        balanceQty,
+        worth: balanceQty * Number(row.salePrice || 0),
+        docMapArray: documentRows.map((doc) => ({
+          ...doc,
+          quantity: Number(row.docMap[doc.documentId]?.quantity || 0)
+        }))
+      };
+    })
+    .sort((a, b) => {
+      const groupA = String(a.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
+      const groupB = String(b.itemGroup || "BOOK").toUpperCase() === "BOOK" ? 0 : 1;
+      return groupA - groupB || String(a.bookName || "").localeCompare(String(b.bookName || "")) || String(a.bookId || "").localeCompare(String(b.bookId || ""));
+    });
+  const totals = rows.reduce((acc, row) => {
+    acc.issueQty += Number(row.issueQty || 0);
+    acc.returnQty += Number(row.returnQty || 0);
+    acc.saleQty += Number(row.saleQty || 0);
+    acc.complimentaryQty += Number(row.complimentaryQty || 0);
+    acc.adjustmentQty += Number(row.adjustmentQty || 0);
+    acc.balanceQty += Number(row.balanceQty || 0);
+    acc.worth += Number(row.worth || 0);
+    return acc;
+  }, { issueQty: 0, returnQty: 0, saleQty: 0, complimentaryQty: 0, adjustmentQty: 0, balanceQty: 0, worth: 0 });
+  return {
+    activityId: activity.activity_code,
+    activityName: activity.activity_name,
+    activityStatus: activity.status,
+    devoteeId: devoteeById[activity.devotee_id]?.devotee_code || activity.devotee_id || "",
+    devoteeName: devoteeById[activity.devotee_id]?.devotee_name || "",
+    warehouseId: activity.warehouse_id || "",
+    warehouseName: warehouseById[activity.warehouse_id]?.warehouse_name || "",
+    documents: documentRows,
+    rows,
+    totals
+  };
+}
+
 function monthEnd(month) {
   const [y, m] = String(month || "").split("-").map(Number);
   const d = new Date(y || new Date().getFullYear(), (m || 1), 0);
@@ -4370,6 +4483,8 @@ async function main(request) {
         return json(200, { ok: true, data: await getActivityLedger(supabase, payload) });
       case "reports.activityMonthly":
         return json(200, { ok: true, data: await getActivityMonthlyReport(supabase, payload) });
+      case "reports.activityDocuments":
+        return json(200, { ok: true, data: await getActivityDocumentReport(supabase, payload) });
       case "reports.warehouseMonthly":
         return json(200, { ok: true, data: await getWarehouseMonthlyReport(supabase, payload) });
       case "onlineClasses.submit":

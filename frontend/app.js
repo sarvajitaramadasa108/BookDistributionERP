@@ -78,6 +78,7 @@
     complimentaryReportActivityId: "",
     activityComplimentary: [],
     documentsMode: "entries",
+    stockDocumentActivityReportId: "",
     pendingSettlements: [],
     settledActivities: [],
     pendingSettlementSearch: "",
@@ -1370,6 +1371,10 @@
     state.settledActivityId = "";
     state.settledActivityDetails = null;
     content.innerHTML = renderDocumentsMarkup();
+  }
+
+  function setStockDocumentActivityReport(value) {
+    state.stockDocumentActivityReportId = value || "";
   }
 
   function setPendingSettlementSearch(value) {
@@ -3180,6 +3185,24 @@
     `;
   }
 
+  function stockActivityReportControlsMarkup() {
+    const activities = (state.activities || [])
+      .slice()
+      .sort((a, b) => String(a.name || a.activityId || "").localeCompare(String(b.name || b.activityId || "")));
+    return `
+      <div class="toolbar" style="margin-bottom:12px;">
+        <label class="field compact-field">
+          <span>Activity Report</span>
+          <select onchange="window.erpApp.setStockDocumentActivityReport(this.value)">
+            <option value="">Select activity</option>
+            ${activities.map((activity) => `<option value="${escapeAttribute(activity.activityId)}" ${state.stockDocumentActivityReportId === activity.activityId ? "selected" : ""}>${escapeHtml(`${activity.name || activity.activityId} (${activity.status || "-"})`)}</option>`).join("")}
+          </select>
+        </label>
+        <button class="button secondary" type="button" onclick="window.erpApp.downloadStockActivityReport()">Download Activity Report</button>
+      </div>
+    `;
+  }
+
   function getSelectedStockDocumentWarehouseId() {
     const selected = state.warehouses.find((warehouse) => warehouse.warehouseId === state.stockDocumentWarehouseFilter);
     return selected ? selected.warehouseId : "";
@@ -3251,6 +3274,7 @@
               ${metric("Return", "In", "Returned books restored or marked damaged")}
             </div>
             <div class="section-gap">
+              ${stockActivityReportControlsMarkup()}
               <div class="row-actions" style="margin-bottom:12px;">
                 <button class="button secondary" type="button" onclick="window.erpApp.openOpeningStockForm()">Opening Stock Entry</button>
                 <button class="button secondary" type="button" onclick="window.erpApp.openUnsettledOpeningForm()">Unsettled Issue Entry</button>
@@ -8575,6 +8599,115 @@
     }
   }
 
+  async function downloadStockActivityReport() {
+    const activityId = String(state.stockDocumentActivityReportId || "").trim();
+    if (!activityId) {
+      showToast("Select an activity first");
+      return;
+    }
+    if (!window.XLSX || !window.XLSX.utils) {
+      showToast("Excel library is not loaded");
+      return;
+    }
+    try {
+      setLoading(true);
+      const report = await window.erpApi.request("reports.activityDocuments", { activityId });
+      const docs = Array.isArray(report.documents) ? report.documents : [];
+      const rows = Array.isArray(report.rows) ? report.rows : [];
+      const header = [
+        "ERP Code",
+        "Item Name",
+        "Category",
+        "Sale Price",
+        "Issue Qty",
+        "Return Qty",
+        "Sale Qty",
+        "Complimentary Qty",
+        "Adjustment Qty",
+        "Balance Qty",
+        "Balance Worth",
+        ...docs.map((doc) => `${doc.documentId} ${doc.documentType} ${doc.documentDate || ""}`.trim())
+      ];
+      const docTotals = docs.map((doc) => rows.reduce((sum, row) => {
+        const docRow = (row.docMapArray || []).find((entry) => entry.documentId === doc.documentId);
+        return sum + Number(docRow?.quantity || 0);
+      }, 0));
+      const matrix = [
+        ["HARE KRISHNA MOVEMENT VISAKHAPATNAM"],
+        ["Activity Stock Document Report"],
+        [],
+        ["Activity ID", report.activityId || ""],
+        ["Activity Name", report.activityName || ""],
+        ["Status", report.activityStatus || ""],
+        ["Devotee", report.devoteeName || report.devoteeId || ""],
+        ["Warehouse", report.warehouseName || report.warehouseId || ""],
+        ["Documents", docs.length],
+        [],
+        header,
+        [
+          "",
+          "",
+          "TOTAL",
+          "",
+          Number(report.totals?.issueQty || 0),
+          Number(report.totals?.returnQty || 0),
+          Number(report.totals?.saleQty || 0),
+          Number(report.totals?.complimentaryQty || 0),
+          Number(report.totals?.adjustmentQty || 0),
+          Number(report.totals?.balanceQty || 0),
+          Number(report.totals?.worth || 0),
+          ...docTotals
+        ],
+        ...rows.map((row) => [
+          row.bookId || "",
+          row.bookName || "",
+          getItemGroupLabel(row.itemGroup),
+          Number(row.salePrice || 0),
+          Number(row.issueQty || 0),
+          Number(row.returnQty || 0),
+          Number(row.saleQty || 0),
+          Number(row.complimentaryQty || 0),
+          Number(row.adjustmentQty || 0),
+          Number(row.balanceQty || 0),
+          Number(row.worth || 0),
+          ...docs.map((doc) => {
+            const docRow = (row.docMapArray || []).find((entry) => entry.documentId === doc.documentId);
+            return Number(docRow?.quantity || 0);
+          })
+        ])
+      ];
+      const sheet = window.XLSX.utils.aoa_to_sheet(matrix);
+      sheet["!cols"] = [
+        { wch: 16 },
+        { wch: 42 },
+        { wch: 22 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 16 },
+        { wch: 16 },
+        { wch: 12 },
+        { wch: 14 },
+        ...docs.map(() => ({ wch: 20 }))
+      ];
+      sheet["!autofilter"] = {
+        ref: window.XLSX.utils.encode_range({
+          s: { r: 10, c: 0 },
+          e: { r: Math.max(10, 11 + rows.length), c: header.length - 1 }
+        })
+      };
+      const workbook = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(workbook, sheet, "Activity Report");
+      const safeName = String(report.activityName || report.activityId || "activity").replace(/[^\w.-]+/g, "_");
+      window.XLSX.writeFile(workbook, `${safeName}-stock-doc-report.xlsx`);
+    } catch (error) {
+      showToast(error.message || "Could not download activity report");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function metric(label, value, note) {
     return `
       <article class="card metric-card">
@@ -8827,11 +8960,13 @@
     setDocumentsMode,
     setDocumentSearch,
     setStockDocumentWarehouseFilter,
+    setStockDocumentActivityReport,
     setPendingSettlementSearch,
     setSettledActivitySearch,
     previewDocumentPdf,
     downloadDocumentPdf,
     downloadStockDocumentExcel,
+    downloadStockActivityReport,
     showPendingSettlementDetails,
     showSettledActivityDetails,
     markPendingSettlementReturnsComplete,
