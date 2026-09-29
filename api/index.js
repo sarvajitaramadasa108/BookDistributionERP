@@ -1529,6 +1529,56 @@ async function correctDocument(supabase, payload, currentUser) {
   };
 }
 
+async function deleteDuplicateReturnDocuments(supabase, payload, currentUser) {
+  requireAdminUser(currentUser);
+  const keepDocumentId = String(payload.keepDocumentId || "").trim();
+  const deleteDocumentIds = (Array.isArray(payload.deleteDocumentIds) ? payload.deleteDocumentIds : [])
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  if (!keepDocumentId) throw new Error("Document to keep is required");
+  if (!deleteDocumentIds.length) throw new Error("At least one duplicate return document is required");
+  if (deleteDocumentIds.includes(keepDocumentId)) throw new Error("Document to keep cannot be deleted");
+
+  const refs = [keepDocumentId, ...deleteDocumentIds];
+  const { data: docs, error: docsError } = await supabase
+    .from("documents")
+    .select("id, document_code, document_type, activity_id, from_warehouse_id, to_warehouse_id, document_date")
+    .in("document_code", refs);
+  if (docsError) throw docsError;
+  const docsByCode = new Map((docs || []).map((doc) => [doc.document_code, doc]));
+  const missing = refs.filter((ref) => !docsByCode.has(ref));
+  if (missing.length) throw new Error(`Document not found: ${missing.join(", ")}`);
+
+  const keepDoc = docsByCode.get(keepDocumentId);
+  if (String(keepDoc.document_type || "").toUpperCase() !== "RETURN") {
+    throw new Error("Document to keep must be a return document");
+  }
+  for (const ref of deleteDocumentIds) {
+    const doc = docsByCode.get(ref);
+    if (String(doc.document_type || "").toUpperCase() !== "RETURN") {
+      throw new Error(`${ref} is not a return document`);
+    }
+    if (String(doc.activity_id || "") !== String(keepDoc.activity_id || "")) {
+      throw new Error(`${ref} belongs to a different activity`);
+    }
+    if (String(doc.to_warehouse_id || "") !== String(keepDoc.to_warehouse_id || "")) {
+      throw new Error(`${ref} returns to a different warehouse`);
+    }
+  }
+
+  const deleteRowIds = deleteDocumentIds.map((ref) => docsByCode.get(ref).id);
+  const { error: deleteError } = await supabase.from("documents").delete().in("id", deleteRowIds);
+  if (deleteError) throw deleteError;
+  if (keepDoc.activity_id) {
+    await syncActivitySettlementStatus(supabase, keepDoc.activity_id);
+  }
+  return {
+    keptDocumentId: keepDocumentId,
+    deletedDocumentIds,
+    deletedCount: deleteDocumentIds.length
+  };
+}
+
 async function importUnsettledOpeningDocuments(supabase, payload, currentUser) {
   const entries = Array.isArray(payload.entries) ? payload.entries : [];
   if (!entries.length) throw new Error("At least one activity entry is required");
@@ -4243,6 +4293,8 @@ async function main(request) {
       case "documents.correct":
         requireAdminUser(currentUser);
         return json(200, { ok: true, data: await correctDocument(supabase, payload, currentUser) });
+      case "documents.deleteDuplicateReturns":
+        return json(200, { ok: true, data: await deleteDuplicateReturnDocuments(supabase, payload, currentUser) });
       case "documents.importUnsettledOpening":
         return json(200, { ok: true, data: await importUnsettledOpeningDocuments(supabase, payload, currentUser) });
       case "documents.importActivityBulk":
