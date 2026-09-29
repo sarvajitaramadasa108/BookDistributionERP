@@ -1574,7 +1574,7 @@ async function deleteDuplicateReturnDocuments(supabase, payload, currentUser) {
   }
   return {
     keptDocumentId: keepDocumentId,
-    deletedDocumentIds,
+    deletedDocumentIds: deleteDocumentIds,
     deletedCount: deleteDocumentIds.length
   };
 }
