@@ -3148,16 +3148,16 @@
 
   function getWarehouseScopedPendingSettlements() {
     const warehouseFilter = String(state.stockDocumentWarehouseFilter || "").trim();
-    if (!warehouseFilter) return [];
+    if (!warehouseFilter) return getFilteredPendingSettlements();
     const selected = state.warehouses.find((warehouse) => warehouse.warehouseId === warehouseFilter || warehouse.rowId === warehouseFilter) || {};
-    return (state.pendingSettlements || []).filter((row) =>
+    return getFilteredPendingSettlements().filter((row) =>
       [row.warehouseId, row.warehouseCode, row.warehouseName].some((value) => [warehouseFilter, selected.rowId, selected.name].includes(String(value || "")))
     );
   }
 
   function getWarehouseScopedSettledActivities() {
     const warehouseFilter = String(state.stockDocumentWarehouseFilter || "").trim();
-    if (!warehouseFilter) return [];
+    if (!warehouseFilter) return getFilteredSettledActivities();
     const selected = state.warehouses.find((warehouse) => warehouse.warehouseId === warehouseFilter || warehouse.rowId === warehouseFilter) || {};
     return getFilteredSettledActivities().filter((row) =>
       [row.warehouseId, row.warehouseCode, row.warehouseName].some((value) => [warehouseFilter, selected.rowId, selected.name].includes(String(value || "")))
@@ -3169,9 +3169,9 @@
     return `
       <div class="toolbar" style="margin-bottom:12px;">
         <label class="field compact-field">
-          <span>Select Warehouse</span>
+          <span>Filter by Warehouse</span>
           <select onchange="window.erpApp.setStockDocumentWarehouseFilter(this.value)">
-            <option value="">Select warehouse</option>
+            <option value="">All warehouses</option>
             ${activeWarehouses.map((warehouse) => `<option value="${escapeAttribute(warehouse.warehouseId)}" ${state.stockDocumentWarehouseFilter === warehouse.warehouseId ? "selected" : ""}>${escapeHtml(warehouse.name || warehouse.warehouseId)}</option>`).join("")}
           </select>
         </label>
@@ -3194,7 +3194,6 @@
     const rows = getFilteredDocumentRows();
     const pendingRows = getWarehouseScopedPendingSettlements();
     const settledRows = getWarehouseScopedSettledActivities();
-    const selectedWarehouse = state.warehouses.find((warehouse) => warehouse.warehouseId === state.stockDocumentWarehouseFilter);
     return `
       <section class="card">
         <div class="panel-header">
@@ -3207,7 +3206,6 @@
         </div>
         <div class="panel-body">
           ${stockWarehouseSelectorMarkup()}
-          ${!selectedWarehouse ? '<div class="empty-state">Select a warehouse to view and operate stock documents.</div>' : `
           ${state.documentsMode === "pending" ? `
             <div class="grid metrics">
               ${metric("Pending Activities", pendingRows.length, "Completed activities with settlement dues")}
@@ -3223,15 +3221,15 @@
                     <input id="pendingSettlementSearchInput" type="search" value="${escapeAttribute(state.pendingSettlementSearch)}" placeholder="Search activity or devotee" oninput="window.erpApp.setPendingSettlementSearch(this.value)">
                   </label>
                 </div>
-                ${pendingSettlementSummaryMarkup(getFilteredPendingSettlements().filter((row) => pendingRows.some((pending) => pending.activityId === row.activityId)))}
+                ${pendingSettlementSummaryMarkup(pendingRows)}
               `}
             </div>
           ` : state.documentsMode === "settled" ? `
             <div class="grid metrics">
-              ${metric("Settled Activities", state.settledActivities.length, "Activities fully settled")}
-              ${metric("Settled Amount", money(state.settledActivities.reduce((sum, row) => sum + Number(row.summary?.saleDueAmount || 0), 0)), "Total settled sale value")}
-              ${metric("Paid Total", money(state.settledActivities.reduce((sum, row) => sum + Number(row.summary?.paidTotalAmount || 0), 0)), "Cash plus online received")}
-              ${metric("Complimentary Qty", state.settledActivities.reduce((sum, row) => sum + Number(row.summary?.complimentaryQty || 0), 0), "Marked complimentary across settled activities")}
+              ${metric("Settled Activities", settledRows.length, "Activities fully settled")}
+              ${metric("Settled Amount", money(settledRows.reduce((sum, row) => sum + Number(row.summary?.saleDueAmount || 0), 0)), "Total settled sale value")}
+              ${metric("Paid Total", money(settledRows.reduce((sum, row) => sum + Number(row.summary?.paidTotalAmount || 0), 0)), "Cash plus online received")}
+              ${metric("Complimentary Qty", settledRows.reduce((sum, row) => sum + Number(row.summary?.complimentaryQty || 0), 0), "Marked complimentary across settled activities")}
             </div>
             <div class="section-gap">
               ${state.settledActivityId ? settledActivityDetailMarkup(state.settledActivityDetails) : `
@@ -3270,7 +3268,6 @@
               </div>
               ${rows.length ? documentsTable(rows) : '<div class="empty-state">No stock documents found.</div>'}
             </div>
-          `}
           `}
         </div>
       </section>
