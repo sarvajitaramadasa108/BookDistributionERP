@@ -1126,6 +1126,10 @@ async function documentDetail(supabase, payload) {
   const activityById = Object.fromEntries((activitiesResult.data || []).map((row) => [row.id, row]));
   const lines = (linesResult.data || []).map((line, index) => {
     const item = itemById[line.item_id] || {};
+    const quantity = Number(line.quantity || 0);
+    const masterSalePrice = Number(item.sale_price || 0);
+    const rate = Number(line.rate || masterSalePrice || 0);
+    const amount = Number(line.amount || quantity * rate);
     return {
       lineId: line.id,
       lineNo: Number(line.line_no || index + 1),
@@ -1133,9 +1137,10 @@ async function documentDetail(supabase, payload) {
       bookName: item.item_name || "",
       bookType: item.item_type || "",
       itemGroup: item.item_group || "",
-      quantity: Number(line.quantity || 0),
-      rate: Number(line.rate || 0),
-      amount: Number(line.amount || Number(line.quantity || 0) * Number(line.rate || 0)),
+      quantity,
+      rate,
+      amount,
+      salePrice: masterSalePrice,
       notes: line.line_notes || "",
       rawItemId: line.item_id || ""
     };

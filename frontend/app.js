@@ -8389,7 +8389,20 @@
         y += noteBoxHeight + 2;
       }
 
-      const rows = Array.isArray(detail.lines) ? detail.lines : [];
+      const rows = (Array.isArray(detail.lines) ? detail.lines : []).map((line) => {
+        const item = getItem(line.erpCode || line.rawItemId || "");
+        const quantity = Number(line.quantity || 0);
+        const fallbackRate = Number(line.salePrice || item.salePrice || item.mrp || item["Sale Price"] || 0);
+        const rate = Number(line.rate || fallbackRate || 0);
+        return {
+          ...line,
+          bookName: line.bookName || line.itemName || item.name || item.bookName || item["Book Name"] || "",
+          bookType: line.bookType || line.itemType || item.bookType || item.category || item["Book Type"] || "",
+          quantity,
+          rate,
+          amount: Number(line.amount || quantity * rate)
+        };
+      });
       const usesItems = rows.some((line) => String(line.itemGroup || "").toUpperCase() === "PARAPHERNALIA");
       const rowLabel = usesItems ? "Item" : "Book";
       const body = rows.map((line, index) => ([
