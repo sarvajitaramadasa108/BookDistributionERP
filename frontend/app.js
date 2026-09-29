@@ -7935,7 +7935,7 @@
 
   function renderTransferModal() {
     const itemGroup = normalizeItemGroup(state.transferDraft.itemGroup || "BOOK");
-    const activeWarehouses = scopeStockDocumentWarehouses(state.warehouses);
+    const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active !== false);
     const draft = state.transferDraft;
     const fromWarehouseId = draft.fromWarehouseId || "";
     const hasAnyItems = state.books.some((item) => item.active !== false) || state.devotionalItems.some((item) => item.active !== false);
