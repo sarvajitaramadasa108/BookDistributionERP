@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { applyCors } from "./_cors.js";
 import { createClient } from "@supabase/supabase-js";
 import { BOOK_IMAGE_MAP } from "./book-image-map.js";
 import { DEVOTIONAL_IMAGE_MAP } from "./devotional-image-map.js";
@@ -4652,6 +4653,7 @@ async function main(request) {
 }
 
 export default async function handler(req, res) {
+  if (applyCors(req, res)) return;
   try {
     const method = String(req.method || "GET").toUpperCase();
     const bodyBuffer = method === "GET" || method === "HEAD" ? Buffer.alloc(0) : await readNodeBody(req);

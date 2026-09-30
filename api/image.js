@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { applyCors } from "./_cors.js";
 
 export const config = {
   runtime: "nodejs"
@@ -50,6 +51,7 @@ async function fetchImage(candidate) {
 }
 
 export default async function handler(req, res) {
+  if (applyCors(req, res)) return;
   try {
     const url = new URL(req.url, `https://${req.headers.host || "localhost"}`);
     const raw = decodeUrl(url.searchParams.get("url"));

@@ -7,7 +7,7 @@ Web-based ERP for managing book distribution, warehouse stock movement, activiti
 - Frontend: HTML, CSS, JavaScript
 - Backend: Google Apps Script
 - Database: Google Sheets
-- Hosting: Vercel
+- Hosting: Vercel (this repo is the API only; the frontend lives in HkmVizagTech/bdfrontend)
 
 ## Project Structure
 
