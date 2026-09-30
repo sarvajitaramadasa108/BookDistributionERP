@@ -344,6 +344,31 @@
     state.activityStock = await api("publicTest.activityStock", profilePayload({ activityId: selected }));
   }
 
+  async function reloadCurrentView() {
+    try {
+      setLoading(true, "Refreshing...");
+      await loadHomeData();
+      if (state.view === "pending") {
+        await Promise.all([refreshPendingRequests(), refreshNotifications()]);
+      }
+      if (state.view === "reports") {
+        await refreshReports();
+      }
+      if (state.view === "sale" && state.saleActivityId) {
+        await loadActivityStock(state.saleActivityId);
+      }
+      if ((state.view === "request" || state.view === "requestCart") && state.requestKind === "RETURN" && state.selectedReturnActivityId) {
+        await loadActivityStock(state.selectedReturnActivityId);
+      }
+      render();
+      showToast("Reloaded");
+    } catch (error) {
+      showToast(error.message || "Could not reload");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function filteredCatalog() {
     const search = normalizeText(state.search);
     return requestCatalogRows().filter((item) => {
@@ -617,7 +642,10 @@
             <h1>Distribution Track</h1>
           </div>
         </div>
-        <button class="button secondary small-button" data-action="logoutProfile">Change Phone</button>
+        <div class="row-actions">
+          <button class="button secondary small-button" data-action="reloadCurrentView">Reload</button>
+          <button class="button secondary small-button" data-action="logoutProfile">Change Phone</button>
+        </div>
       </header>
       <button class="test-menu-backdrop ${state.menuOpen ? "open" : ""}" type="button" data-action="closeMenu" aria-label="Close menu"></button>
       <aside class="test-side-menu ${state.menuOpen ? "open" : ""}" aria-hidden="${state.menuOpen ? "false" : "true"}">
@@ -1138,6 +1166,7 @@
       state.menuOpen = false;
       render();
     }
+    if (action === "reloadCurrentView") await reloadCurrentView();
     if (action === "showRequestCart") {
       state.view = "requestCart";
       render();
@@ -1270,7 +1299,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=4").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=5").catch(() => {});
   }
 
   render();

@@ -190,6 +190,11 @@
     }
   }
 
+  async function reloadCurrentView() {
+    await navigate(state.view || "dashboard");
+    showToast("Reloaded");
+  }
+
   async function renderDashboard() {
     const data = await window.erpApi.request("dashboard.summary");
     return `
@@ -9021,6 +9026,7 @@
     toast: showToast,
     logout,
     navigate,
+    reloadCurrentView,
     downloadBookSample,
     downloadCurrentStockMaster,
     importBookFile,
