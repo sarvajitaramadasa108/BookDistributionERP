@@ -3346,11 +3346,13 @@ async function publicSubmitActivitySale(supabase, payload) {
 
 async function getActivityUnsettled(supabase, options = {}) {
   const includeCompleted = Boolean(options.includeCompleted);
-  const { data: documents } = await supabase.from("documents").select("*");
-  const { data: lines } = await supabase.from("document_lines").select("*");
-  const { data: activities } = await supabase.from("activities").select("*");
-  const { data: items } = await supabase.from("items").select("*");
-  const { data: devotees } = await supabase.from("devotees").select("*");
+  const [documents, lines, activities, items, devotees] = await Promise.all([
+    selectAllRows((from, to) => supabase.from("documents").select("*").range(from, to)),
+    selectAllRows((from, to) => supabase.from("document_lines").select("*").range(from, to)),
+    selectAllRows((from, to) => supabase.from("activities").select("*").range(from, to)),
+    selectAllRows((from, to) => supabase.from("items").select("*").range(from, to)),
+    selectAllRows((from, to) => supabase.from("devotees").select("*").range(from, to))
+  ]);
   const activityById = Object.fromEntries((activities || []).map((row) => [row.id, row]));
   const itemById = Object.fromEntries((items || []).map((row) => [row.id, row]));
   const devoteeById = Object.fromEntries((devotees || []).map((row) => [row.id, row]));
@@ -3447,30 +3449,23 @@ async function getActivityComplimentary(supabase) {
 }
 
 async function getSettlementContext(supabase) {
-  const [activitiesResult, documentsResult, linesResult, itemsResult, devoteesResult, warehousesResult, paymentsResult] = await Promise.all([
-    supabase.from("activities").select("*"),
-    supabase.from("documents").select("*"),
-    supabase.from("document_lines").select("*"),
-    supabase.from("items").select("*"),
-    supabase.from("devotees").select("*"),
-    supabase.from("warehouses").select("*"),
-    supabase.from("activity_settlement_payments").select("*")
+  const [activities, documents, lines, items, devotees, warehouses, payments] = await Promise.all([
+    selectAllRows((from, to) => supabase.from("activities").select("*").range(from, to)),
+    selectAllRows((from, to) => supabase.from("documents").select("*").range(from, to)),
+    selectAllRows((from, to) => supabase.from("document_lines").select("*").range(from, to)),
+    selectAllRows((from, to) => supabase.from("items").select("*").range(from, to)),
+    selectAllRows((from, to) => supabase.from("devotees").select("*").range(from, to)),
+    selectAllRows((from, to) => supabase.from("warehouses").select("*").range(from, to)),
+    selectAllRows((from, to) => supabase.from("activity_settlement_payments").select("*").range(from, to))
   ]);
-  if (activitiesResult.error) throw activitiesResult.error;
-  if (documentsResult.error) throw documentsResult.error;
-  if (linesResult.error) throw linesResult.error;
-  if (itemsResult.error) throw itemsResult.error;
-  if (devoteesResult.error) throw devoteesResult.error;
-  if (warehousesResult.error) throw warehousesResult.error;
-  if (paymentsResult.error) throw paymentsResult.error;
   return {
-    activities: activitiesResult.data || [],
-    documents: documentsResult.data || [],
-    lines: linesResult.data || [],
-    items: itemsResult.data || [],
-    devotees: devoteesResult.data || [],
-    warehouses: warehousesResult.data || [],
-    payments: paymentsResult.data || []
+    activities: activities || [],
+    documents: documents || [],
+    lines: lines || [],
+    items: items || [],
+    devotees: devotees || [],
+    warehouses: warehouses || [],
+    payments: payments || []
   };
 }
 
