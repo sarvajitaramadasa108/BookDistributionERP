@@ -647,7 +647,7 @@
           </div>
         </div>
       </header>
-      <button class="button secondary small-button test-reload-floating" data-action="reloadCurrentView">Reload</button>
+      <div class="floating-request-actions reload-floating-actions"><button class="segment active" data-action="reloadCurrentView">Reload</button></div>
       <button class="test-menu-backdrop ${state.menuOpen ? "open" : ""}" type="button" data-action="closeMenu" aria-label="Close menu"></button>
       <aside class="test-side-menu ${state.menuOpen ? "open" : ""}" aria-hidden="${state.menuOpen ? "false" : "true"}">
         <div class="test-side-menu-header">
@@ -1318,7 +1318,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=7").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=8").catch(() => {});
   }
 
   render();
