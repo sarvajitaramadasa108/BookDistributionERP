@@ -935,12 +935,15 @@
       </section>
       <section class="public-card">
         <h3>Issues and Returns</h3>
+        <div class="compact-doc-list">
         ${docs.map((doc) => `
-          <div class="cart-row">
-            <div><strong>${escapeHtml(doc.documentCode || doc.documentId || "-")}</strong><p>${escapeHtml(doc.documentType || "")} · ${escapeHtml(doc.documentDate || "")}</p></div>
+          <div class="compact-doc-row">
+            <strong>${escapeHtml(doc.documentCode || doc.documentId || "-")}</strong>
+            <span>${escapeHtml(doc.documentType || "-")}</span>
             <strong>${money(doc.amount)}</strong>
           </div>
         `).join("") || `<p class="muted">No documents found.</p>`}
+        </div>
       </section>
       <section class="public-card table-scroll">
         <h3>Item Details</h3>
@@ -1318,7 +1321,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=9").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=10").catch(() => {});
   }
 
   render();

@@ -2212,6 +2212,31 @@ body.public-mode .loading-overlay {
   padding: 10px 16px;
 }
 
+#testRoot .compact-doc-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+#testRoot .compact-doc-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(133, 82, 44, 0.12);
+  border-radius: 10px;
+  background: #fffdf8;
+  color: #4a250f;
+  font-size: 13px;
+}
+
+#testRoot .compact-doc-row span {
+  color: #7a5b46;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 #testRoot .action-prompt {
   margin: 4px 0 12px;
   color: #6d4327;
