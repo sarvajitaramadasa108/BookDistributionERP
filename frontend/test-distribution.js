@@ -646,10 +646,8 @@
             <h1>Srila Prabhupada's Book Distribution</h1>
           </div>
         </div>
-        <div class="row-actions">
-          <button class="button secondary small-button" data-action="reloadCurrentView">Reload</button>
-        </div>
       </header>
+      <button class="button secondary small-button test-reload-floating" data-action="reloadCurrentView">Reload</button>
       <button class="test-menu-backdrop ${state.menuOpen ? "open" : ""}" type="button" data-action="closeMenu" aria-label="Close menu"></button>
       <aside class="test-side-menu ${state.menuOpen ? "open" : ""}" aria-hidden="${state.menuOpen ? "false" : "true"}">
         <div class="test-side-menu-header">
@@ -1320,7 +1318,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=6").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=7").catch(() => {});
   }
 
   render();

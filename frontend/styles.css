@@ -2176,6 +2176,16 @@ body.public-mode .loading-overlay {
   padding: 10px 16px;
 }
 
+#testRoot .test-reload-floating {
+  position: fixed;
+  inset: auto auto max(18px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  z-index: 34;
+  min-height: 44px;
+  border-radius: 999px;
+  padding: 10px 16px;
+  box-shadow: 0 12px 24px rgba(78, 39, 16, 0.14);
+}
+
 #testRoot .action-prompt {
   margin: 4px 0 12px;
   color: #6d4327;
