@@ -38,7 +38,8 @@
       cashAmount: ""
     },
     reports: null,
-    loading: false
+    loading: false,
+    menuOpen: false
   };
 
   function escapeHtml(value) {
@@ -559,17 +560,35 @@
       ["sale", "Enter Sale"],
       ["reports", "Reports"]
     ];
+    const activeView = state.view === "requestCart" ? "request" : state.view;
     return `
       <header class="test-app-header">
-        <div>
-          <div class="public-tag">TEST</div>
-          <h1>Distribution Track</h1>
+        <div class="test-header-main">
+          <button class="test-menu-button" type="button" data-action="toggleMenu" aria-label="Open menu" aria-expanded="${state.menuOpen ? "true" : "false"}">
+            <span></span>
+            <span></span>
+            <span></span>
+          </button>
+          <div>
+            <div class="public-tag">TEST</div>
+            <h1>Distribution Track</h1>
+          </div>
         </div>
         <button class="button secondary small-button" data-action="logoutProfile">Change Phone</button>
       </header>
-      <nav class="test-nav">
-        ${items.map(([view, label]) => `<button class="segment ${state.view === view ? "active" : ""}" data-view="${view}">${label}</button>`).join("")}
-      </nav>
+      <button class="test-menu-backdrop ${state.menuOpen ? "open" : ""}" type="button" data-action="closeMenu" aria-label="Close menu"></button>
+      <aside class="test-side-menu ${state.menuOpen ? "open" : ""}" aria-hidden="${state.menuOpen ? "false" : "true"}">
+        <div class="test-side-menu-header">
+          <div>
+            <div class="public-tag">TEST</div>
+            <strong>Menu</strong>
+          </div>
+          <button class="icon-button" type="button" data-action="closeMenu" aria-label="Close menu">Close</button>
+        </div>
+        <nav class="test-nav">
+          ${items.map(([view, label]) => `<button class="segment ${activeView === view ? "active" : ""}" data-view="${view}">${label}</button>`).join("")}
+        </nav>
+      </aside>
     `;
   }
 
@@ -884,6 +903,7 @@
     if (button.dataset.view) {
       state.view = button.dataset.view;
       state.search = "";
+      state.menuOpen = false;
       if (state.view === "track" || state.view === "sale" || state.view === "reports") {
         try {
           setLoading(true, state.view === "sale" ? "Loading activity stock..." : state.view === "reports" ? "Loading reports..." : "Loading activities...");
@@ -950,9 +970,18 @@
     }
     if (action === "lookupProfile") await lookupProfile();
     if (action === "saveProfile") await saveProfile();
+    if (action === "toggleMenu") {
+      state.menuOpen = !state.menuOpen;
+      render();
+    }
+    if (action === "closeMenu") {
+      state.menuOpen = false;
+      render();
+    }
     if (action === "logoutProfile") {
       state.screen = "phone";
       state.profile = null;
+      state.menuOpen = false;
       render();
     }
     if (action === "showRequestCart") {
