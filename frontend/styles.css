@@ -2247,15 +2247,19 @@ body.public-mode .loading-overlay {
 
 #testRoot .report-filter-segmented {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
   gap: 8px;
 }
 
 #testRoot .report-filter-segmented .segment {
   min-width: 0;
   min-height: 40px;
-  padding: 8px 10px;
-  font-size: 13px;
+  padding: 8px 6px;
+  font-size: 12px;
+  line-height: 1.15;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
   background: #fffdf8;
   color: #63351c;
   border-color: rgba(133, 82, 44, 0.22);

@@ -1470,7 +1470,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=12").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=13").catch(() => {});
   }
 
   render();
