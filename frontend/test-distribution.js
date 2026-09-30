@@ -154,6 +154,7 @@
     const returnQty = Number(book.returnedQty || book.returnQty || 0);
     const saleQty = Number(book.actualSaleQty || book.soldQty || 0);
     const balanceQty = Math.max(Number(book.availableQty || book.unsettledQty || 0), 0);
+    const explicitSaleWorth = Number(book.actualSaleAmount || book.saleAmount || 0);
     return {
       price,
       issueQty,
@@ -162,7 +163,7 @@
       balanceQty,
       issueWorth: issueQty * price,
       returnWorth: returnQty * price,
-      saleWorth: saleQty * price,
+      saleWorth: explicitSaleWorth > 0 ? explicitSaleWorth : saleQty * price,
       balanceWorth: balanceQty * price
     };
   }
@@ -567,8 +568,14 @@
       }));
       state.saleCart = [];
       state.salePayment.open = false;
-      await Promise.all([refreshActivities(), refreshReports(), loadActivityStock(state.saleActivityId)]);
-      applyPostedSale(postedLines, beforeStock, beforeBooks);
+      const hasFreshSaleData = Array.isArray(result.activities) && result.reports && Array.isArray(result.activityStock);
+      if (Array.isArray(result.activities)) state.activities = result.activities;
+      if (result.reports) state.reports = result.reports;
+      if (Array.isArray(result.activityStock)) state.activityStock = result.activityStock;
+      if (!hasFreshSaleData) {
+        await Promise.all([refreshActivities(), refreshReports(), loadActivityStock(state.saleActivityId)]);
+        applyPostedSale(postedLines, beforeStock, beforeBooks);
+      }
       render();
       showToast(`Sale posted: ${result.documentId}`);
     } catch (error) {
@@ -1321,7 +1328,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=10").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=11").catch(() => {});
   }
 
   render();

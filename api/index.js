@@ -3336,7 +3336,12 @@ async function publicSubmitActivitySale(supabase, payload) {
       if (activityPaymentError) throw activityPaymentError;
     }
   }
-  return { documentId: created.documentId };
+  const [activities, reports, activityStock] = await Promise.all([
+    publicActivitySummaries(supabase, { mobile: profile.mobile }),
+    publicActivityReports(supabase, { mobile: profile.mobile }),
+    publicActivityStock(supabase, { activityId: activityRow.id, mobile: profile.mobile })
+  ]);
+  return { documentId: created.documentId, activities, reports, activityStock };
 }
 
 async function getActivityUnsettled(supabase) {
@@ -3479,6 +3484,8 @@ function buildSettlementSummaryForActivity(activity, context) {
     issueQty: 0,
     returnQty: 0,
     saleQty: 0,
+    actualSaleQty: 0,
+    actualSaleAmount: 0,
     complimentaryQty: 0,
     saleDueAmount: 0,
     paidCashAmount: 0,
@@ -3497,6 +3504,7 @@ function buildSettlementSummaryForActivity(activity, context) {
     let saleQty = 0;
     let complimentaryQty = 0;
     let amount = 0;
+    let saleAmount = 0;
     for (const line of docLines) {
       const item = itemById[line.item_id] || {};
       const qty = Number(line.quantity || 0);
@@ -3510,6 +3518,7 @@ function buildSettlementSummaryForActivity(activity, context) {
         amount -= qty * price;
       } else if (doc.document_type === "SALE") {
         saleQty += qty;
+        saleAmount += qty * price;
       } else if (doc.document_type === "COMPLIMENTARY") {
         complimentaryQty += qty;
       } else if (doc.document_type === "ADJUSTMENT" && settlementEdit) {
@@ -3534,8 +3543,10 @@ function buildSettlementSummaryForActivity(activity, context) {
         } else if (target === "SALE") {
           if (direction === "IN") {
             saleQty += qty;
+            saleAmount += qty * price;
           } else {
             saleQty -= qty;
+            saleAmount -= qty * price;
           }
         } else if (target === "COMPLIMENTARY") {
           if (direction === "IN") {
@@ -3565,6 +3576,7 @@ function buildSettlementSummaryForActivity(activity, context) {
         existingBookRow.returnQty += qty;
       } else if (doc.document_type === "SALE") {
         existingBookRow.saleQty += qty;
+        existingBookRow.saleAmount = Number(existingBookRow.saleAmount || 0) + (qty * price);
       } else if (doc.document_type === "COMPLIMENTARY") {
         existingBookRow.saleQty += qty;
       } else if (doc.document_type === "ADJUSTMENT" && settlementEdit) {
@@ -3576,6 +3588,7 @@ function buildSettlementSummaryForActivity(activity, context) {
           existingBookRow.returnQty += direction === "IN" ? qty : -qty;
         } else if (target === "SALE") {
           existingBookRow.saleQty += direction === "IN" ? qty : -qty;
+          existingBookRow.saleAmount = Number(existingBookRow.saleAmount || 0) + (direction === "IN" ? (qty * price) : -(qty * price));
         } else if (target === "COMPLIMENTARY") {
           existingBookRow.complimentaryQty = Number(existingBookRow.complimentaryQty || 0) + (direction === "IN" ? qty : -qty);
         }
@@ -3609,10 +3622,13 @@ function buildSettlementSummaryForActivity(activity, context) {
       returnQty,
       saleQty,
       complimentaryQty,
-      amount
+      amount: doc.document_type === "SALE" ? saleAmount : amount,
+      saleAmount
     });
     summary.issueQty += issueQty;
     summary.returnQty += returnQty;
+    summary.actualSaleQty += saleQty;
+    summary.actualSaleAmount += saleAmount;
     summary.saleDueAmount += amount;
     summary.complimentaryQty += complimentaryQty;
   }
@@ -3620,6 +3636,7 @@ function buildSettlementSummaryForActivity(activity, context) {
     .map((row) => {
       const finalSaleQty = Math.max(Number(row.issueQty || 0) - Number(row.returnQty || 0) - Number(row.complimentaryQty || 0), 0);
       const actualSaleQty = Number(row.saleQty || 0);
+      const actualSaleAmount = Number(row.saleAmount || 0);
       const availableQty = Math.max(Number(row.issueQty || 0) - Number(row.returnQty || 0) - actualSaleQty - Number(row.complimentaryQty || 0), 0);
       return {
         ...row,
@@ -3627,6 +3644,7 @@ function buildSettlementSummaryForActivity(activity, context) {
         issuedQty: Number(row.issueQty || 0),
         returnedQty: Number(row.returnQty || 0),
         actualSaleQty,
+        actualSaleAmount,
         availableQty,
         saleQty: finalSaleQty
       };
