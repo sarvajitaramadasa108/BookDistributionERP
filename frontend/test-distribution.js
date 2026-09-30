@@ -9,7 +9,7 @@
 
   const state = {
     screen: "phone",
-    view: "request",
+    view: "home",
     itemGroup: "",
     search: "",
     profile: null,
@@ -335,9 +335,6 @@
   async function loadHomeData() {
     const activities = await api("publicTest.activities", profilePayload());
     state.activities = activities || [];
-    if (!state.saleActivityId && state.activities.length) {
-      state.saleActivityId = state.activities[0].activityId || "";
-    }
   }
 
   async function ensureCatalogGroup(group) {
@@ -616,7 +613,7 @@
   function renderPhone() {
     return `
       <section class="public-hero test-hero">
-        <div class="public-tag">Test Warehouse</div>
+        <div class="public-tag">Book Distribution</div>
         <h1>Srila Prabhupada's Book Distribution</h1>
         <p>Enter your mobile number to request stock, track activity stock, and post sales.</p>
       </section>
@@ -661,6 +658,7 @@
 
   function renderNav() {
     const items = [
+      ["home", "Home"],
       ["request", "Request / Return Books"],
       ["pending", "Pending Requests / Returns"],
       ["track", "My Stock Track"],
@@ -677,7 +675,6 @@
             <span></span>
           </button>
           <div>
-            <div class="public-tag">TEST</div>
             <h1>Srila Prabhupada's Book Distribution</h1>
           </div>
         </div>
@@ -687,7 +684,6 @@
       <aside class="test-side-menu ${state.menuOpen ? "open" : ""}" aria-hidden="${state.menuOpen ? "false" : "true"}">
         <div class="test-side-menu-header">
           <div>
-            <div class="public-tag">TEST</div>
             <strong>Menu</strong>
           </div>
           <button class="icon-button" type="button" data-action="closeMenu" aria-label="Close menu">Close</button>
@@ -697,6 +693,27 @@
           <button class="segment test-logout-menu" data-action="logoutProfile">Log Out</button>
         </nav>
       </aside>
+    `;
+  }
+
+  function renderHomeView() {
+    return `
+      <section class="home-devotional-hero">
+        <div class="home-photo-wrap">
+          <img src="/assets/srila-prabhupada-reading.png" alt="Srila Prabhupada reading books">
+        </div>
+        <div class="home-quote-panel">
+          <span class="home-eyebrow">Book Distribution</span>
+          <h2>Books that awaken Krishna consciousness</h2>
+          <blockquote>
+            “These books are so potent that anyone who reads them is sure to become Krishna conscious. So it is very valuable service to distribute our books.”
+          </blockquote>
+          <p>- Srila Prabhupada</p>
+        </div>
+      </section>
+      <section class="home-action-panel">
+        <p>Please select your choice of action from the menu.</p>
+      </section>
     `;
   }
 
@@ -859,7 +876,6 @@
               <div class="metric-grid">
                 <div><span>Total Qty</span><strong>${qty(row.totalQty)}</strong></div>
                 <div><span>Total Worth</span><strong>${money(row.totalAmount)}</strong></div>
-                <div><span>Warehouse</span><strong>${escapeHtml(row.sourceWarehouseName || "Test")}</strong></div>
                 <div><span>Status</span><strong>${escapeHtml(row.status || "Pending")}</strong></div>
               </div>
               <div class="table-scroll pending-lines-table">
@@ -1029,7 +1045,7 @@
         </div>
       </section>
       <section class="catalog-grid compact-grid test-catalog-grid sale-catalog-grid">
-        ${filteredSaleStock().map((item) => renderCatalogCard(item, "sale")).join("") || `<div class="empty-state">Select an activity to see available stock.</div>`}
+        ${filteredSaleStock().map((item) => renderCatalogCard(item, "sale")).join("") || `<div class="empty-state sale-empty-state">Select an activity to see available stock.</div>`}
       </section>
       ${state.salePayment.open ? renderPaymentPanel() : ""}
     `;
@@ -1184,6 +1200,7 @@
 
   function renderHome() {
     const body = state.view === "requestCart" ? renderRequestCart()
+      : state.view === "home" ? renderHomeView()
       : state.view === "request" ? renderRequest()
       : state.view === "pending" ? renderPendingRequests()
       : state.view === "track" ? renderTrack()
@@ -1221,9 +1238,6 @@
             await Promise.all([refreshPendingRequests(), refreshNotifications()]);
           } else {
             await refreshActivities();
-          }
-          if (!state.saleActivityId && state.activities.length) {
-            state.saleActivityId = state.activities[0].activityId || "";
           }
           if (state.view === "sale") {
             await loadActivityStock();
@@ -1466,7 +1480,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=14").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=15").catch(() => {});
   }
 
   render();

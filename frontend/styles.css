@@ -1023,11 +1023,12 @@ tbody tr:hover td {
 body.public-mode {
   min-height: 100vh;
   margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background:
-    radial-gradient(circle at top left, rgba(237, 181, 76, 0.24), transparent 31%),
-    radial-gradient(circle at top right, rgba(124, 67, 30, 0.16), transparent 34%),
-    linear-gradient(180deg, #fff8ec 0%, #f5dfba 52%, #e7c99b 100%);
-  color: #352014;
+    radial-gradient(circle at top left, rgba(255, 199, 83, 0.28), transparent 30%),
+    radial-gradient(circle at top right, rgba(109, 29, 49, 0.16), transparent 34%),
+    linear-gradient(135deg, #fff9ed 0%, #f8e2b9 48%, #ead0a0 100%);
+  color: #311d12;
 }
 
 body.public-mode .loading-overlay {
@@ -1093,10 +1094,10 @@ body.public-mode .loading-overlay {
 }
 
 .public-card {
-  background: rgba(255, 250, 242, 0.96);
-  border: 1px solid rgba(133, 82, 44, 0.14);
-  border-radius: 20px;
-  box-shadow: 0 18px 36px rgba(84, 42, 22, 0.11);
+  background: rgba(255, 251, 244, 0.96);
+  border: 1px solid rgba(116, 64, 32, 0.13);
+  border-radius: 18px;
+  box-shadow: 0 18px 44px rgba(60, 31, 16, 0.1);
   padding: 18px;
 }
 
@@ -2018,9 +2019,11 @@ body.public-mode .loading-overlay {
   gap: 16px;
   padding: 18px 20px;
   border-radius: 18px;
-  background: linear-gradient(135deg, rgba(125, 63, 29, 0.96), rgba(176, 110, 39, 0.82));
+  background:
+    radial-gradient(circle at 92% 20%, rgba(255, 219, 134, 0.28), transparent 30%),
+    linear-gradient(135deg, #5a1824 0%, #8e421d 48%, #bf842e 100%);
   color: #fff8ef;
-  box-shadow: 0 18px 42px rgba(84, 42, 22, 0.16);
+  box-shadow: 0 18px 42px rgba(74, 31, 25, 0.18);
 }
 
 #testRoot .test-header-main {
@@ -2106,6 +2109,97 @@ body.public-mode .loading-overlay {
   display: grid;
   gap: 10px;
   padding-top: 18px;
+}
+
+#testRoot .home-devotional-hero {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.86fr) minmax(300px, 1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+#testRoot .home-photo-wrap,
+#testRoot .home-quote-panel,
+#testRoot .home-action-panel {
+  border: 1px solid rgba(116, 64, 32, 0.14);
+  border-radius: 24px;
+  box-shadow: 0 22px 54px rgba(67, 32, 18, 0.14);
+  overflow: hidden;
+}
+
+#testRoot .home-photo-wrap {
+  min-height: 520px;
+  background: #f8ead5;
+}
+
+#testRoot .home-photo-wrap img {
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+  display: block;
+  object-fit: cover;
+  object-position: center;
+}
+
+#testRoot .home-quote-panel {
+  display: grid;
+  align-content: center;
+  gap: 18px;
+  padding: clamp(24px, 5vw, 52px);
+  background:
+    linear-gradient(145deg, rgba(72, 15, 28, 0.92), rgba(121, 54, 21, 0.9)),
+    #601d22;
+  color: #fffaf0;
+}
+
+#testRoot .home-eyebrow {
+  width: max-content;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(255, 224, 154, 0.16);
+  border: 1px solid rgba(255, 232, 178, 0.26);
+  color: #ffe6a8;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#testRoot .home-quote-panel h2 {
+  margin: 0;
+  max-width: 760px;
+  color: #fff7e6;
+  font-size: clamp(30px, 4.8vw, 58px);
+  line-height: 1.02;
+  letter-spacing: 0;
+}
+
+#testRoot .home-quote-panel blockquote {
+  margin: 0;
+  max-width: 740px;
+  color: #fff2d2;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(20px, 2.6vw, 32px);
+  line-height: 1.3;
+}
+
+#testRoot .home-quote-panel p {
+  margin: 0;
+  color: #ffd98d;
+  font-weight: 900;
+}
+
+#testRoot .home-action-panel {
+  padding: 18px 20px;
+  background: rgba(255, 251, 244, 0.94);
+  text-align: center;
+}
+
+#testRoot .home-action-panel p {
+  margin: 0;
+  color: #5b2d18;
+  font-size: 17px;
+  font-weight: 900;
 }
 
 #testRoot .test-nav .segment {
@@ -2347,6 +2441,21 @@ body.public-mode .loading-overlay {
   height: 100%;
 }
 
+#testRoot .sale-empty-state {
+  grid-column: 1 / -1;
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  border-radius: 18px;
+  font-size: 17px;
+  font-weight: 900;
+  color: #6b3a1f;
+  background:
+    linear-gradient(135deg, rgba(255, 251, 244, 0.96), rgba(255, 242, 211, 0.92)),
+    #fffaf2;
+}
+
 #testRoot .sale-cart-panel {
   padding-block: 18px;
 }
@@ -2547,6 +2656,27 @@ body.public-mode .loading-overlay {
   #testRoot .test-app-header h1 {
     font-size: 24px;
     line-height: 1.1;
+  }
+
+  #testRoot .home-devotional-hero {
+    grid-template-columns: 1fr;
+  }
+
+  #testRoot .home-photo-wrap,
+  #testRoot .home-photo-wrap img {
+    min-height: 360px;
+  }
+
+  #testRoot .home-quote-panel {
+    padding: 24px;
+  }
+
+  #testRoot .home-quote-panel h2 {
+    font-size: 32px;
+  }
+
+  #testRoot .home-quote-panel blockquote {
+    font-size: 20px;
   }
 
   #testRoot .test-app-header .small-button {

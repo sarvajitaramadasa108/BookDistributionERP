@@ -1,7 +1,7 @@
 {
-  "name": "Test Book Distribution",
-  "short_name": "Test Distribution",
-  "description": "Test warehouse request, stock tracking, and activity sale entry app.",
+  "name": "Srila Prabhupada's Book Distribution",
+  "short_name": "Book Distribution",
+  "description": "Request, return, stock tracking, and activity sale entry app.",
   "start_url": "/testdistribution",
   "display": "standalone",
   "background_color": "#f5e3c7",

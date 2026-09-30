@@ -1,4 +1,4 @@
-const CACHE_NAME = "hkm-test-distribution-v14";
+const CACHE_NAME = "hkm-test-distribution-v15";
 const CORE_ASSETS = [
   "/testdistribution",
   "/test-distribution.html",
@@ -6,7 +6,8 @@ const CORE_ASSETS = [
   "/config.js",
   "/api.js",
   "/test-distribution.js",
-  "/test-distribution.webmanifest"
+  "/test-distribution.webmanifest",
+  "/assets/srila-prabhupada-reading.png"
 ];
 
 self.addEventListener("install", (event) => {
