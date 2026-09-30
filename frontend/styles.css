@@ -1154,6 +1154,27 @@ body.public-mode .loading-overlay {
   border-color: transparent;
 }
 
+body.public-mode .button,
+body.public-mode .segment,
+body.public-mode .icon-button,
+body.public-mode .small-button,
+body.public-mode .payment-method-button,
+body.public-mode .qty-step-button {
+  letter-spacing: 0;
+  box-shadow: 0 10px 22px rgba(74, 31, 25, 0.08);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+body.public-mode .button:hover,
+body.public-mode .segment:hover,
+body.public-mode .icon-button:hover,
+body.public-mode .small-button:hover,
+body.public-mode .payment-method-button:hover,
+body.public-mode .qty-step-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px rgba(74, 31, 25, 0.12);
+}
+
 .grid-two,
 .grid-three {
   display: grid;
@@ -2112,94 +2133,58 @@ body.public-mode .loading-overlay {
 }
 
 #testRoot .home-devotional-hero {
+  height: calc(100svh - 158px);
+  min-height: 0;
   display: grid;
-  grid-template-columns: minmax(280px, 0.86fr) minmax(300px, 1fr);
-  gap: 18px;
   align-items: stretch;
 }
 
-#testRoot .home-photo-wrap,
-#testRoot .home-quote-panel,
-#testRoot .home-action-panel {
+#testRoot .home-photo-wrap {
+  position: relative;
   border: 1px solid rgba(116, 64, 32, 0.14);
-  border-radius: 24px;
+  border-radius: 28px;
   box-shadow: 0 22px 54px rgba(67, 32, 18, 0.14);
   overflow: hidden;
-}
-
-#testRoot .home-photo-wrap {
-  min-height: 520px;
+  min-height: 0;
+  height: 100%;
   background: #f8ead5;
 }
 
 #testRoot .home-photo-wrap img {
   width: 100%;
   height: 100%;
-  min-height: 520px;
+  min-height: 0;
   display: block;
   object-fit: cover;
-  object-position: center;
+  object-position: center 42%;
 }
 
-#testRoot .home-quote-panel {
+#testRoot .home-quote-mask {
+  position: absolute;
+  inset: auto 0 0;
   display: grid;
-  align-content: center;
-  gap: 18px;
-  padding: clamp(24px, 5vw, 52px);
+  gap: 8px;
+  padding: clamp(22px, 4vw, 42px);
   background:
-    linear-gradient(145deg, rgba(72, 15, 28, 0.92), rgba(121, 54, 21, 0.9)),
-    #601d22;
-  color: #fffaf0;
-}
-
-#testRoot .home-eyebrow {
-  width: max-content;
-  padding: 7px 12px;
-  border-radius: 999px;
-  background: rgba(255, 224, 154, 0.16);
-  border: 1px solid rgba(255, 232, 178, 0.26);
-  color: #ffe6a8;
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-#testRoot .home-quote-panel h2 {
-  margin: 0;
-  max-width: 760px;
+    linear-gradient(180deg, rgba(42, 14, 12, 0), rgba(42, 14, 12, 0.72) 24%, rgba(42, 14, 12, 0.92) 100%);
   color: #fff7e6;
-  font-size: clamp(30px, 4.8vw, 58px);
-  line-height: 1.02;
-  letter-spacing: 0;
 }
 
-#testRoot .home-quote-panel blockquote {
+#testRoot .home-quote-mask blockquote {
   margin: 0;
-  max-width: 740px;
-  color: #fff2d2;
+  max-width: 860px;
+  color: #fff8e8;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(20px, 2.6vw, 32px);
-  line-height: 1.3;
+  font-size: clamp(18px, 2.6vw, 34px);
+  line-height: 1.25;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.28);
 }
 
-#testRoot .home-quote-panel p {
+#testRoot .home-quote-mask p {
   margin: 0;
   color: #ffd98d;
   font-weight: 900;
-}
-
-#testRoot .home-action-panel {
-  padding: 18px 20px;
-  background: rgba(255, 251, 244, 0.94);
-  text-align: center;
-}
-
-#testRoot .home-action-panel p {
-  margin: 0;
-  color: #5b2d18;
-  font-size: 17px;
-  font-weight: 900;
+  font-size: clamp(14px, 1.7vw, 18px);
 }
 
 #testRoot .test-nav .segment {
@@ -2216,12 +2201,13 @@ body.public-mode .loading-overlay {
 #testRoot .public-input {
   width: 100%;
   min-height: 48px;
-  border: 1px solid rgba(133, 82, 44, 0.18);
-  border-radius: 12px;
-  background: #fffdf8;
+  border: 1px solid rgba(116, 64, 32, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 253, 248, 0.94);
   color: #352014;
-  padding: 10px 12px;
+  padding: 11px 13px;
   outline: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 10px 20px rgba(74, 31, 25, 0.04);
 }
 
 #testRoot .public-input:focus {
@@ -2426,6 +2412,10 @@ body.public-mode .loading-overlay {
 
 #testRoot .catalog-card {
   min-width: 0;
+  border-radius: 18px;
+  border-color: rgba(116, 64, 32, 0.13);
+  background: rgba(255, 252, 246, 0.96);
+  box-shadow: 0 16px 34px rgba(67, 32, 18, 0.09);
 }
 
 #testRoot .catalog-card .button {
@@ -2458,6 +2448,13 @@ body.public-mode .loading-overlay {
 
 #testRoot .sale-cart-panel {
   padding-block: 18px;
+}
+
+#testRoot .metric-grid > div {
+  border-radius: 16px;
+  border: 1px solid rgba(116, 64, 32, 0.1);
+  background: linear-gradient(180deg, rgba(255, 248, 232, 0.96), rgba(255, 240, 204, 0.82));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 #testRoot .compact-sale-cart {
@@ -2634,6 +2631,8 @@ body.public-mode .loading-overlay {
 #testRoot .payment-card {
   width: min(560px, 100%);
   max-height: none;
+  border-radius: 24px;
+  background: rgba(255, 251, 244, 0.98);
 }
 
 @media (min-width: 1180px) {
@@ -2658,25 +2657,21 @@ body.public-mode .loading-overlay {
     line-height: 1.1;
   }
 
-  #testRoot .home-devotional-hero {
-    grid-template-columns: 1fr;
-  }
-
   #testRoot .home-photo-wrap,
   #testRoot .home-photo-wrap img {
-    min-height: 360px;
+    min-height: 0;
   }
 
-  #testRoot .home-quote-panel {
-    padding: 24px;
+  #testRoot .home-devotional-hero {
+    height: calc(100svh - 132px);
   }
 
-  #testRoot .home-quote-panel h2 {
-    font-size: 32px;
+  #testRoot .home-quote-mask {
+    padding: 72px 18px 22px;
   }
 
-  #testRoot .home-quote-panel blockquote {
-    font-size: 20px;
+  #testRoot .home-quote-mask blockquote {
+    font-size: 18px;
   }
 
   #testRoot .test-app-header .small-button {

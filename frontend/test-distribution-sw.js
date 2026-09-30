@@ -1,4 +1,4 @@
-const CACHE_NAME = "hkm-test-distribution-v15";
+const CACHE_NAME = "hkm-test-distribution-v16";
 const CORE_ASSETS = [
   "/testdistribution",
   "/test-distribution.html",

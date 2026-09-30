@@ -615,7 +615,7 @@
       <section class="public-hero test-hero">
         <div class="public-tag">Book Distribution</div>
         <h1>Srila Prabhupada's Book Distribution</h1>
-        <p>Enter your mobile number to request stock, track activity stock, and post sales.</p>
+        <p>Enter your mobile number to request stock, track activity stock, post sales, and return books.</p>
       </section>
       <section class="public-card">
         <label class="field-label" for="publicMobile">Mobile Number</label>
@@ -679,7 +679,7 @@
           </div>
         </div>
       </header>
-      <div class="floating-request-actions reload-floating-actions"><button class="segment active" data-action="reloadCurrentView">Reload</button></div>
+      ${state.view === "home" ? "" : `<div class="floating-request-actions reload-floating-actions"><button class="segment active" data-action="reloadCurrentView">Reload</button></div>`}
       <button class="test-menu-backdrop ${state.menuOpen ? "open" : ""}" type="button" data-action="closeMenu" aria-label="Close menu"></button>
       <aside class="test-side-menu ${state.menuOpen ? "open" : ""}" aria-hidden="${state.menuOpen ? "false" : "true"}">
         <div class="test-side-menu-header">
@@ -701,18 +701,13 @@
       <section class="home-devotional-hero">
         <div class="home-photo-wrap">
           <img src="/assets/srila-prabhupada-reading.png" alt="Srila Prabhupada reading books">
+          <div class="home-quote-mask">
+            <blockquote>
+              “These books are so potent that anyone who reads them is sure to become Krishna conscious. So it is very valuable service to distribute our books.”
+            </blockquote>
+            <p>- Srila Prabhupada</p>
+          </div>
         </div>
-        <div class="home-quote-panel">
-          <span class="home-eyebrow">Book Distribution</span>
-          <h2>Books that awaken Krishna consciousness</h2>
-          <blockquote>
-            “These books are so potent that anyone who reads them is sure to become Krishna conscious. So it is very valuable service to distribute our books.”
-          </blockquote>
-          <p>- Srila Prabhupada</p>
-        </div>
-      </section>
-      <section class="home-action-panel">
-        <p>Please select your choice of action from the menu.</p>
       </section>
     `;
   }
@@ -1480,7 +1475,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=15").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=16").catch(() => {});
   }
 
   render();
