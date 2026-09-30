@@ -477,10 +477,6 @@
         quantity: availableQty > 0 ? Math.min(addQty, availableQty) : addQty
       });
     }
-    const updated = cart.find((line) => line.erpCode === code);
-    if (updated && target === "sale") {
-      showToast(`Sale cart: ${qty(updated.quantity)} ${updated.itemName}`);
-    }
     render();
   }
 
@@ -1470,7 +1466,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=13").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=14").catch(() => {});
   }
 
   render();
