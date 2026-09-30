@@ -1162,7 +1162,7 @@ async function documentDetail(supabase, payload) {
 }
 
 function documentTypeRequiresActivity(documentType) {
-  return ["ISSUE", "COMPLIMENTARY", "RETURN", "UNSETTLED_OPENING", "ADJUSTMENT"].includes(documentType);
+  return ["ISSUE", "COMPLIMENTARY", "RETURN", "SALE", "UNSETTLED_OPENING", "ADJUSTMENT"].includes(documentType);
 }
 
 function publicDevoteeCodeForMobile(mobile) {
@@ -3057,7 +3057,7 @@ async function publicActivitySummaries(supabase, payload) {
   const context = await getSettlementContext(supabase);
   const devotee = (context.devotees || []).find((row) => row.devotee_code === devoteeCode);
   const acceptedLineMap = await publicAcceptedActivityLineMap(supabase, profile.mobile);
-  const movementRows = await getActivityUnsettled(supabase);
+  const movementRows = await getActivityUnsettled(supabase, { includeCompleted: true });
   const movementByActivity = new Map();
   for (const row of movementRows || []) {
     const key = String(row.activityId || "");
@@ -3211,7 +3211,7 @@ async function publicActivityStock(supabase, payload) {
     activityRow?.activity_code,
     activityRow?.activity_name
   ].filter(Boolean).map((value) => String(value)));
-  const rows = await getActivityUnsettled(supabase);
+  const rows = await getActivityUnsettled(supabase, { includeCompleted: true });
   const targetRows = rows.filter((row) => [row.activityId, row.activityCode, row.activityName].some((value) => activityRefs.has(String(value || ""))));
   const items = await itemsPublicList(supabase, {});
   const itemByCode = Object.fromEntries((items || []).map((item) => [String(item.erpCode || ""), item]));
@@ -3344,7 +3344,8 @@ async function publicSubmitActivitySale(supabase, payload) {
   return { documentId: created.documentId, activities, reports, activityStock };
 }
 
-async function getActivityUnsettled(supabase) {
+async function getActivityUnsettled(supabase, options = {}) {
+  const includeCompleted = Boolean(options.includeCompleted);
   const { data: documents } = await supabase.from("documents").select("*");
   const { data: lines } = await supabase.from("document_lines").select("*");
   const { data: activities } = await supabase.from("activities").select("*");
@@ -3360,7 +3361,7 @@ async function getActivityUnsettled(supabase) {
     const doc = docsById[line.document_id];
     if (!doc || !doc.activity_id) continue;
     const activity = activityById[doc.activity_id] || {};
-    if (String(activity.status || "").toLowerCase() === "completed" || activity.settled_at) {
+    if (!includeCompleted && (String(activity.status || "").toLowerCase() === "completed" || activity.settled_at)) {
       continue;
     }
     const type = doc.document_type;
