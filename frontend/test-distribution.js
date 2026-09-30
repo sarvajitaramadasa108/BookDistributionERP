@@ -10,7 +10,7 @@
   const state = {
     screen: "phone",
     view: "request",
-    itemGroup: "BOOK",
+    itemGroup: "",
     search: "",
     profile: null,
     mobile: "",
@@ -22,10 +22,11 @@
       location: ""
     },
     catalogByGroup: { BOOK: [], PARAPHERNALIA: [] },
+    catalogLoaded: { BOOK: false, PARAPHERNALIA: false },
     requestQtyByCode: {},
     saleQtyByCode: {},
     activities: [],
-    requestKind: "REQUEST",
+    requestKind: "",
     selectedRequestActivity: "General Issue",
     selectedReturnActivityId: "",
     customRequestActivity: "",
@@ -214,7 +215,7 @@
   }
 
   function requestKindLabel(kind = state.requestKind) {
-    return String(kind || "REQUEST").toUpperCase() === "RETURN" ? "Return" : "Request";
+    return String(kind || "").toUpperCase() === "RETURN" ? "Return" : "Request";
   }
 
   function selectedReturnActivity() {
@@ -299,19 +300,18 @@
   }
 
   async function loadHomeData() {
-    const [books, items, activities, reports] = await Promise.all([
-      api("catalog.items", { itemGroup: "BOOK", sourceWarehouseId: TEST_WAREHOUSE }),
-      api("catalog.items", { itemGroup: "PARAPHERNALIA", sourceWarehouseId: TEST_WAREHOUSE }),
-      api("publicTest.activities", profilePayload()),
-      api("publicTest.reports", profilePayload())
-    ]);
-    state.catalogByGroup.BOOK = books || [];
-    state.catalogByGroup.PARAPHERNALIA = items || [];
+    const activities = await api("publicTest.activities", profilePayload());
     state.activities = activities || [];
-    state.reports = reports || null;
     if (!state.saleActivityId && state.activities.length) {
       state.saleActivityId = state.activities[0].activityId || "";
     }
+  }
+
+  async function ensureCatalogGroup(group) {
+    const normalized = String(group || "").toUpperCase();
+    if (!["BOOK", "PARAPHERNALIA"].includes(normalized) || state.catalogLoaded[normalized]) return;
+    state.catalogByGroup[normalized] = await api("catalog.items", { itemGroup: normalized, sourceWarehouseId: TEST_WAREHOUSE });
+    state.catalogLoaded[normalized] = true;
   }
 
   async function refreshActivities() {
@@ -348,6 +348,10 @@
     try {
       setLoading(true, "Refreshing...");
       await loadHomeData();
+      if (state.requestKind === "REQUEST" && state.itemGroup) {
+        state.catalogLoaded[state.itemGroup] = false;
+        await ensureCatalogGroup(state.itemGroup);
+      }
       if (state.view === "pending") {
         await Promise.all([refreshPendingRequests(), refreshNotifications()]);
       }
@@ -578,7 +582,7 @@
     return `
       <section class="public-hero test-hero">
         <div class="public-tag">Test Warehouse</div>
-        <h1>Book Distribution Track</h1>
+        <h1>Srila Prabhupada's Book Distribution</h1>
         <p>Enter your mobile number to request stock, track activity stock, and post sales.</p>
       </section>
       <section class="public-card">
@@ -639,12 +643,11 @@
           </button>
           <div>
             <div class="public-tag">TEST</div>
-            <h1>Distribution Track</h1>
+            <h1>Srila Prabhupada's Book Distribution</h1>
           </div>
         </div>
         <div class="row-actions">
           <button class="button secondary small-button" data-action="reloadCurrentView">Reload</button>
-          <button class="button secondary small-button" data-action="logoutProfile">Change Phone</button>
         </div>
       </header>
       <button class="test-menu-backdrop ${state.menuOpen ? "open" : ""}" type="button" data-action="closeMenu" aria-label="Close menu"></button>
@@ -658,6 +661,7 @@
         </div>
         <nav class="test-nav">
           ${items.map(([view, label]) => `<button class="segment ${activeView === view ? "active" : ""}" data-view="${view}">${label}</button>`).join("")}
+          <button class="segment test-logout-menu" data-action="logoutProfile">Log Out</button>
         </nav>
       </aside>
     `;
@@ -680,15 +684,18 @@
     const code = item.erpCode || item.bookId;
     const inCart = (target === "sale" ? state.saleCart : state.cart).find((line) => line.erpCode === code);
     const availableQty = Number(item.availableQty || 0);
-    const imageUrl = target === "request" ? normalizeDriveImageUrl(item.imageUrl) : "";
+    const showImage = target === "request" && state.requestKind !== "RETURN";
+    const imageUrl = showImage ? normalizeDriveImageUrl(item.imageUrl) : "";
     const fallback = String(item.name || item.bookName || "Item").split(" ").slice(0, 2).map((part) => part[0] || "").join("").toUpperCase();
     if (target === "request") {
       return `
-        <article class="catalog-card compact-card ${availableQty > 0 ? "" : "sold-out"}">
-          <div class="catalog-image compact-image">
-            ${imageUrl ? `<img src="${escapeAttr(imageUrl)}" alt="${escapeAttr(item.name || item.bookName)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.classList.remove('hidden')">` : ""}
-            <div class="catalog-fallback ${imageUrl ? "hidden" : ""}">${escapeHtml(fallback)}</div>
-          </div>
+        <article class="catalog-card compact-card ${showImage ? "" : "text-only-card"} ${availableQty > 0 ? "" : "sold-out"}">
+          ${showImage ? `
+            <div class="catalog-image compact-image">
+              ${imageUrl ? `<img src="${escapeAttr(imageUrl)}" alt="${escapeAttr(item.name || item.bookName)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.classList.remove('hidden')">` : ""}
+              <div class="catalog-fallback ${imageUrl ? "hidden" : ""}">${escapeHtml(fallback)}</div>
+            </div>
+          ` : ""}
           <div class="catalog-body">
             <div class="catalog-name small-name">${escapeHtml(item.name || item.bookName || "-")}</div>
             <div class="catalog-meta">${escapeHtml(code)}</div>
@@ -741,31 +748,40 @@
   function renderRequest() {
     const rows = filteredCatalog();
     const isReturn = state.requestKind === "RETURN";
+    const hasAction = Boolean(state.requestKind);
+    const hasCategory = Boolean(state.itemGroup);
     return `
-      <div class="floating-request-actions test-floating-actions"><button class="segment active" data-action="showRequestCart">Go to Cart (${cartQty(state.cart)})</button></div>
+      <div class="floating-request-actions cart-floating-actions"><button class="segment active" data-action="showRequestCart">Cart (${cartQty(state.cart)})</button></div>
       <section class="public-card">
         <div class="public-card-header compact-header">
           <h2>Request / Return Books</h2>
-          <div class="public-tag">${requestKindLabel()}</div>
+          ${hasAction ? `<div class="public-tag">${requestKindLabel()}</div>` : ""}
         </div>
-        <div class="segmented category-segmented">
-          <button class="segment ${state.requestKind === "REQUEST" ? "active" : ""}" data-request-kind="REQUEST">Request Books</button>
-          <button class="segment ${state.requestKind === "RETURN" ? "active" : ""}" data-request-kind="RETURN">Return Books</button>
+        <p class="action-prompt">Please select your choice of action</p>
+        <div class="segmented action-choice-segmented">
+          <button class="segment ${state.requestKind === "REQUEST" ? "active" : ""}" data-request-kind="REQUEST">Place a Request</button>
+          <button class="segment ${state.requestKind === "RETURN" ? "active" : ""}" data-request-kind="RETURN">Return Books or Devotional Items</button>
         </div>
-        ${isReturn ? `
+        ${hasAction && isReturn ? `
           <label class="field-label">Activity</label>
           <select class="public-input" data-return-activity>
-            <option value="">Select activity to return against</option>
+            <option value="">Select your activity</option>
             ${state.activities.map((activity) => `<option value="${escapeAttr(activity.activityId)}" ${activity.activityId === state.selectedReturnActivityId ? "selected" : ""}>${escapeHtml(activity.activityName || "Activity")}</option>`).join("")}
           </select>
         ` : ""}
-        <div class="catalog-toolbar">
-          <div>${renderGroupToggle()}</div>
-          ${renderSearch()}
-        </div>
+        ${hasAction ? `
+          <div class="catalog-toolbar">
+            <div>${renderGroupToggle()}</div>
+            ${renderSearch()}
+          </div>
+        ` : ""}
       </section>
       <section class="catalog-grid compact-grid test-catalog-grid">
-        ${isReturn && !state.selectedReturnActivityId
+        ${!hasAction
+          ? `<div class="empty-state">Choose request or return to continue.</div>`
+          : !hasCategory
+            ? `<div class="empty-state">Select Books or Devotional Items.</div>`
+            : isReturn && !state.selectedReturnActivityId
           ? `<div class="empty-state">Select an activity to see returnable stock.</div>`
           : rows.map((item) => renderCatalogCard(item, "request")).join("") || `<div class="empty-state">No stock found.</div>`}
       </section>
@@ -1092,7 +1108,18 @@
     }
     if (button.dataset.group) {
       state.itemGroup = button.dataset.group;
-      render();
+      state.requestQtyByCode = {};
+      try {
+        setLoading(true, "Loading items...");
+        if (state.requestKind === "REQUEST") {
+          await ensureCatalogGroup(state.itemGroup);
+        }
+        render();
+      } catch (error) {
+        showToast(error.message || "Could not load items");
+      } finally {
+        setLoading(false);
+      }
       return;
     }
     if (button.dataset.requestKind) {
@@ -1100,16 +1127,10 @@
       state.cart = [];
       state.requestQtyByCode = {};
       state.search = "";
-      if (state.requestKind === "RETURN" && !state.selectedReturnActivityId && state.activities.length) {
-        state.selectedReturnActivityId = state.activities[0].activityId || "";
-        try {
-          setLoading(true, "Loading returnable stock...");
-          await loadActivityStock(state.selectedReturnActivityId);
-        } catch (error) {
-          showToast(error.message || "Could not load returnable stock");
-        } finally {
-          setLoading(false);
-        }
+      state.itemGroup = "";
+      if (state.requestKind === "REQUEST") {
+        state.selectedReturnActivityId = "";
+        state.activityStock = [];
       }
       render();
       return;
@@ -1299,7 +1320,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=5").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=6").catch(() => {});
   }
 
   render();
