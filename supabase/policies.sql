@@ -16,6 +16,7 @@ alter table public.online_class_registrations enable row level security;
 alter table public.catalog_requests enable row level security;
 alter table public.catalog_request_lines enable row level security;
 alter table public.public_request_profiles enable row level security;
+alter table public.request_notifications enable row level security;
 alter table public.user_sessions enable row level security;
 
 drop policy if exists "users_all_access" on public.users;
@@ -119,6 +120,13 @@ with check (true);
 drop policy if exists "public_request_profiles_all_access" on public.public_request_profiles;
 create policy "public_request_profiles_all_access"
 on public.public_request_profiles
+for all
+using (true)
+with check (true);
+
+drop policy if exists "request_notifications_all_access" on public.request_notifications;
+create policy "request_notifications_all_access"
+on public.request_notifications
 for all
 using (true)
 with check (true);

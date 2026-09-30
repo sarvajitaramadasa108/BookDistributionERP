@@ -42,6 +42,8 @@
     requestWarehouseFilter: "",
     requestDetailId: "",
     requestApprovalDraft: null,
+    bookDistributors: [],
+    bookDistributorSearch: "",
     onlineClasses: [],
     onlineClassSearch: "",
     issueDraft: {},
@@ -108,6 +110,7 @@
     documents: ["Stock Documents", "Issue, receive, sale, return, transfer, and adjustment entries.", renderDocuments],
     "sale-entries": ["Sale Entries", "Warehouse sale orders, item details, and settlement tracking.", renderSaleEntries],
     requests: ["Requests", "Public book and devotional item requests.", renderRequests],
+    "book-distributors": ["Book Distributors", "Users registered through the public distribution PWA.", renderBookDistributors],
     "online-classes": ["Online Classes", "Public volunteer registrations for online Bhagavad Gita classes.", renderOnlineClasses],
     reports: ["Reports", "Current stock, activity summary, book-wise sales, and ledger.", renderReports],
     settings: ["Settings", "System configuration and backend connection.", renderSettings]
@@ -980,6 +983,23 @@
     return renderOnlineClassesMarkup();
   }
 
+  async function renderBookDistributors() {
+    if (!isMainAdmin()) {
+      return '<div class="empty-state">Admin access required.</div>';
+    }
+    try {
+      state.bookDistributors = await window.erpApi.request("bookDistributors.list");
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error || "");
+      if (!message.includes("public_request_profiles") && !message.includes("schema cache") && !message.includes("does not exist")) {
+        throw error;
+      }
+      state.bookDistributors = [];
+      return '<div class="empty-state">Book distributor profile table is not available yet. Apply the Supabase schema to enable this section.</div>';
+    }
+    return renderBookDistributorsMarkup();
+  }
+
   async function renderRequests() {
     try {
       state.requests = await window.erpApi.request("requests.list");
@@ -992,6 +1012,67 @@
       return '<div class="empty-state">Requests table is not available yet. Apply the Supabase schema to enable this section.</div>';
     }
     return renderRequestsMarkup();
+  }
+
+  function filteredBookDistributors() {
+    const query = String(state.bookDistributorSearch || "").trim().toLowerCase();
+    if (!query) return state.bookDistributors.slice();
+    return state.bookDistributors.filter((row) => [
+      row.name,
+      row.mobile,
+      row.category,
+      row.preacherName,
+      row.location
+    ].join(" ").toLowerCase().includes(query));
+  }
+
+  function renderBookDistributorsMarkup() {
+    const rows = filteredBookDistributors();
+    return `
+      <section class="card">
+        <div class="panel-header">
+          <h2>Book Distributors</h2>
+        </div>
+        <div class="panel-body">
+          <div class="toolbar">
+            <label class="field compact-field">
+              <span>Search</span>
+              <input id="bookDistributorSearchInput" type="search" value="${escapeAttribute(state.bookDistributorSearch)}" placeholder="Search name, mobile, location..." oninput="window.erpApp.setBookDistributorSearch(this.value)">
+            </label>
+          </div>
+          ${rows.length ? `
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Registered On</th>
+                    <th>Name</th>
+                    <th>Mobile</th>
+                    <th>Age</th>
+                    <th>Category</th>
+                    <th>Preacher / Guide</th>
+                    <th>Location</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${rows.map((row) => `
+                    <tr>
+                      <td>${escapeHtml(formatDateTime(row.createdAt))}</td>
+                      <td>${escapeHtml(row.name || "-")}</td>
+                      <td>${escapeHtml(row.mobile || "-")}</td>
+                      <td>${escapeHtml(row.age !== null && row.age !== undefined ? String(row.age) : "-")}</td>
+                      <td>${escapeHtml(row.category || "-")}</td>
+                      <td>${escapeHtml(row.preacherName || "-")}</td>
+                      <td>${escapeHtml(row.location || "-")}</td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            </div>
+          ` : '<div class="empty-state">No registered book distributors found.</div>'}
+        </div>
+      </section>
+    `;
   }
 
   function filteredOnlineClasses() {
@@ -1096,6 +1177,7 @@
       if (!query) return true;
       const haystack = [
         row.requestCode,
+        row.requestKind,
         row.sourceWarehouseCode,
         row.sourceWarehouseName,
         row.itemGroup,
@@ -1122,6 +1204,10 @@
     if (["ACCEPTED", "FULFILLED"].includes(normalized)) return "good";
     if (normalized === "REJECTED") return "bad";
     return "warn";
+  }
+
+  function requestKindLabel(kind) {
+    return String(kind || "REQUEST").toUpperCase() === "RETURN" ? "Return" : "Request";
   }
 
   function canApproveRequest(row) {
@@ -1177,12 +1263,12 @@
             <tr>
               <th>Timestamp</th>
               <th>Request ID</th>
+              <th>Type</th>
               <th>Category</th>
               <th>Warehouse</th>
               <th>Name</th>
               <th>Activity</th>
               <th>Mobile</th>
-              <th>Items</th>
               <th>Qty</th>
               <th>Worth</th>
               <th>Status</th>
@@ -1194,12 +1280,12 @@
               <tr>
                 <td>${escapeHtml(formatDateTime(row.createdAt))}</td>
                 <td>${escapeHtml(row.requestCode || "-")}</td>
+                <td>${status(requestKindLabel(row.requestKind), String(row.requestKind || "").toUpperCase() === "RETURN" ? "warn" : "good")}</td>
                 <td>${escapeHtml(requestGroupLabel(row.itemGroup))}</td>
                 <td>${escapeHtml(row.sourceWarehouseName || row.sourceWarehouseCode || "-")}</td>
                 <td>${escapeHtml(row.requesterName || "-")}</td>
                 <td>${escapeHtml(row.requestActivityName || "General Issue")}</td>
                 <td>${escapeHtml(row.requesterMobile || "-")}</td>
-                <td>${escapeHtml((row.lines || []).length ? row.lines.map((line) => line.itemName).join(", ") : "-")}</td>
                 <td>${Number(row.totalQty || 0)}</td>
                 <td>${money(Number(row.totalAmount || 0))}</td>
                 <td>${status(row.status || "New", requestStatusTone(row.status))}</td>
@@ -1220,7 +1306,7 @@
             <div class="panel-header"><h3>Request Details</h3></div>
             <div class="panel-body">
               <div class="grid two-col compact-grid">
-                ${metric("Request", detail.requestCode || "-", detail.status || "New")}
+                ${metric(requestKindLabel(detail.requestKind), detail.requestCode || "-", detail.status || "New")}
                 ${metric("Category", requestGroupLabel(detail.itemGroup), detail.sourceWarehouseName || detail.sourceWarehouseCode || "-")}
                 ${metric("Requested Qty", Number(detail.totalQty || 0), "Total quantity")}
                 ${metric("Worth", money(Number(detail.totalAmount || 0)), "Estimated value")}
@@ -1230,6 +1316,7 @@
                 <div><strong>Mobile:</strong> ${escapeHtml(detail.requesterMobile || "-")}</div>
                 <div><strong>Category:</strong> ${escapeHtml(detail.requesterSegment || "-")}</div>
                 <div><strong>Activity:</strong> ${escapeHtml(detail.requestActivityName || "General Issue")}</div>
+                <div><strong>Type:</strong> ${escapeHtml(requestKindLabel(detail.requestKind))}</div>
                 <div><strong>Location:</strong> ${escapeHtml(detail.requesterLocation || "-")}</div>
                 ${detail.folkGuideName ? `<div><strong>Folk Guide:</strong> ${escapeHtml(detail.folkGuideName)}</div>` : ""}
                 ${detail.preacherName ? `<div><strong>Preacher:</strong> ${escapeHtml(detail.preacherName)}</div>` : ""}
@@ -1237,11 +1324,11 @@
                 <div><strong>Notes:</strong> ${escapeHtml(detail.notes || "-")}</div>
                 ${detail.acceptedAt ? `<div><strong>Accepted On:</strong> ${escapeHtml(formatDateTime(detail.acceptedAt))}</div>` : ""}
                 ${detail.acceptedActivityCode ? `<div><strong>Activity:</strong> ${escapeHtml(detail.acceptedActivityCode)}</div>` : ""}
-                ${detail.acceptedDocumentCode ? `<div><strong>Issue Document:</strong> ${escapeHtml(detail.acceptedDocumentCode)}</div>` : ""}
+                ${detail.acceptedDocumentCode ? `<div><strong>${requestKindLabel(detail.requestKind)} Document:</strong> ${escapeHtml(detail.acceptedDocumentCode)}</div>` : ""}
               </div>
               <div class="form-actions" style="margin-top:14px;">
                 ${canApproveRequest(detail)
-                  ? `<button class="button" type="button" onclick="window.erpApp.openRequestApprovalForm('${escapeAttribute(detail.requestId)}')">Accept And Generate Issue</button>`
+                  ? `<button class="button" type="button" onclick="window.erpApp.openRequestApprovalForm('${escapeAttribute(detail.requestId)}')">Accept ${escapeHtml(requestKindLabel(detail.requestKind))}</button>`
                   : `<div class="empty-state" style="padding:10px 12px;">This request is already ${escapeHtml(String(detail.status || "").toLowerCase() || "processed")}.</div>`}
               </div>
             </div>
@@ -4741,6 +4828,7 @@
         exportRows.push({
           Timestamp: formatDateTime(row.createdAt),
           "Request ID": row.requestCode || "",
+          Type: requestKindLabel(row.requestKind),
           Category: requestGroupLabel(row.itemGroup),
           Warehouse: row.sourceWarehouseName || row.sourceWarehouseCode || "",
           Name: row.requesterName || "",
@@ -4759,6 +4847,7 @@
         exportRows.push({
           Timestamp: formatDateTime(row.createdAt),
           "Request ID": row.requestCode || "",
+          Type: requestKindLabel(row.requestKind),
           Category: requestGroupLabel(row.itemGroup),
           Warehouse: row.sourceWarehouseName || row.sourceWarehouseCode || "",
           Name: row.requesterName || "",
@@ -4925,6 +5014,20 @@
     const currentValue = String(value || "");
     content.innerHTML = renderRequestsMarkup();
     const input = document.getElementById("requestSearchInput");
+    if (input) {
+      input.value = currentValue;
+      input.focus();
+      if (typeof input.setSelectionRange === "function") {
+        input.setSelectionRange(currentValue.length, currentValue.length);
+      }
+    }
+  }
+
+  async function setBookDistributorSearch(value) {
+    state.bookDistributorSearch = value;
+    const currentValue = String(value || "");
+    content.innerHTML = renderBookDistributorsMarkup();
+    const input = document.getElementById("bookDistributorSearchInput");
     if (input) {
       input.value = currentValue;
       input.focus();
@@ -5611,9 +5714,10 @@
     )?.warehouseId || detail.sourceWarehouseCode || "";
     const activeWarehouses = state.warehouses.filter((warehouse) => warehouse.active || warehouse.warehouseId === defaultWarehouseId);
     const requestedActivityName = String(detail.requestActivityName || "General Issue").trim() || "General Issue";
+    const isReturn = String(detail.requestKind || "REQUEST").toUpperCase() === "RETURN";
     const draft = {
       requestId: detail.requestId,
-      activityName: detail.requesterName ? `${detail.requesterName} - ${requestedActivityName}` : requestedActivityName,
+      activityName: detail.requesterName ? `${requestedActivityName} - ${detail.requesterName}` : requestedActivityName,
       activityType: "Stall",
       devoteeId: "",
       warehouseId: defaultWarehouseId,
@@ -5630,18 +5734,27 @@
       <div class="modal-backdrop" role="presentation" onclick="window.erpApp.closeModal()"></div>
       <section class="modal" role="dialog" aria-modal="true" aria-labelledby="requestApprovalTitle">
         <div class="modal-header">
-          <h2 id="requestApprovalTitle">Accept Request And Generate Issue</h2>
+          <h2 id="requestApprovalTitle">Accept ${escapeHtml(requestKindLabel(detail.requestKind))}</h2>
           <button class="icon-button" type="button" onclick="window.erpApp.closeModal()" aria-label="Close">Close</button>
         </div>
         <form class="form-grid" id="requestApprovalForm">
           <input type="hidden" name="requestId" value="${escapeAttribute(detail.requestId)}">
+          <input type="hidden" name="requestKind" value="${escapeAttribute(detail.requestKind || "REQUEST")}">
+          <input type="hidden" name="activityId" value="${escapeAttribute(detail.requestedActivityCode || detail.requestedActivityId || "")}">
           <div class="wide-field detail-meta" style="margin-top:0;">
             <div><strong>Request:</strong> ${escapeHtml(detail.requestCode || "-")}</div>
+            <div><strong>Type:</strong> ${escapeHtml(requestKindLabel(detail.requestKind))}</div>
             <div><strong>Name:</strong> ${escapeHtml(detail.requesterName || "-")}</div>
             <div><strong>Requested Activity:</strong> ${escapeHtml(requestedActivityName)}</div>
             <div><strong>Mobile:</strong> ${escapeHtml(detail.requesterMobile || "-")}</div>
             <div><strong>Worth:</strong> ${money(Number(detail.totalAmount || 0))}</div>
           </div>
+          ${isReturn ? `
+            <label class="field wide-field">
+              <span>Mapped Activity</span>
+              <input value="${escapeAttribute(detail.requestedActivityCode || detail.requestActivityName || "")}" disabled>
+            </label>
+          ` : `
           <label class="field wide-field">
             <span>Activity Name</span>
             <input name="activityName" required value="${escapeAttribute(draft.activityName)}" placeholder="Activity name">
@@ -5684,17 +5797,18 @@
               ${["Running", "Draft"].map((item) => `<option value="${item}" ${draft.activityStatus === item ? "selected" : ""}>${item}</option>`).join("")}
             </select>
           </label>
+          `}
           <label class="field">
-            <span>Issue Date</span>
+            <span>${isReturn ? "Return" : "Issue"} Date</span>
             <input name="issueDate" type="date" value="${escapeAttribute(draft.issueDate)}">
           </label>
           <label class="field wide-field">
-            <span>Issue Notes</span>
+            <span>${isReturn ? "Return" : "Issue"} Notes</span>
             <input name="issueNotes" value="${escapeAttribute(draft.issueNotes)}" placeholder="Optional note for issue document">
           </label>
           <div class="form-actions">
             <button class="button secondary" type="button" onclick="window.erpApp.closeModal()">Cancel</button>
-            <button class="button" type="submit">Accept Request</button>
+            <button class="button" type="submit">Accept ${escapeHtml(requestKindLabel(detail.requestKind))}</button>
           </div>
         </form>
       </section>
@@ -5706,8 +5820,11 @@
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
+    const isReturn = String(data.get("requestKind") || "REQUEST").toUpperCase() === "RETURN";
     const payload = {
       requestId: data.get("requestId"),
+      requestKind: data.get("requestKind"),
+      activityId: data.get("activityId"),
       activityName: String(data.get("activityName") || "").trim(),
       activityType: data.get("activityType"),
       devoteeId: data.get("devoteeId"),
@@ -5719,8 +5836,12 @@
       issueDate: data.get("issueDate"),
       issueNotes: String(data.get("issueNotes") || "").trim()
     };
-    if (!payload.activityName || !payload.activityType || !payload.devoteeId || !payload.warehouseId) {
+    if (!isReturn && (!payload.activityName || !payload.activityType || !payload.devoteeId || !payload.warehouseId)) {
       showToast("Activity name, type, devotee, and warehouse are required");
+      return;
+    }
+    if (isReturn && !payload.activityId) {
+      showToast("Return activity is required");
       return;
     }
     setLoading(true);
@@ -5730,7 +5851,7 @@
       await Promise.all([refreshRequestsData(), refreshActivitiesData(), refreshDocumentsData(), loadCurrentStock(true)]);
       state.requestDetailId = result.requestId || payload.requestId;
       content.innerHTML = renderRequestsMarkup();
-      showToast(`Request accepted. Issue ${result.documentId || ""} created`);
+      showToast(`${requestKindLabel(result.requestKind)} accepted. ${result.documentId || ""} created`);
     } catch (error) {
       showToast(error.message || "Could not accept request");
     } finally {
@@ -8934,6 +9055,7 @@
     setReportMonth,
     setOnlineClassSearch,
     setRequestSearch,
+    setBookDistributorSearch,
     setRequestGroupFilter,
     setRequestWarehouseFilter,
     setSaleEntrySearch,

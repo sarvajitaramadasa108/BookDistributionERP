@@ -25,7 +25,9 @@
     requestQtyByCode: {},
     saleQtyByCode: {},
     activities: [],
+    requestKind: "REQUEST",
     selectedRequestActivity: "General Issue",
+    selectedReturnActivityId: "",
     customRequestActivity: "",
     cart: [],
     activityDetailId: "",
@@ -38,6 +40,7 @@
       cashAmount: ""
     },
     pendingRequests: [],
+    notifications: [],
     reports: null,
     loading: false,
     menuOpen: false
@@ -210,6 +213,18 @@
     return options;
   }
 
+  function requestKindLabel(kind = state.requestKind) {
+    return String(kind || "REQUEST").toUpperCase() === "RETURN" ? "Return" : "Request";
+  }
+
+  function selectedReturnActivity() {
+    return (state.activities || []).find((activity) => String(activity.activityId || "") === String(state.selectedReturnActivityId || ""));
+  }
+
+  function requestCatalogRows() {
+    return state.requestKind === "RETURN" ? (state.activityStock || []) : (state.catalogByGroup[state.itemGroup] || []);
+  }
+
   function profilePayload(extra) {
     const form = state.profile || state.profileForm || {};
     const category = String(form.category || "").toUpperCase();
@@ -316,6 +331,10 @@
     });
   }
 
+  async function refreshNotifications() {
+    state.notifications = await api("publicTest.notifications", { mobile: state.mobile });
+  }
+
   async function loadActivityStock(activityId) {
     const selected = activityId || state.saleActivityId;
     if (!selected) {
@@ -327,7 +346,8 @@
 
   function filteredCatalog() {
     const search = normalizeText(state.search);
-    return (state.catalogByGroup[state.itemGroup] || []).filter((item) => {
+    return requestCatalogRows().filter((item) => {
+      if (state.requestKind === "RETURN" && String(item.itemGroup || "BOOK").toUpperCase() !== state.itemGroup) return false;
       if (!search) return true;
       return [item.name, item.bookName, item.erpCode, item.bookId, item.category, item.bookType]
         .some((value) => normalizeText(value).includes(search));
@@ -460,24 +480,29 @@
 
   async function submitRequest() {
     if (!state.cart.length) return showToast("Add items to cart");
-    const choice = state.selectedRequestActivity;
+    const isReturn = state.requestKind === "RETURN";
+    if (isReturn && !state.selectedReturnActivityId) return showToast("Select activity for return");
+    const returnActivity = selectedReturnActivity();
+    const choice = isReturn ? (returnActivity?.activityName || "General Issue") : state.selectedRequestActivity;
     const requestActivityName = choice === "Add another activity"
       ? String(state.customRequestActivity || "").trim()
       : String(choice || "General Issue").trim();
     if (!requestActivityName) return showToast("Enter activity name");
     try {
-      setLoading(true, "Placing request...");
+      setLoading(true, isReturn ? "Placing return..." : "Placing request...");
       const result = await api("publicTest.submitRequest", profilePayload({
+        requestKind: state.requestKind,
+        requestedActivityId: isReturn ? state.selectedReturnActivityId : "",
         requestActivityName,
         lines: state.cart
       }));
       state.cart = [];
       state.selectedRequestActivity = requestActivityName;
       state.customRequestActivity = "";
-      await Promise.all([refreshActivities(), refreshPendingRequests()]);
+      await Promise.all([refreshActivities(), refreshPendingRequests(), refreshNotifications()]);
       state.view = "pending";
       render();
-      showToast(`Request placed: ${result.requestCode || "Done"}`);
+      showToast(`${requestKindLabel()} placed: ${result.requestCode || "Done"}`);
     } catch (error) {
       showToast(error.message || "Could not place request");
     } finally {
@@ -687,20 +712,34 @@
 
   function renderRequest() {
     const rows = filteredCatalog();
+    const isReturn = state.requestKind === "RETURN";
     return `
       <div class="floating-request-actions test-floating-actions"><button class="segment active" data-action="showRequestCart">Go to Cart (${cartQty(state.cart)})</button></div>
       <section class="public-card">
         <div class="public-card-header compact-header">
           <h2>Request / Return Books</h2>
-          <div class="public-tag">${state.itemGroup === "BOOK" ? "Books" : "Devotional Items"}</div>
+          <div class="public-tag">${requestKindLabel()}</div>
         </div>
+        <div class="segmented category-segmented">
+          <button class="segment ${state.requestKind === "REQUEST" ? "active" : ""}" data-request-kind="REQUEST">Request Books</button>
+          <button class="segment ${state.requestKind === "RETURN" ? "active" : ""}" data-request-kind="RETURN">Return Books</button>
+        </div>
+        ${isReturn ? `
+          <label class="field-label">Activity</label>
+          <select class="public-input" data-return-activity>
+            <option value="">Select activity to return against</option>
+            ${state.activities.map((activity) => `<option value="${escapeAttr(activity.activityId)}" ${activity.activityId === state.selectedReturnActivityId ? "selected" : ""}>${escapeHtml(activity.activityName || "Activity")}</option>`).join("")}
+          </select>
+        ` : ""}
         <div class="catalog-toolbar">
           <div>${renderGroupToggle()}</div>
           ${renderSearch()}
         </div>
       </section>
       <section class="catalog-grid compact-grid test-catalog-grid">
-        ${rows.map((item) => renderCatalogCard(item, "request")).join("") || `<div class="empty-state">No stock found.</div>`}
+        ${isReturn && !state.selectedReturnActivityId
+          ? `<div class="empty-state">Select an activity to see returnable stock.</div>`
+          : rows.map((item) => renderCatalogCard(item, "request")).join("") || `<div class="empty-state">No stock found.</div>`}
       </section>
     `;
   }
@@ -712,9 +751,25 @@
         <h2>Pending Requests / Returns</h2>
         <p class="muted">Requests or returns submitted from this phone number that are waiting for backend acceptance.</p>
       </section>
+      ${(state.notifications || []).length ? `
+        <section class="activity-list">
+          ${state.notifications.slice(0, 3).map((notice) => `
+            <article class="public-card">
+              <div class="split-row">
+                <div>
+                  <h3>${escapeHtml(notice.title || "Request update")}</h3>
+                  <p class="muted">${escapeHtml(notice.message || "")}</p>
+                </div>
+                <div class="public-tag">${displayDate(notice.createdAt)}</div>
+              </div>
+            </article>
+          `).join("")}
+        </section>
+      ` : ""}
       <section class="activity-list pending-request-list">
         ${rows.map((row) => {
           const lines = row.lines || [];
+          const kindLabel = requestKindLabel(row.requestKind);
           return `
             <article class="public-card activity-card pending-request-card">
               <div class="split-row">
@@ -722,7 +777,7 @@
                   <h3>${escapeHtml(row.requestActivityName || "General Issue")}</h3>
                   <p>${escapeHtml(row.requestCode || row.requestId || "Request")} · ${displayDate(row.createdAt)} · ${escapeHtml(row.status || "Pending")}</p>
                 </div>
-                <div class="public-tag">Request</div>
+                <div class="public-tag">${escapeHtml(kindLabel)}</div>
               </div>
               <div class="metric-grid">
                 <div><span>Total Qty</span><strong>${qty(row.totalQty)}</strong></div>
@@ -757,23 +812,32 @@
 
   function renderRequestCart() {
     const options = activityOptions();
+    const isReturn = state.requestKind === "RETURN";
     return `
       <section class="public-card">
-        <h2>Request Cart</h2>
+        <h2>${requestKindLabel()} Cart</h2>
         ${state.cart.map((line) => `
           <div class="cart-row">
             <div><strong>${escapeHtml(line.itemName)}</strong><p>${money(line.salePrice)} · ${escapeHtml(line.erpCode)}</p></div>
             <input class="qty-input" type="number" min="0" value="${escapeAttr(line.quantity)}" data-cart-qty="${escapeAttr(line.erpCode)}">
           </div>
         `).join("") || `<div class="empty-state">Your cart is empty.</div>`}
-        <label class="field-label">Activity Name</label>
-        <select class="public-input" data-request-activity>
-          ${options.map((option) => `<option value="${escapeAttr(option)}" ${option === state.selectedRequestActivity ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
-        </select>
-        ${state.selectedRequestActivity === "Add another activity" ? `<input class="public-input" data-custom-request-activity value="${escapeAttr(state.customRequestActivity)}" placeholder="Type activity name">` : ""}
+        ${isReturn ? `
+          <label class="field-label">Activity</label>
+          <select class="public-input" data-return-activity>
+            <option value="">Select activity</option>
+            ${state.activities.map((activity) => `<option value="${escapeAttr(activity.activityId)}" ${activity.activityId === state.selectedReturnActivityId ? "selected" : ""}>${escapeHtml(activity.activityName || "Activity")}</option>`).join("")}
+          </select>
+        ` : `
+          <label class="field-label">Activity Name</label>
+          <select class="public-input" data-request-activity>
+            ${options.map((option) => `<option value="${escapeAttr(option)}" ${option === state.selectedRequestActivity ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+          </select>
+          ${state.selectedRequestActivity === "Add another activity" ? `<input class="public-input" data-custom-request-activity value="${escapeAttr(state.customRequestActivity)}" placeholder="Type activity name">` : ""}
+        `}
         <div class="button-row">
           <button class="button secondary" data-action="backToRequest">Back</button>
-          <button class="button" data-action="submitRequest">Place Request</button>
+          <button class="button" data-action="submitRequest">Place ${requestKindLabel()}</button>
         </div>
       </section>
     `;
@@ -962,7 +1026,7 @@
 
   function findItem(code, target) {
     if (target === "sale") return (state.activityStock || []).find((item) => String(item.erpCode || item.bookId) === String(code));
-    return (state.catalogByGroup[state.itemGroup] || []).find((item) => String(item.erpCode || item.bookId) === String(code));
+    return requestCatalogRows().find((item) => String(item.erpCode || item.bookId) === String(code));
   }
 
   root.addEventListener("click", async (event) => {
@@ -979,7 +1043,7 @@
           if (state.view === "reports") {
             await Promise.all([refreshActivities(), refreshReports()]);
           } else if (state.view === "pending") {
-            await refreshPendingRequests();
+            await Promise.all([refreshPendingRequests(), refreshNotifications()]);
           } else {
             await refreshActivities();
           }
@@ -1000,6 +1064,25 @@
     }
     if (button.dataset.group) {
       state.itemGroup = button.dataset.group;
+      render();
+      return;
+    }
+    if (button.dataset.requestKind) {
+      state.requestKind = button.dataset.requestKind === "RETURN" ? "RETURN" : "REQUEST";
+      state.cart = [];
+      state.requestQtyByCode = {};
+      state.search = "";
+      if (state.requestKind === "RETURN" && !state.selectedReturnActivityId && state.activities.length) {
+        state.selectedReturnActivityId = state.activities[0].activityId || "";
+        try {
+          setLoading(true, "Loading returnable stock...");
+          await loadActivityStock(state.selectedReturnActivityId);
+        } catch (error) {
+          showToast(error.message || "Could not load returnable stock");
+        } finally {
+          setLoading(false);
+        }
+      }
       render();
       return;
     }
@@ -1156,6 +1239,21 @@
       render();
       return;
     }
+    if (input.dataset.returnActivity !== undefined) {
+      state.selectedReturnActivityId = input.value;
+      state.cart = [];
+      state.requestQtyByCode = {};
+      try {
+        setLoading(true, "Loading returnable stock...");
+        await loadActivityStock(state.selectedReturnActivityId);
+        render();
+      } catch (error) {
+        showToast(error.message || "Could not load returnable stock");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     if (input.dataset.saleActivity !== undefined) {
       state.saleActivityId = input.value;
       state.saleCart = [];
@@ -1172,7 +1270,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=3").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=4").catch(() => {});
   }
 
   render();

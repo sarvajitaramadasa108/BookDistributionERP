@@ -2044,6 +2044,8 @@ async function catalogProfileLookup(supabase, payload) {
 async function createCatalogRequest(supabase, payload, currentUser) {
   const sourceWarehouseRow = await resolveWarehouseRow(supabase, payload.sourceWarehouseId || payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
   if (!sourceWarehouseRow) throw new Error("Warehouse is required");
+  const requestKind = String(payload.requestKind || payload.kind || "REQUEST").trim().toUpperCase();
+  if (!["REQUEST", "RETURN"].includes(requestKind)) throw new Error("Request type is required");
   const requesterName = String(payload.requesterName || payload.name || "").trim();
   const requesterMobile = normalizeMobile(payload.requesterMobile || payload.mobile || "");
   if (!requesterName) throw new Error("Name is required");
@@ -2068,6 +2070,10 @@ async function createCatalogRequest(supabase, payload, currentUser) {
   const preacherName = String(payload.preacherName || "").trim();
   const requesterLocation = String(payload.requesterLocation || payload.location || "").trim();
   const requestActivityName = String(payload.requestActivityName || payload.activityName || "General Issue").trim() || "General Issue";
+  const requestedActivityRow = requestKind === "RETURN"
+    ? await resolveActivityRow(supabase, payload.requestedActivityId || payload.activityId || payload.requestedActivityCode || "")
+    : null;
+  if (requestKind === "RETURN" && !requestedActivityRow) throw new Error("Activity is required for return");
   if (!requesterSegment) throw new Error("Category is required");
   if (!requesterLocation) throw new Error("Location is required");
   if (requesterSegment === "FOLK" && !folkGuideName) throw new Error("Folk guide name is required");
@@ -2079,6 +2085,9 @@ async function createCatalogRequest(supabase, payload, currentUser) {
     source_warehouse_id: sourceWarehouseRow.id,
     source_warehouse_code: sourceWarehouseRow.warehouse_code || "",
     source_warehouse_name: sourceWarehouseRow.warehouse_name || "",
+    request_kind: requestKind,
+    requested_activity_id: requestedActivityRow ? requestedActivityRow.id : null,
+    requested_activity_code: requestedActivityRow ? requestedActivityRow.activity_code || "" : "",
     item_group: itemGroup,
     requester_name: requesterName,
     requester_mobile: requesterMobile,
@@ -2111,6 +2120,7 @@ async function createCatalogRequest(supabase, payload, currentUser) {
     requestId: request.id,
     requestCode: request.request_code,
     sourceWarehouseName: request.source_warehouse_name,
+    requestKind: request.request_kind || requestKind,
     itemGroup: request.item_group,
     requesterName: request.requester_name,
     requesterMobile: request.requester_mobile,
@@ -2119,6 +2129,8 @@ async function createCatalogRequest(supabase, payload, currentUser) {
     preacherName: request.preacher_name,
     requesterLocation: request.requester_location,
     requestActivityName: request.request_activity_name || "General Issue",
+    requestedActivityId: request.requested_activity_id || "",
+    requestedActivityCode: request.requested_activity_code || "",
     acceptedActivityId: request.accepted_activity_id || "",
     acceptedActivityCode: request.accepted_activity_code || "",
     acceptedDocumentId: request.accepted_document_id || "",
@@ -2159,6 +2171,7 @@ async function catalogRequestsList(supabase) {
     return {
       requestId: row.id,
       requestCode: row.request_code,
+      requestKind: row.request_kind || "REQUEST",
       sourceWarehouseId: row.source_warehouse_id || "",
       sourceWarehouseCode: row.source_warehouse_code || "",
       sourceWarehouseName: row.source_warehouse_name || "",
@@ -2170,6 +2183,8 @@ async function catalogRequestsList(supabase) {
       preacherName: row.preacher_name || "",
       requesterLocation: row.requester_location || "",
       requestActivityName: row.request_activity_name || "General Issue",
+      requestedActivityId: row.requested_activity_id || "",
+      requestedActivityCode: row.requested_activity_code || "",
       acceptedActivityId: row.accepted_activity_id || "",
       acceptedActivityCode: row.accepted_activity_code || "",
       acceptedDocumentId: row.accepted_document_id || "",
@@ -2219,6 +2234,7 @@ async function catalogRequestsByMobile(supabase, payload) {
     return {
       requestId: row.id,
       requestCode: row.request_code,
+      requestKind: row.request_kind || "REQUEST",
       sourceWarehouseId: row.source_warehouse_id || "",
       sourceWarehouseCode: row.source_warehouse_code || "",
       sourceWarehouseName: row.source_warehouse_name || "",
@@ -2230,6 +2246,8 @@ async function catalogRequestsByMobile(supabase, payload) {
       preacherName: row.preacher_name || "",
       requesterLocation: row.requester_location || "",
       requestActivityName: row.request_activity_name || "General Issue",
+      requestedActivityId: row.requested_activity_id || "",
+      requestedActivityCode: row.requested_activity_code || "",
       acceptedActivityId: row.accepted_activity_id || "",
       acceptedActivityCode: row.accepted_activity_code || "",
       acceptedDocumentId: row.accepted_document_id || "",
@@ -2244,6 +2262,71 @@ async function catalogRequestsByMobile(supabase, payload) {
       lines: requestLines
     };
   });
+}
+
+async function createRequestNotification(supabase, payload) {
+  const requesterMobile = normalizeMobile(payload.requesterMobile || payload.mobile || "");
+  if (requesterMobile.length !== 10) return null;
+  const { error } = await supabase.from("request_notifications").insert({
+    requester_mobile: requesterMobile,
+    request_id: payload.requestId || null,
+    title: String(payload.title || "Request update").trim(),
+    message: String(payload.message || "").trim()
+  });
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("request_notifications") || message.includes("schema cache") || message.includes("does not exist")) {
+      return null;
+    }
+    throw error;
+  }
+  return { ok: true };
+}
+
+async function requestNotificationsByMobile(supabase, payload) {
+  const requesterMobile = normalizeMobile(payload.requesterMobile || payload.mobile || "");
+  if (requesterMobile.length !== 10) throw new Error("Mobile number is required");
+  const { data, error } = await supabase
+    .from("request_notifications")
+    .select("*")
+    .eq("requester_mobile", requesterMobile)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("request_notifications") || message.includes("schema cache") || message.includes("does not exist")) {
+      return [];
+    }
+    throw error;
+  }
+  return (data || []).map((row) => ({
+    notificationId: row.id,
+    requestId: row.request_id || "",
+    title: row.title || "",
+    message: row.message || "",
+    readAt: row.read_at || "",
+    createdAt: row.created_at || ""
+  }));
+}
+
+async function bookDistributorsList(supabase) {
+  const { data, error } = await supabase
+    .from("public_request_profiles")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map((row) => ({
+    distributorId: row.id,
+    mobile: row.mobile || "",
+    name: row.name || "",
+    age: row.age,
+    category: row.category || "",
+    preacherName: row.preacher_name || "",
+    location: row.location || "",
+    devoteeId: row.devotee_id || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || ""
+  }));
 }
 
 async function approveCatalogRequest(supabase, payload, currentUser) {
@@ -2268,9 +2351,15 @@ async function approveCatalogRequest(supabase, payload, currentUser) {
   if (linesResult.error) throw linesResult.error;
   const requestLines = Array.isArray(linesResult.data) ? linesResult.data : [];
   if (!requestLines.length) throw new Error("This request has no item lines");
+  const requestKind = String(requestRow.request_kind || "REQUEST").trim().toUpperCase() === "RETURN" ? "RETURN" : "REQUEST";
 
-  const activityPayload = {
-    name: String(payload.activityName || payload.name || requestRow.request_activity_name || "").trim(),
+  let createdActivity = null;
+  let createdDocument = null;
+  let activityPayload = null;
+  if (requestKind === "REQUEST") {
+    const defaultActivityName = [requestRow.request_activity_name, requestRow.requester_name].map((value) => String(value || "").trim()).filter(Boolean).join(" - ");
+    activityPayload = {
+    name: String(payload.activityName || payload.name || defaultActivityName || requestRow.request_activity_name || "").trim(),
     type: String(payload.activityType || payload.type || "Stall").trim(),
     devoteeId: String(payload.devoteeId || "").trim(),
     warehouseId: String(payload.warehouseId || requestRow.source_warehouse_code || "").trim(),
@@ -2278,14 +2367,14 @@ async function approveCatalogRequest(supabase, payload, currentUser) {
     startDate: payload.startDate || null,
     endDate: payload.endDate || null,
     status: String(payload.activityStatus || payload.status || "Running").trim() || "Running"
-  };
-  if (!activityPayload.name || !activityPayload.type || !activityPayload.devoteeId || !activityPayload.warehouseId) {
-    throw new Error("Activity name, type, devotee, and warehouse are required");
-  }
+    };
+    if (!activityPayload.name || !activityPayload.type || !activityPayload.devoteeId || !activityPayload.warehouseId) {
+      throw new Error("Activity name, type, devotee, and warehouse are required");
+    }
 
-  const createdActivity = await createActivity(supabase, activityPayload);
-  const createdActivityCode = String(createdActivity.activity_code || "").trim();
-  const issuePayload = {
+    createdActivity = await createActivity(supabase, activityPayload);
+    const createdActivityCode = String(createdActivity.activity_code || "").trim();
+    const issuePayload = {
     documentType: "ISSUE",
     documentDate: payload.issueDate || toDateOnly(nowIso()),
     fromWarehouseId: activityPayload.warehouseId,
@@ -2300,28 +2389,61 @@ async function approveCatalogRequest(supabase, payload, currentUser) {
       rate: Number(line.sale_price || 0),
       notes: `Approved from request ${requestRow.request_code || ""}`.trim()
     }))
-  };
-  const createdIssue = await createDocument(supabase, issuePayload, currentUser);
+    };
+    createdDocument = await createDocument(supabase, issuePayload, currentUser);
+  } else {
+    const activityRow = await resolveActivityRow(supabase, payload.activityId || requestRow.requested_activity_code || requestRow.requested_activity_id || "");
+    if (!activityRow) throw new Error("Activity is required for return");
+    createdActivity = {
+      id: activityRow.id,
+      activity_code: activityRow.activity_code || "",
+      activity_name: activityRow.activity_name || ""
+    };
+    const returnPayload = {
+      documentType: "RETURN",
+      documentDate: payload.returnDate || payload.issueDate || toDateOnly(nowIso()),
+      toWarehouseId: payload.warehouseId || requestRow.source_warehouse_code || "",
+      activityId: activityRow.activity_code || activityRow.id,
+      status: "Posted",
+      notes: String(payload.returnNotes || payload.issueNotes || requestRow.notes || "").trim(),
+      itemGroup: requestRow.item_group || deriveRequestItemGroup(requestLines, "BOOK"),
+      lines: requestLines.map((line) => ({
+        bookId: line.item_erp_code,
+        erpCode: line.item_erp_code,
+        quantity: Number(line.requested_qty || 0),
+        rate: Number(line.sale_price || 0),
+        notes: `Approved from return ${requestRow.request_code || ""}`.trim()
+      }))
+    };
+    createdDocument = await createDocument(supabase, returnPayload, currentUser);
+  }
 
   const { error: updateRequestError } = await supabase.from("catalog_requests").update({
     status: "Accepted",
     accepted_activity_id: createdActivity.id,
     accepted_activity_code: createdActivity.activity_code || "",
-    accepted_document_id: createdIssue.documentRowId || null,
-    accepted_document_code: createdIssue.documentId || "",
+    accepted_document_id: createdDocument.documentRowId || null,
+    accepted_document_code: createdDocument.documentId || "",
     accepted_at: nowIso(),
     accepted_by_user_id: currentUser && isUuidLike(currentUser.userId) ? currentUser.userId : null,
     updated_at: nowIso()
   }).eq("id", requestRow.id);
   if (updateRequestError) throw updateRequestError;
+  await createRequestNotification(supabase, {
+    requesterMobile: requestRow.requester_mobile,
+    requestId: requestRow.id,
+    title: `${requestKind === "RETURN" ? "Return" : "Request"} accepted`,
+    message: `Your ${requestKind === "RETURN" ? "return" : "request"} for ${requestRow.request_activity_name || "General Issue"} has been accepted.`
+  });
 
   return {
     requestId: requestRow.id,
     requestCode: requestRow.request_code,
+    requestKind,
     status: "Accepted",
     activityId: createdActivity.activity_code || "",
     activityName: createdActivity.activity_name || "",
-    documentId: createdIssue.documentId || "",
+    documentId: createdDocument.documentId || "",
     acceptedAt: nowIso()
   };
 }
@@ -2851,8 +2973,9 @@ async function publicAcceptedActivityLineMap(supabase, mobile) {
   if (requesterMobile.length !== 10) return new Map();
   const { data: requests, error: requestError } = await supabase
     .from("catalog_requests")
-    .select("id, request_code, request_activity_name, accepted_activity_id, accepted_activity_code, accepted_document_code, accepted_at")
+    .select("id, request_code, request_kind, request_activity_name, accepted_activity_id, accepted_activity_code, accepted_document_code, accepted_at")
     .eq("requester_mobile", requesterMobile)
+    .eq("request_kind", "REQUEST")
     .not("accepted_activity_id", "is", null);
   if (requestError) throw requestError;
   const requestIds = (requests || []).map((row) => row.id).filter(Boolean);
@@ -3132,9 +3255,12 @@ async function publicActivityStock(supabase, payload) {
 async function publicSubmitRequest(supabase, payload) {
   const profile = await ensurePublicProfileAndDevotee(supabase, payload);
   const testWarehouse = await resolveTestWarehouse(supabase);
+  const requestKind = String(payload.requestKind || payload.kind || "REQUEST").trim().toUpperCase() === "RETURN" ? "RETURN" : "REQUEST";
   const requestActivityName = String(payload.requestActivityName || payload.activityName || "General Issue").trim() || "General Issue";
   return createCatalogRequest(supabase, {
     ...payload,
+    requestKind,
+    requestedActivityId: payload.requestedActivityId || payload.activityId || "",
     sourceWarehouseId: testWarehouse.warehouse_code,
     sourceWarehouseName: testWarehouse.warehouse_name,
     requesterName: profile.name,
@@ -4300,13 +4426,15 @@ async function main(request) {
       "catalog.profileLookup",
       "catalog.submit",
       "catalog.requestsByMobile",
+      "catalog.notificationsByMobile",
       "publicTest.profileLookup",
       "publicTest.profileSave",
       "publicTest.activities",
       "publicTest.activityStock",
       "publicTest.submitRequest",
       "publicTest.submitSale",
-      "publicTest.reports"
+      "publicTest.reports",
+      "publicTest.notifications"
     ]);
     const currentUser = await requireCurrentUser(supabase, payload, publicActions.has(action));
 
@@ -4447,6 +4575,8 @@ async function main(request) {
         return json(200, { ok: true, data: await createCatalogRequest(supabase, payload, currentUser) });
       case "catalog.requestsByMobile":
         return json(200, { ok: true, data: await catalogRequestsByMobile(supabase, payload) });
+      case "catalog.notificationsByMobile":
+        return json(200, { ok: true, data: await requestNotificationsByMobile(supabase, payload) });
       case "publicTest.profileLookup":
         return json(200, { ok: true, data: await publicProfileLookup(supabase, payload) });
       case "publicTest.profileSave":
@@ -4461,10 +4591,15 @@ async function main(request) {
         return json(200, { ok: true, data: await publicSubmitActivitySale(supabase, payload) });
       case "publicTest.reports":
         return json(200, { ok: true, data: await publicActivityReports(supabase, payload) });
+      case "publicTest.notifications":
+        return json(200, { ok: true, data: await requestNotificationsByMobile(supabase, payload) });
       case "requests.list":
         return json(200, { ok: true, data: await catalogRequestsList(supabase) });
       case "requests.approve":
         return json(200, { ok: true, data: await approveCatalogRequest(supabase, payload, currentUser) });
+      case "bookDistributors.list":
+        requireAdminUser(currentUser);
+        return json(200, { ok: true, data: await bookDistributorsList(supabase) });
       case "sales.entriesList":
         return json(200, { ok: true, data: await saleEntriesList(supabase, payload, currentUser) });
       case "sales.entryDetail":

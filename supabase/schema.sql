@@ -232,6 +232,9 @@ create table if not exists public.catalog_requests (
   source_warehouse_id uuid references public.warehouses(id) on update cascade on delete set null,
   source_warehouse_code text not null default '',
   source_warehouse_name text not null default '',
+  request_kind text not null default 'REQUEST' check (request_kind in ('REQUEST', 'RETURN')),
+  requested_activity_id uuid references public.activities(id) on update cascade on delete set null,
+  requested_activity_code text not null default '',
   item_group text not null default 'BOOK',
   requester_name text not null default '',
   requester_mobile text not null default '',
@@ -267,6 +270,16 @@ create table if not exists public.catalog_request_lines (
   line_total numeric(14,2) not null default 0,
   created_at timestamptz not null default now(),
   unique (request_id, line_no)
+);
+
+create table if not exists public.request_notifications (
+  id uuid primary key default gen_random_uuid(),
+  requester_mobile text not null default '',
+  request_id uuid references public.catalog_requests(id) on update cascade on delete cascade,
+  title text not null default '',
+  message text not null default '',
+  read_at timestamptz,
+  created_at timestamptz not null default now()
 );
 
 create table if not exists public.audit_log (
@@ -308,7 +321,9 @@ create index if not exists idx_public_request_profiles_mobile on public.public_r
 create index if not exists idx_catalog_requests_created_at on public.catalog_requests (created_at desc);
 create index if not exists idx_catalog_requests_warehouse on public.catalog_requests (source_warehouse_id, created_at desc);
 create index if not exists idx_catalog_requests_mobile on public.catalog_requests (requester_mobile, created_at desc);
+create index if not exists idx_catalog_requests_kind on public.catalog_requests (request_kind, status, created_at desc);
 create index if not exists idx_catalog_request_lines_request on public.catalog_request_lines (request_id, line_no);
+create index if not exists idx_request_notifications_mobile on public.request_notifications (requester_mobile, created_at desc);
 
 alter table public.catalog_requests
   add column if not exists requester_segment text not null default '';
@@ -324,6 +339,15 @@ alter table public.catalog_requests
 
 alter table public.catalog_requests
   add column if not exists request_activity_name text not null default 'General Issue';
+
+alter table public.catalog_requests
+  add column if not exists request_kind text not null default 'REQUEST';
+
+alter table public.catalog_requests
+  add column if not exists requested_activity_id uuid references public.activities(id) on update cascade on delete set null;
+
+alter table public.catalog_requests
+  add column if not exists requested_activity_code text not null default '';
 
 alter table public.catalog_requests
   add column if not exists accepted_activity_id uuid references public.activities(id) on update cascade on delete set null;
@@ -349,6 +373,13 @@ alter table public.catalog_requests
 alter table public.catalog_requests
   add constraint catalog_requests_item_group_check
   check (item_group in ('BOOK', 'PARAPHERNALIA', 'MIXED'));
+
+alter table public.catalog_requests
+  drop constraint if exists catalog_requests_request_kind_check;
+
+alter table public.catalog_requests
+  add constraint catalog_requests_request_kind_check
+  check (request_kind in ('REQUEST', 'RETURN'));
 
 alter table public.catalog_requests
   drop constraint if exists catalog_requests_status_check;
