@@ -52,6 +52,12 @@ android-wrapper-vizag-sales/local.properties
 android-wrapper-vizag-sales/gradle/
 android-wrapper-vizag-sales/gradlew
 android-wrapper-vizag-sales/gradlew.bat
+android-wrapper-book-distribution/.gradle/
+android-wrapper-book-distribution/.idea/
+android-wrapper-book-distribution/.kotlin/
+android-wrapper-book-distribution/app/build/
+android-wrapper-book-distribution/build/
+android-wrapper-book-distribution/local.properties
 android-wrapper-annavaram/
 android-wrapper-simhachalam/
 frontend/sales-annavaram-sw.js

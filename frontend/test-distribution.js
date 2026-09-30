@@ -296,7 +296,7 @@
           preacherName: result.preacherName || "",
           location: result.location || ""
         };
-        await loadHomeData();
+        state.activities = [];
         state.screen = "home";
       } else {
         state.screen = "profile";
@@ -322,7 +322,7 @@
       setLoading(true, "Saving profile...");
       const result = await api("publicTest.profileSave", profilePayload());
       state.profile = result;
-      await loadHomeData();
+      state.activities = [];
       state.screen = "home";
       render();
     } catch (error) {
@@ -377,21 +377,28 @@
   async function reloadCurrentView() {
     try {
       setLoading(true, "Refreshing...");
-      await loadHomeData();
-      if (state.requestKind === "REQUEST" && state.itemGroup) {
-        state.catalogLoaded[state.itemGroup] = false;
-        await ensureCatalogGroup(state.itemGroup);
-      }
-      if (state.view === "pending") {
-        await Promise.all([refreshPendingRequests(), refreshNotifications()]);
+      if (state.view === "home") {
+        render();
+        showToast("Reloaded");
+        return;
       }
       if (state.view === "reports") {
-        await refreshReports();
-      }
-      if (state.view === "sale" && state.saleActivityId) {
-        await loadActivityStock(state.saleActivityId);
-      }
-      if ((state.view === "request" || state.view === "requestCart") && state.requestKind === "RETURN" && state.selectedReturnActivityId) {
+        await Promise.all([refreshActivities(), refreshReports()]);
+      } else if (state.view === "track") {
+        await refreshActivities();
+      } else if (state.view === "sale") {
+        await refreshActivities();
+        if (state.saleActivityId) {
+          await loadActivityStock(state.saleActivityId);
+        } else {
+          state.activityStock = [];
+        }
+      } else if (state.view === "pending") {
+        await Promise.all([refreshPendingRequests(), refreshNotifications()]);
+      } else if (state.requestKind === "REQUEST" && state.itemGroup) {
+        state.catalogLoaded[state.itemGroup] = false;
+        await ensureCatalogGroup(state.itemGroup);
+      } else if ((state.view === "request" || state.view === "requestCart") && state.requestKind === "RETURN" && state.selectedReturnActivityId) {
         await loadActivityStock(state.selectedReturnActivityId);
       }
       render();
@@ -1475,7 +1482,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=16").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=17").catch(() => {});
   }
 
   render();
