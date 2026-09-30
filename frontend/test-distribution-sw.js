@@ -1,4 +1,4 @@
-const CACHE_NAME = "hkm-test-distribution-v1";
+const CACHE_NAME = "hkm-test-distribution-v2";
 const CORE_ASSETS = [
   "/testdistribution",
   "/test-distribution.html",
@@ -20,6 +20,17 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
-  event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
+  const { request } = event;
+  if (request.method !== "GET") return;
+
+  event.respondWith(
+    fetch(request).then((response) => {
+      if (!response || response.status !== 200 || response.type !== "basic") {
+        return response;
+      }
+      const copy = response.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => null);
+      return response;
+    }).catch(() => caches.match(request))
+  );
 });

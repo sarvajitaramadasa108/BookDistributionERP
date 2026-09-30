@@ -1101,7 +1101,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=2").catch(() => {});
   }
 
   render();
