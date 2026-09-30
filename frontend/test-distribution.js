@@ -37,6 +37,7 @@
       method: "CASH",
       cashAmount: ""
     },
+    pendingRequests: [],
     reports: null,
     loading: false,
     menuOpen: false
@@ -58,6 +59,13 @@
   function money(value) {
     const number = Number(value || 0);
     return `Rs. ${number.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+  }
+
+  function displayDate(value) {
+    if (!value) return "-";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value).slice(0, 10) || "-";
+    return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
   }
 
   function qty(value) {
@@ -299,6 +307,15 @@
     state.reports = await api("publicTest.reports", profilePayload());
   }
 
+  async function refreshPendingRequests() {
+    const rows = await api("catalog.requestsByMobile", { requesterMobile: state.mobile });
+    state.pendingRequests = (rows || []).filter((row) => {
+      const status = normalizeText(row.status);
+      const accepted = row.acceptedAt || row.acceptedActivityId || row.acceptedDocumentCode || row.acceptedDocumentId;
+      return !accepted && !["accepted", "fulfilled", "rejected", "cancelled", "closed"].includes(status);
+    });
+  }
+
   async function loadActivityStock(activityId) {
     const selected = activityId || state.saleActivityId;
     if (!selected) {
@@ -457,8 +474,8 @@
       state.cart = [];
       state.selectedRequestActivity = requestActivityName;
       state.customRequestActivity = "";
-      await refreshActivities();
-      state.view = "track";
+      await Promise.all([refreshActivities(), refreshPendingRequests()]);
+      state.view = "pending";
       render();
       showToast(`Request placed: ${result.requestCode || "Done"}`);
     } catch (error) {
@@ -555,7 +572,8 @@
 
   function renderNav() {
     const items = [
-      ["request", "Place A Request"],
+      ["request", "Request / Return Books"],
+      ["pending", "Pending Requests / Returns"],
       ["track", "My Stock Track"],
       ["sale", "Enter Sale"],
       ["reports", "Reports"]
@@ -673,7 +691,7 @@
       <div class="floating-request-actions test-floating-actions"><button class="segment active" data-action="showRequestCart">Go to Cart (${cartQty(state.cart)})</button></div>
       <section class="public-card">
         <div class="public-card-header compact-header">
-          <h2>Place A Request</h2>
+          <h2>Request / Return Books</h2>
           <div class="public-tag">${state.itemGroup === "BOOK" ? "Books" : "Devotional Items"}</div>
         </div>
         <div class="catalog-toolbar">
@@ -683,6 +701,56 @@
       </section>
       <section class="catalog-grid compact-grid test-catalog-grid">
         ${rows.map((item) => renderCatalogCard(item, "request")).join("") || `<div class="empty-state">No stock found.</div>`}
+      </section>
+    `;
+  }
+
+  function renderPendingRequests() {
+    const rows = state.pendingRequests || [];
+    return `
+      <section class="public-card">
+        <h2>Pending Requests / Returns</h2>
+        <p class="muted">Requests or returns submitted from this phone number that are waiting for backend acceptance.</p>
+      </section>
+      <section class="activity-list pending-request-list">
+        ${rows.map((row) => {
+          const lines = row.lines || [];
+          return `
+            <article class="public-card activity-card pending-request-card">
+              <div class="split-row">
+                <div>
+                  <h3>${escapeHtml(row.requestActivityName || "General Issue")}</h3>
+                  <p>${escapeHtml(row.requestCode || row.requestId || "Request")} · ${displayDate(row.createdAt)} · ${escapeHtml(row.status || "Pending")}</p>
+                </div>
+                <div class="public-tag">Request</div>
+              </div>
+              <div class="metric-grid">
+                <div><span>Total Qty</span><strong>${qty(row.totalQty)}</strong></div>
+                <div><span>Total Worth</span><strong>${money(row.totalAmount)}</strong></div>
+                <div><span>Warehouse</span><strong>${escapeHtml(row.sourceWarehouseName || "Test")}</strong></div>
+                <div><span>Status</span><strong>${escapeHtml(row.status || "Pending")}</strong></div>
+              </div>
+              <div class="table-scroll pending-lines-table">
+                <table class="mini-table">
+                  <thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
+                  <tbody>
+                    ${lines.map((line) => {
+                      const lineQty = Number(line.requestedQty || line.quantity || 0);
+                      const rate = Number(line.salePrice || line.rate || 0);
+                      const amount = Number(line.lineTotal || line.amount || lineQty * rate || 0);
+                      return `<tr>
+                        <td>${escapeHtml(line.itemName || line.name || line.erpCode || "-")}<br><span class="muted">${escapeHtml(line.erpCode || line.bookId || "")}</span></td>
+                        <td>${qty(lineQty)}</td>
+                        <td>${money(rate)}</td>
+                        <td>${money(amount)}</td>
+                      </tr>`;
+                    }).join("") || `<tr><td colspan="4">No item rows found.</td></tr>`}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          `;
+        }).join("") || `<div class="empty-state">No pending requests or returns.</div>`}
       </section>
     `;
   }
@@ -878,6 +946,7 @@
   function renderHome() {
     const body = state.view === "requestCart" ? renderRequestCart()
       : state.view === "request" ? renderRequest()
+      : state.view === "pending" ? renderPendingRequests()
       : state.view === "track" ? renderTrack()
       : state.view === "sale" ? renderSale()
       : renderReports();
@@ -904,11 +973,13 @@
       state.view = button.dataset.view;
       state.search = "";
       state.menuOpen = false;
-      if (state.view === "track" || state.view === "sale" || state.view === "reports") {
+      if (state.view === "track" || state.view === "sale" || state.view === "reports" || state.view === "pending") {
         try {
-          setLoading(true, state.view === "sale" ? "Loading activity stock..." : state.view === "reports" ? "Loading reports..." : "Loading activities...");
+          setLoading(true, state.view === "sale" ? "Loading activity stock..." : state.view === "reports" ? "Loading reports..." : state.view === "pending" ? "Loading pending requests..." : "Loading activities...");
           if (state.view === "reports") {
             await Promise.all([refreshActivities(), refreshReports()]);
+          } else if (state.view === "pending") {
+            await refreshPendingRequests();
           } else {
             await refreshActivities();
           }
@@ -1101,7 +1172,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=2").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=3").catch(() => {});
   }
 
   render();
