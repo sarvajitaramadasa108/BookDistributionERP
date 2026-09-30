@@ -2237,6 +2237,55 @@ body.public-mode .loading-overlay {
   font-weight: 800;
 }
 
+#testRoot .report-filter-card {
+  padding-block: 16px;
+}
+
+#testRoot .report-filter-card h3 {
+  margin-bottom: 10px;
+}
+
+#testRoot .report-filter-segmented {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#testRoot .report-filter-segmented .segment {
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #fffdf8;
+  color: #63351c;
+  border-color: rgba(133, 82, 44, 0.22);
+}
+
+#testRoot .report-filter-segmented .segment.active {
+  background: linear-gradient(180deg, #9a4f22, #733211);
+  color: #fffaf0;
+  border-color: transparent;
+}
+
+#testRoot .report-activity-card {
+  padding-block: 16px;
+}
+
+#testRoot .report-activity-metrics,
+#testRoot .report-detail-metrics {
+  grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+}
+
+#testRoot .report-payment-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+#testRoot .report-payment-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 #testRoot .action-prompt {
   margin: 4px 0 12px;
   color: #6d4327;

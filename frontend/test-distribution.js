@@ -43,6 +43,8 @@
     pendingRequests: [],
     notifications: [],
     reports: null,
+    reportFilter: "all",
+    reportActivityDetailId: "",
     loading: false,
     menuOpen: false
   };
@@ -200,6 +202,36 @@
         return activitySum + bookActivityNumbers(book).saleWorth;
       }, 0);
     }, 0);
+  }
+
+  function activitySaleWorth(activity) {
+    return (activity.books || []).reduce((sum, book) => sum + bookActivityNumbers(book).saleWorth, 0);
+  }
+
+  function activityPaidAmount(activity) {
+    const summary = activity.summary || {};
+    const fromSummary = Number(summary.paidTotalAmount || 0);
+    if (fromSummary > 0) return fromSummary;
+    return (activity.payments || []).reduce((sum, payment) => sum + Number(payment.totalAmount || 0), 0);
+  }
+
+  function activityPendingAmount(activity) {
+    return Math.max(activitySaleWorth(activity) - activityPaidAmount(activity), 0);
+  }
+
+  function reportActivityBucket(activity) {
+    const status = normalizeText(activityStatus(activity));
+    const pending = activityPendingAmount(activity);
+    const saleWorth = activitySaleWorth(activity);
+    if (status === "closed" || status === "settled") return "settled";
+    if (pending > 0) return "pending";
+    if (saleWorth > 0) return "unsettled";
+    return "running";
+  }
+
+  function filteredReportActivities() {
+    const filter = state.reportFilter || "all";
+    return (state.activities || []).filter((activity) => filter === "all" || reportActivityBucket(activity) === filter);
   }
 
   function activityOptions() {
@@ -1038,6 +1070,8 @@
 
   function renderReports() {
     const report = state.reports || {};
+    const detail = (state.activities || []).find((activity) => activity.activityId === state.reportActivityDetailId);
+    if (detail) return renderReportActivityDetail(detail);
     const totalBookSales = Number(report.totalBookSales ?? activityGroupSales("BOOK") ?? 0);
     const totalDevotionalSales = Number(report.totalDevotionalSales ?? activityGroupSales("PARAPHERNALIA") ?? 0);
     const metrics = [
@@ -1048,6 +1082,14 @@
       ["Total Cash to be Settled", Number(report.totalCashToBeSettled || 0)],
       ["Total Online to be Settled", Number(report.totalOnlineToBeSettled || 0)]
     ];
+    const filters = [
+      ["all", "All"],
+      ["pending", "Pending"],
+      ["running", "Running"],
+      ["unsettled", "Unsettled"],
+      ["settled", "Settled"]
+    ];
+    const activities = filteredReportActivities();
     return `
       <section class="public-card">
         <h2>Reports</h2>
@@ -1055,6 +1097,91 @@
         <div class="metric-grid report-metric-grid">
           ${metrics.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${money(value)}</strong></div>`).join("")}
         </div>
+      </section>
+      <section class="public-card report-filter-card">
+        <h3>Filter Activities</h3>
+        <div class="segmented report-filter-segmented">
+          ${filters.map(([value, label]) => `<button class="segment ${state.reportFilter === value ? "active" : ""}" data-report-filter="${escapeAttr(value)}">${escapeHtml(label)}</button>`).join("")}
+        </div>
+      </section>
+      <section class="activity-list report-activity-list">
+        ${activities.map((activity) => {
+          const totals = activityWorth(activity);
+          const saleWorth = activitySaleWorth(activity);
+          const paidAmount = activityPaidAmount(activity);
+          const pendingAmount = activityPendingAmount(activity);
+          return `
+            <article class="public-card activity-card report-activity-card">
+              <div class="split-row">
+                <div>
+                  <h3>${escapeHtml(activity.activityName || "Activity")}</h3>
+                  <p>${escapeHtml(activityStatus(activity))}</p>
+                </div>
+                <button class="button secondary small-button" data-report-detail-activity="${escapeAttr(activity.activityId)}">Details</button>
+              </div>
+              <div class="metric-grid report-activity-metrics">
+                <div><span>Issue</span><strong>${money(totals.issueWorth)}</strong></div>
+                <div><span>Return</span><strong>${money(totals.returnWorth)}</strong></div>
+                <div><span>Sale</span><strong>${money(saleWorth)}</strong></div>
+                <div><span>Handed Over</span><strong>${money(paidAmount)}</strong></div>
+                <div><span>Pending</span><strong>${money(pendingAmount)}</strong></div>
+              </div>
+            </article>
+          `;
+        }).join("") || `<div class="empty-state">No activities found for this filter.</div>`}
+      </section>
+    `;
+  }
+
+  function renderReportActivityDetail(activity) {
+    const totals = activityWorth(activity);
+    const saleWorth = activitySaleWorth(activity);
+    const paidAmount = activityPaidAmount(activity);
+    const pendingAmount = activityPendingAmount(activity);
+    const payments = activity.payments || [];
+    return `
+      <div class="floating-request-actions activity-detail-back-actions"><button class="segment active" data-action="backToReports">Back</button></div>
+      <section class="public-card">
+        <h2>${escapeHtml(activity.activityName || "Activity")}</h2>
+        <p>${escapeHtml(activityStatus(activity))}</p>
+        <div class="metric-grid report-detail-metrics">
+          <div><span>Issue Worth</span><strong>${money(totals.issueWorth)}</strong></div>
+          <div><span>Return Worth</span><strong>${money(totals.returnWorth)}</strong></div>
+          <div><span>Sale Worth</span><strong>${money(saleWorth)}</strong></div>
+          <div><span>Amount Handed Over</span><strong>${money(paidAmount)}</strong></div>
+          <div><span>Pending Amount</span><strong>${money(pendingAmount)}</strong></div>
+          <div><span>Balance Stock Worth</span><strong>${money(totals.balanceWorth)}</strong></div>
+        </div>
+      </section>
+      <section class="public-card">
+        <h3>Payment Records</h3>
+        <div class="compact-doc-list">
+          ${payments.map((payment) => `
+            <div class="compact-doc-row report-payment-row">
+              <strong>${displayDate(payment.paymentDate)}</strong>
+              <span>Cash ${money(payment.cashAmount)} · Online ${money(payment.onlineAmount)}</span>
+              <strong>${money(payment.totalAmount)}</strong>
+            </div>
+          `).join("") || `<p class="muted">No payment records found.</p>`}
+        </div>
+      </section>
+      <section class="public-card table-scroll">
+        <h3>Item Details</h3>
+        <table class="mini-table">
+          <thead><tr><th>Item</th><th>Issue</th><th>Return</th><th>Sale</th><th>Balance</th></tr></thead>
+          <tbody>
+            ${(activity.books || []).map((book) => {
+              const values = bookActivityNumbers(book);
+              return `<tr>
+                <td>${escapeHtml(book.name || book.bookName || book.erpCode || book.bookId)}</td>
+                <td>${qty(values.issueQty)}<br><strong>${money(values.issueWorth)}</strong></td>
+                <td>${qty(values.returnQty)}<br><strong>${money(values.returnWorth)}</strong></td>
+                <td>${qty(values.saleQty)}<br><strong>${money(values.saleWorth)}</strong></td>
+                <td>${qty(values.balanceQty)}<br><strong>${money(values.balanceWorth)}</strong></td>
+              </tr>`;
+            }).join("") || `<tr><td colspan="5">No item rows found.</td></tr>`}
+          </tbody>
+        </table>
       </section>
     `;
   }
@@ -1174,6 +1301,17 @@
       render();
       return;
     }
+    if (button.dataset.reportFilter) {
+      state.reportFilter = button.dataset.reportFilter;
+      state.reportActivityDetailId = "";
+      render();
+      return;
+    }
+    if (button.dataset.reportDetailActivity) {
+      state.reportActivityDetailId = button.dataset.reportDetailActivity;
+      render();
+      return;
+    }
     if (button.dataset.paymentMethod) {
       state.salePayment.method = button.dataset.paymentMethod;
       render();
@@ -1207,6 +1345,10 @@
     if (action === "submitRequest") await submitRequest();
     if (action === "backToTrack") {
       state.activityDetailId = "";
+      render();
+    }
+    if (action === "backToReports") {
+      state.reportActivityDetailId = "";
       render();
     }
     if (action === "openSalePayment") openSalePayment();
@@ -1328,7 +1470,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=11").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=12").catch(() => {});
   }
 
   render();
