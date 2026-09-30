@@ -2194,6 +2194,24 @@ body.public-mode .loading-overlay {
   padding: 10px 16px;
 }
 
+#testRoot .activity-detail-back-actions {
+  position: fixed;
+  inset: max(82px, calc(env(safe-area-inset-top) + 74px)) max(14px, env(safe-area-inset-right)) auto auto;
+  z-index: 34;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  backdrop-filter: none;
+}
+
+#testRoot .activity-detail-back-actions .segment {
+  min-width: 0;
+  min-height: 44px;
+  border-radius: 999px;
+  padding: 10px 16px;
+}
+
 #testRoot .action-prompt {
   margin: 4px 0 12px;
   color: #6d4327;

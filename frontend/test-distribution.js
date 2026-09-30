@@ -922,8 +922,8 @@
     const books = activity.books || [];
     const totals = activityWorth(activity);
     return `
+      <div class="floating-request-actions activity-detail-back-actions"><button class="segment active" data-action="backToTrack">Back</button></div>
       <section class="public-card">
-        <button class="button secondary small-button" data-action="backToTrack">Back</button>
         <h2>${escapeHtml(activity.activityName || "Activity")}</h2>
         <p>${escapeHtml(activityStatus(activity))}</p>
         <div class="metric-grid">
@@ -1318,7 +1318,7 @@
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/test-distribution-sw.js?v=8").catch(() => {});
+    navigator.serviceWorker.register("/test-distribution-sw.js?v=9").catch(() => {});
   }
 
   render();
