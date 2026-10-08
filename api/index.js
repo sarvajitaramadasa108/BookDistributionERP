@@ -2456,6 +2456,124 @@ async function archiveAllExceptPreservedWarehouse(supabase, payload, currentUser
   };
 }
 
+async function resetActivitiesAndDocumentsToPreservedSet(supabase, payload, currentUser) {
+  requireAdminUser(currentUser);
+  const preserveDocumentCodes = new Set(
+    (Array.isArray(payload.preserveDocumentIds) ? payload.preserveDocumentIds : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  );
+  if (!preserveDocumentCodes.size) throw new Error("At least one document must be preserved");
+  const dryRun = payload.dryRun !== false;
+  const archiveTag = String(payload.archiveTag || `ACTIVITY_DOC_RESET_${toDateOnly(nowIso())}`).trim();
+
+  const [docsResult, activitiesResult, paymentsResult] = await Promise.all([
+    selectAllRows((from, to) => supabase.from("documents").select("*").range(from, to)),
+    selectAllRows((from, to) => supabase.from("activities").select("*").range(from, to)),
+    selectAllRows((from, to) => supabase.from("activity_settlement_payments").select("*").range(from, to)).catch(() => [])
+  ]);
+  const documents = docsResult || [];
+  const activities = activitiesResult || [];
+  const payments = paymentsResult || [];
+  const preserveDocs = documents.filter((doc) => preserveDocumentCodes.has(String(doc.document_code || "").trim()));
+  const missingDocumentCodes = Array.from(preserveDocumentCodes)
+    .filter((docCode) => !preserveDocs.some((doc) => String(doc.document_code || "").trim() === docCode));
+  if (missingDocumentCodes.length) {
+    throw new Error(`Preserved documents not found: ${missingDocumentCodes.join(", ")}`);
+  }
+  const preserveActivityIds = new Set(
+    preserveDocs
+      .map((doc) => String(doc.activity_id || "").trim())
+      .filter(Boolean)
+  );
+  const preserveActivityRows = activities.filter((activity) => preserveActivityIds.has(String(activity.id || "").trim()));
+  const docsToDelete = documents.filter((doc) => !preserveDocumentCodes.has(String(doc.document_code || "").trim()));
+  const activitiesToDelete = activities.filter((activity) => !preserveActivityIds.has(String(activity.id || "").trim()));
+  const paymentIdsToDelete = payments
+    .filter((payment) => !preserveActivityIds.has(String(payment.activity_id || "").trim()))
+    .map((payment) => payment.id)
+    .filter(Boolean);
+
+  const result = {
+    dryRun,
+    archiveTag,
+    preservedDocuments: preserveDocs.map((doc) => doc.document_code).filter(Boolean).sort(),
+    preservedDocumentCount: preserveDocs.length,
+    preservedActivities: preserveActivityRows.map((activity) => ({
+      activityId: activity.activity_code,
+      name: activity.activity_name,
+      status: activity.status
+    })).sort((a, b) => String(a.name).localeCompare(String(b.name))),
+    preservedActivityCount: preserveActivityRows.length,
+    documentsToDelete: docsToDelete.map((doc) => doc.document_code).filter(Boolean).sort(),
+    documentCountToDelete: docsToDelete.length,
+    activitiesToDelete: activitiesToDelete.map((activity) => ({
+      activityId: activity.activity_code,
+      name: activity.activity_name,
+      status: activity.status
+    })).sort((a, b) => String(a.name).localeCompare(String(b.name))),
+    activityCountToDelete: activitiesToDelete.length,
+    activityPaymentsToDelete: paymentIdsToDelete.length,
+    deletedDocuments: 0,
+    deletedActivities: 0,
+    cancelledActivities: 0,
+    deletedActivityPayments: 0
+  };
+
+  if (dryRun) return result;
+
+  const now = nowIso();
+  if (paymentIdsToDelete.length) {
+    const { error } = await supabase.from("activity_settlement_payments").delete().in("id", paymentIdsToDelete);
+    if (error) throw error;
+    result.deletedActivityPayments = paymentIdsToDelete.length;
+  }
+
+  const docIdsToDelete = docsToDelete.map((doc) => doc.id).filter(Boolean);
+  if (docIdsToDelete.length) {
+    const { error } = await supabase.from("documents").delete().in("id", docIdsToDelete);
+    if (error) throw error;
+    result.deletedDocuments = docIdsToDelete.length;
+  }
+
+  if (preserveActivityIds.size) {
+    const { error } = await supabase
+      .from("activities")
+      .update({
+        status: "Running",
+        active: true,
+        start_date: payload.startDate || "2026-10-01",
+        end_date: null,
+        settled_at: null,
+        updated_at: now
+      })
+      .in("id", Array.from(preserveActivityIds));
+    if (error) throw error;
+  }
+
+  for (const activity of activitiesToDelete) {
+    const { error: deleteError } = await supabase.from("activities").delete().eq("id", activity.id);
+    if (!deleteError) {
+      result.deletedActivities += 1;
+      continue;
+    }
+    const { error: cancelError } = await supabase
+      .from("activities")
+      .update({
+        status: "Cancelled",
+        active: false,
+        end_date: toDateOnly(now),
+        settled_at: null,
+        updated_at: now
+      })
+      .eq("id", activity.id);
+    if (cancelError) throw cancelError;
+    result.cancelledActivities += 1;
+  }
+
+  return result;
+}
+
 async function onlineClassWarehouseBooks(supabase, payload) {
   const sourceWarehouseRow = await resolveWarehouseRow(supabase, payload.sourceWarehouseId || payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
   const [itemsResult, stockRows] = await Promise.all([
@@ -5083,6 +5201,9 @@ async function main(request) {
       case "stock.archiveAllExceptPreservedWarehouse":
         requireAdminUser(currentUser);
         return json(200, { ok: true, data: await archiveAllExceptPreservedWarehouse(supabase, payload, currentUser) });
+      case "stock.resetActivitiesAndDocumentsToPreservedSet":
+        requireAdminUser(currentUser);
+        return json(200, { ok: true, data: await resetActivitiesAndDocumentsToPreservedSet(supabase, payload, currentUser) });
       case "activity.unsettled":
         return json(200, { ok: true, data: await getActivityUnsettled(supabase) });
       case "activity.complimentary":
