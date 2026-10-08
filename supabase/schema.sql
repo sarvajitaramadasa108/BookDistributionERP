@@ -60,9 +60,13 @@ create table if not exists public.warehouses (
   spoc text not null default '',
   mobile text not null default '',
   active boolean not null default true,
+  is_default_request_warehouse boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.warehouses
+  add column if not exists is_default_request_warehouse boolean not null default false;
 
 create table if not exists public.items (
   id uuid primary key default gen_random_uuid(),

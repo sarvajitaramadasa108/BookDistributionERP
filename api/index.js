@@ -326,7 +326,8 @@ function mapWarehouse(row) {
     type: row.warehouse_type,
     spoc: row.spoc,
     mobile: row.mobile,
-    active: row.active
+    active: row.active,
+    isDefaultRequestWarehouse: Boolean(row.is_default_request_warehouse)
   };
 }
 
@@ -631,13 +632,17 @@ async function upsertItemIfMissing(supabase, line) {
 
 async function createWarehouse(supabase, payload) {
   const warehouseCode = payload.warehouseId || payload.warehouseCode || await nextCode(supabase, "warehouses", "warehouse_code", "WH");
+  if (payload.isDefaultRequestWarehouse || payload.defaultRequestWarehouse) {
+    await supabase.from("warehouses").update({ is_default_request_warehouse: false }).neq("warehouse_code", warehouseCode);
+  }
   const { data, error } = await supabase.from("warehouses").insert({
     warehouse_code: warehouseCode,
     warehouse_name: String(payload.name || "").trim(),
     warehouse_type: String(payload.type || "Event").trim(),
     spoc: String(payload.spoc || "").trim(),
     mobile: String(payload.mobile || "").trim(),
-    active: payload.active !== false
+    active: payload.active !== false,
+    is_default_request_warehouse: Boolean(payload.isDefaultRequestWarehouse || payload.defaultRequestWarehouse)
   }).select("*").single();
   if (error) throw error;
   return mapWarehouse(data);
@@ -645,6 +650,9 @@ async function createWarehouse(supabase, payload) {
 
 async function updateWarehouse(supabase, payload) {
   const warehouseCode = String(payload.warehouseId || payload.warehouseCode || "").trim();
+  if (payload.isDefaultRequestWarehouse || payload.defaultRequestWarehouse) {
+    await supabase.from("warehouses").update({ is_default_request_warehouse: false }).neq("warehouse_code", warehouseCode);
+  }
   const updates = {
     warehouse_name: String(payload.name || "").trim(),
     warehouse_type: String(payload.type || "Event").trim(),
@@ -652,6 +660,9 @@ async function updateWarehouse(supabase, payload) {
     mobile: String(payload.mobile || "").trim(),
     active: payload.active !== false
   };
+  if (payload.isDefaultRequestWarehouse !== undefined || payload.defaultRequestWarehouse !== undefined) {
+    updates.is_default_request_warehouse = Boolean(payload.isDefaultRequestWarehouse || payload.defaultRequestWarehouse);
+  }
   const { data, error } = await supabase.from("warehouses").update(updates).eq("warehouse_code", warehouseCode).select("*").single();
   if (error) throw error;
   return mapWarehouse(data);
@@ -3378,10 +3389,22 @@ async function submitWarehouseSale(supabase, payload, currentUser) {
   return saleEntryDetail(supabase, { documentId: created.documentId });
 }
 
-async function resolveTestWarehouse(supabase) {
-  const row = await resolveWarehouseRow(supabase, "TEST");
-  if (!row) throw new Error("Test warehouse is not configured");
-  return row;
+async function resolveDefaultRequestWarehouse(supabase) {
+  const { data: defaultRows, error: defaultError } = await supabase
+    .from("warehouses")
+    .select("*")
+    .eq("is_default_request_warehouse", true)
+    .eq("active", true)
+    .limit(1);
+  if (defaultError) {
+    const message = String(defaultError.message || "").toLowerCase();
+    if (!message.includes("is_default_request_warehouse") && !message.includes("schema cache")) {
+      throw defaultError;
+    }
+  }
+  const defaultRow = (defaultRows || [])[0] || await resolveWarehouseRow(supabase, "WH001");
+  if (!defaultRow) throw new Error("Default request warehouse is not configured");
+  return defaultRow;
 }
 
 async function publicProfileLookup(supabase, payload) {
@@ -3539,7 +3562,7 @@ async function publicAcceptedActivityLineMap(supabase, mobile) {
 async function publicActivitySummaries(supabase, payload) {
   const profile = await publicProfileLookup(supabase, payload);
   if (!profile.exists) return [];
-  const testWarehouse = await resolveTestWarehouse(supabase);
+  const requestWarehouse = await resolveDefaultRequestWarehouse(supabase);
   const devoteeCode = publicDevoteeCodeForMobile(profile.mobile);
   const context = await getSettlementContext(supabase);
   const devotee = (context.devotees || []).find((row) => row.devotee_code === devoteeCode);
@@ -3562,7 +3585,7 @@ async function publicActivitySummaries(supabase, payload) {
   const acceptedActivityIds = new Set((acceptedRequests || []).map((row) => row.accepted_activity_id).filter(Boolean));
   return (context.activities || [])
     .filter((activity) => {
-      if (activity.warehouse_id !== testWarehouse.id) return false;
+      if (activity.warehouse_id !== requestWarehouse.id) return false;
       return acceptedActivityIds.has(activity.id) || (devotee && activity.devotee_id === devotee.id);
     })
     .map((activity) => buildSettlementSummaryForActivity(activity, context))
@@ -3640,7 +3663,7 @@ async function publicActivityReports(supabase, payload) {
     totalCashToBeSettled: 0,
     totalOnlineToBeSettled: 0
   };
-  const testWarehouse = await resolveTestWarehouse(supabase);
+  const requestWarehouse = await resolveDefaultRequestWarehouse(supabase);
   const devoteeCode = publicDevoteeCodeForMobile(profile.mobile);
   const context = await getSettlementContext(supabase);
   const devotee = (context.devotees || []).find((row) => row.devotee_code === devoteeCode);
@@ -3652,7 +3675,7 @@ async function publicActivityReports(supabase, payload) {
   if (requestError) throw requestError;
   const acceptedActivityIds = new Set((acceptedRequests || []).map((row) => row.accepted_activity_id).filter(Boolean));
   const accessibleActivityIds = new Set((context.activities || [])
-    .filter((activity) => activity.warehouse_id === testWarehouse.id)
+    .filter((activity) => activity.warehouse_id === requestWarehouse.id)
     .filter((activity) => acceptedActivityIds.has(activity.id) || (devotee && activity.devotee_id === devotee.id))
     .map((activity) => activity.id));
   const docsById = new Map((context.documents || []).map((doc) => [doc.id, doc]));
@@ -3741,15 +3764,15 @@ async function publicActivityStock(supabase, payload) {
 
 async function publicSubmitRequest(supabase, payload) {
   const profile = await ensurePublicProfileAndDevotee(supabase, payload);
-  const testWarehouse = await resolveTestWarehouse(supabase);
+  const requestWarehouse = await resolveDefaultRequestWarehouse(supabase);
   const requestKind = String(payload.requestKind || payload.kind || "REQUEST").trim().toUpperCase() === "RETURN" ? "RETURN" : "REQUEST";
   const requestActivityName = String(payload.requestActivityName || payload.activityName || "General Issue").trim() || "General Issue";
   return createCatalogRequest(supabase, {
     ...payload,
     requestKind,
     requestedActivityId: payload.requestedActivityId || payload.activityId || "",
-    sourceWarehouseId: testWarehouse.warehouse_code,
-    sourceWarehouseName: testWarehouse.warehouse_name,
+    sourceWarehouseId: requestWarehouse.warehouse_code,
+    sourceWarehouseName: requestWarehouse.warehouse_name,
     requesterName: profile.name,
     requesterMobile: profile.mobile,
     requesterSegment: profile.category,
@@ -3763,7 +3786,7 @@ async function publicSubmitRequest(supabase, payload) {
 async function publicSubmitActivitySale(supabase, payload) {
   const profile = await publicProfileLookup(supabase, payload);
   if (!profile.exists) throw new Error("Profile not found");
-  const testWarehouse = await resolveTestWarehouse(supabase);
+  const requestWarehouse = await resolveDefaultRequestWarehouse(supabase);
   const activityRef = String(payload.activityId || "").trim();
   if (!activityRef) throw new Error("Activity is required");
   const activityRow = await resolveActivityRow(supabase, activityRef);
@@ -3796,7 +3819,7 @@ async function publicSubmitActivitySale(supabase, payload) {
   const created = await createDocument(supabase, {
     documentType: "SALE",
     documentDate: payload.documentDate || nowIso(),
-    fromWarehouseId: testWarehouse.warehouse_code,
+    fromWarehouseId: requestWarehouse.warehouse_code,
     activityId: activityRow.activity_code,
     status: "Posted",
     notes: `Public sale by ${profile.name} (${profile.mobile})`,
