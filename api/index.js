@@ -1959,6 +1959,107 @@ async function resetWarehouseToOpening(supabase, payload, currentUser) {
   };
 }
 
+async function archiveWarehouseDocumentsAndClearStock(supabase, payload, currentUser) {
+  requireAdminUser(currentUser);
+  const warehouseRow = await resolveWarehouseRow(supabase, payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
+  if (!warehouseRow) throw new Error("Warehouse is required");
+  const dryRun = payload.dryRun !== false;
+  const archiveTag = String(payload.archiveTag || `ARCHIVED_STOCK_RESET_${toDateOnly(nowIso())}`).trim();
+  const archiveNote = String(payload.notes || `Archived for stock reset: ${archiveTag}`).trim();
+
+  const [
+    docsByWarehouseResult,
+    ledgerRowsResult
+  ] = await Promise.all([
+    supabase
+      .from("documents")
+      .select("id, document_code, document_type, document_date, status, from_warehouse_id, to_warehouse_id, activity_id")
+      .or(`from_warehouse_id.eq.${warehouseRow.id},to_warehouse_id.eq.${warehouseRow.id}`)
+      .order("document_date", { ascending: true }),
+    supabase
+      .from("stock_ledger")
+      .select("id, document_id, quantity_in, quantity_out, warehouse_id")
+      .eq("warehouse_id", warehouseRow.id)
+  ]);
+  if (docsByWarehouseResult.error) throw docsByWarehouseResult.error;
+  if (ledgerRowsResult.error) throw ledgerRowsResult.error;
+
+  const docIds = new Set((docsByWarehouseResult.data || []).map((row) => row.id).filter(Boolean));
+  for (const row of ledgerRowsResult.data || []) {
+    if (row.document_id) docIds.add(row.document_id);
+  }
+  const documentIds = Array.from(docIds);
+  const documents = documentIds.length
+    ? await selectAllRows((from, to) =>
+        supabase
+          .from("documents")
+          .select("id, document_code, document_type, document_date, status, from_warehouse_id, to_warehouse_id, activity_id")
+          .in("id", documentIds)
+          .range(from, to)
+      )
+    : [];
+  const countByType = {};
+  for (const doc of documents || []) {
+    const type = String(doc.document_type || "UNKNOWN").trim() || "UNKNOWN";
+    countByType[type] = Number(countByType[type] || 0) + 1;
+  }
+  const ledgerRows = documentIds.length
+    ? await selectAllRows((from, to) =>
+        supabase
+          .from("stock_ledger")
+          .select("id, document_id, quantity_in, quantity_out")
+          .in("document_id", documentIds)
+          .range(from, to)
+      )
+    : [];
+  const activeLedgerRows = (ledgerRows || []).filter((row) => Number(row.quantity_in || 0) !== 0 || Number(row.quantity_out || 0) !== 0);
+
+  if (!dryRun && documentIds.length) {
+    const now = nowIso();
+    const { error: ledgerError } = await supabase
+      .from("stock_ledger")
+      .update({ quantity_in: 0, quantity_out: 0, amount: 0 })
+      .in("document_id", documentIds);
+    if (ledgerError) throw ledgerError;
+
+    for (const doc of documents || []) {
+      const nextNotes = [String(doc.notes || "").trim(), archiveNote, `Original status: ${doc.status || ""}`]
+        .filter(Boolean)
+        .join(" | ");
+      const { error: docError } = await supabase
+        .from("documents")
+        .update({ status: "Cancelled", notes: nextNotes, updated_at: now })
+        .eq("id", doc.id);
+      if (docError) throw docError;
+    }
+
+    const { error: dayPaymentError } = await supabase
+      .from("sale_day_payments")
+      .delete()
+      .eq("warehouse_id", warehouseRow.id);
+    if (dayPaymentError) {
+      const message = String(dayPaymentError.message || "").toLowerCase();
+      if (!message.includes("sale_day_payments") && !message.includes("schema cache") && !message.includes("does not exist")) {
+        throw dayPaymentError;
+      }
+    }
+  }
+
+  const currentRowsAfter = dryRun ? [] : await stockCurrent(supabase);
+  return {
+    dryRun,
+    warehouseId: warehouseRow.warehouse_code,
+    warehouseName: warehouseRow.warehouse_name,
+    archiveTag,
+    documentsFound: documents.length,
+    ledgerRowsFound: ledgerRows.length,
+    activeLedgerRowsFound: activeLedgerRows.length,
+    countByType,
+    documentIds: (documents || []).map((doc) => doc.document_code || doc.id).filter(Boolean),
+    remainingStockRows: dryRun ? null : currentRowsAfter.filter((row) => String(row.warehouseId || "") === String(warehouseRow.warehouse_code || "") && Number(row.quantity || 0) !== 0).length
+  };
+}
+
 async function onlineClassWarehouseBooks(supabase, payload) {
   const sourceWarehouseRow = await resolveWarehouseRow(supabase, payload.sourceWarehouseId || payload.warehouseId || payload.warehouseCode || payload.warehouseName || "");
   const [itemsResult, stockRows] = await Promise.all([
@@ -4566,6 +4667,9 @@ async function main(request) {
       case "documents.resetWarehouseToOpening":
         requireAdminUser(currentUser);
         return json(200, { ok: true, data: await resetWarehouseToOpening(supabase, payload, currentUser) });
+      case "stock.archiveWarehouseDocumentsAndClear":
+        requireAdminUser(currentUser);
+        return json(200, { ok: true, data: await archiveWarehouseDocumentsAndClearStock(supabase, payload, currentUser) });
       case "activity.unsettled":
         return json(200, { ok: true, data: await getActivityUnsettled(supabase) });
       case "activity.complimentary":
