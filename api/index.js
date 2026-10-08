@@ -76,6 +76,36 @@ function toDateOnly(value) {
   return d.toISOString().slice(0, 10);
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatNumber(value, options = {}) {
+  const number = Number(value || 0);
+  return new Intl.NumberFormat("en-IN", {
+    maximumFractionDigits: options.decimals ?? 2,
+    minimumFractionDigits: options.minDecimals ?? 0
+  }).format(number);
+}
+
+function formatMoney(value) {
+  return `Rs. ${formatNumber(value)}`;
+}
+
+function documentTypeLabel(value) {
+  return String(value || "")
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function normalizeMobile(value) {
   return String(value || "").replace(/\D/g, "").slice(-10);
 }
@@ -1162,6 +1192,254 @@ async function documentDetail(supabase, payload) {
   };
 }
 
+async function documentPrintHtml(supabase, payload) {
+  const detail = await documentDetail(supabase, payload);
+  const typeLabel = documentTypeLabel(detail.documentType);
+  const totalQty = detail.lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+  const totalAmount = detail.lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+  const bookAmount = detail.lines
+    .filter((line) => String(line.itemGroup || "").toUpperCase() === "BOOK" || String(line.erpCode || "").startsWith("PRB-"))
+    .reduce((sum, line) => sum + Number(line.amount || 0), 0);
+  const devotionalAmount = totalAmount - bookAmount;
+  const route = [
+    detail.fromWarehouseName ? `From: ${detail.fromWarehouseName}` : "",
+    detail.toWarehouseName ? `To: ${detail.toWarehouseName}` : ""
+  ].filter(Boolean).join(" | ") || "-";
+  const metaRows = [
+    ["Stock Doc ID", detail.documentId],
+    ["Date", detail.documentDate],
+    ["Type", typeLabel],
+    ["Status", detail.status || "-"],
+    ["Warehouse Movement", route],
+    ["Activity", detail.activityName || detail.activityId || "-"]
+  ];
+  const lineRows = detail.lines.map((line, index) => `
+    <tr>
+      <td class="num">${index + 1}</td>
+      <td class="code">${escapeHtml(line.erpCode || "-")}</td>
+      <td>
+        <div class="item-name">${escapeHtml(line.bookName || line.erpCode || "-")}</div>
+        ${line.notes ? `<div class="line-note">${escapeHtml(line.notes)}</div>` : ""}
+      </td>
+      <td>${escapeHtml(line.bookType || line.itemGroup || "-")}</td>
+      <td class="num">${formatNumber(line.quantity)}</td>
+      <td class="money">${formatNumber(line.rate)}</td>
+      <td class="money">${formatNumber(line.amount)}</td>
+    </tr>
+  `).join("");
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(detail.documentId)} - Stock Document</title>
+  <style>
+    @page { size: A4; margin: 14mm 12mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #1f160f;
+      background: #fff;
+      font: 12px/1.35 Arial, Helvetica, sans-serif;
+    }
+    .header {
+      background: #7b3f1d;
+      color: #fff;
+      padding: 18px 22px 16px;
+      text-align: center;
+      border-radius: 0 0 10px 10px;
+    }
+    .header h1 {
+      margin: 0 0 6px;
+      font-size: 23px;
+      letter-spacing: .3px;
+      line-height: 1.15;
+    }
+    .header .subtitle {
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .header .muted {
+      margin-top: 4px;
+      font-size: 12px;
+      opacity: .92;
+    }
+    .section {
+      margin-top: 14px;
+      break-inside: avoid;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .meta-card {
+      border: 1px solid #dca24a;
+      border-radius: 8px;
+      padding: 8px 10px;
+      min-height: 48px;
+      background: #fffaf1;
+    }
+    .label {
+      color: #6e3b1f;
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .2px;
+      margin-bottom: 3px;
+      text-transform: uppercase;
+    }
+    .value {
+      font-size: 12px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+    .notes {
+      border-left: 4px solid #7b3f1d;
+      background: #fff8ec;
+      border-radius: 8px;
+      padding: 9px 11px;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+    }
+    .summary .meta-card {
+      text-align: right;
+      background: #f7efe4;
+    }
+    .summary .label {
+      text-align: left;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    thead {
+      display: table-header-group;
+    }
+    th {
+      background: #7b3f1d;
+      color: #fff;
+      border: 1px solid #7b3f1d;
+      padding: 7px 7px;
+      font-size: 10.5px;
+      text-align: left;
+    }
+    td {
+      border: 1px solid #d8d0c7;
+      padding: 6px 7px;
+      vertical-align: top;
+      word-break: break-word;
+    }
+    tbody tr:nth-child(even) {
+      background: #fbf7f1;
+    }
+    tr {
+      break-inside: avoid;
+    }
+    .num, .money {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .code {
+      white-space: nowrap;
+      font-weight: 700;
+    }
+    .item-name {
+      font-weight: 700;
+    }
+    .line-note {
+      margin-top: 3px;
+      color: #6f6259;
+      font-size: 10.5px;
+    }
+    .footer {
+      margin-top: 12px;
+      color: #6f6259;
+      display: flex;
+      justify-content: space-between;
+      font-size: 10.5px;
+    }
+    @media print {
+      body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      .section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>HARE KRISHNA MOVEMENT VISAKHAPATNAM</h1>
+    <div class="subtitle">Stock Document</div>
+    <div class="muted">${escapeHtml(typeLabel)} &bull; ${escapeHtml(detail.status || "-")}</div>
+  </div>
+
+  <div class="section meta-grid">
+    ${metaRows.map(([label, value]) => `
+      <div class="meta-card">
+        <span class="label">${escapeHtml(label)}</span>
+        <div class="value">${escapeHtml(value || "-")}</div>
+      </div>
+    `).join("")}
+  </div>
+
+  ${detail.notes ? `
+    <div class="section notes">
+      <span class="label">Notes</span>
+      <div>${escapeHtml(detail.notes)}</div>
+    </div>
+  ` : ""}
+
+  <div class="section summary">
+    <div class="meta-card"><span class="label">Lines</span><div class="value">${formatNumber(detail.lines.length)}</div></div>
+    <div class="meta-card"><span class="label">Total Qty</span><div class="value">${formatNumber(totalQty)}</div></div>
+    <div class="meta-card"><span class="label">Book Worth</span><div class="value">${formatMoney(bookAmount)}</div></div>
+    <div class="meta-card"><span class="label">Devotional Worth</span><div class="value">${formatMoney(devotionalAmount)}</div></div>
+    <div class="meta-card"><span class="label">Total Amount</span><div class="value">${formatMoney(totalAmount)}</div></div>
+  </div>
+
+  <div class="section">
+    <table>
+      <colgroup>
+        <col style="width: 6%">
+        <col style="width: 12%">
+        <col style="width: 39%">
+        <col style="width: 16%">
+        <col style="width: 8%">
+        <col style="width: 9%">
+        <col style="width: 10%">
+      </colgroup>
+      <thead>
+        <tr>
+          <th>SNo</th>
+          <th>ERP Code</th>
+          <th>Item Name</th>
+          <th>Category</th>
+          <th class="num">Qty</th>
+          <th class="money">Rate</th>
+          <th class="money">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lineRows || `<tr><td colspan="7">No document lines found.</td></tr>`}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    <span>Generated from Book Distribution ERP</span>
+    <span>${escapeHtml(detail.documentId)} &bull; ${escapeHtml(detail.documentDate || "")}</span>
+  </div>
+</body>
+</html>`;
+  return {
+    documentId: detail.documentId,
+    fileName: `${detail.documentId}-stock-document.html`,
+    html
+  };
+}
+
 function documentTypeRequiresActivity(documentType) {
   return ["ISSUE", "COMPLIMENTARY", "RETURN", "SALE", "UNSETTLED_OPENING", "ADJUSTMENT"].includes(documentType);
 }
@@ -2057,6 +2335,113 @@ async function archiveWarehouseDocumentsAndClearStock(supabase, payload, current
     countByType,
     documentIds: (documents || []).map((doc) => doc.document_code || doc.id).filter(Boolean),
     remainingStockRows: dryRun ? null : currentRowsAfter.filter((row) => String(row.warehouseId || "") === String(warehouseRow.warehouse_code || "") && Number(row.quantity || 0) !== 0).length
+  };
+}
+
+async function archiveAllExceptPreservedWarehouse(supabase, payload, currentUser) {
+  requireAdminUser(currentUser);
+  const preservedWarehouseRef = payload.preservedWarehouseId || payload.preservedWarehouseCode || payload.preserveWarehouseId || "WH005";
+  const preservedWarehouse = await resolveWarehouseRow(supabase, preservedWarehouseRef);
+  if (!preservedWarehouse) throw new Error("Preserved warehouse is required");
+  const preservedDocCodes = new Set(
+    (Array.isArray(payload.preserveDocumentIds) ? payload.preserveDocumentIds : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  );
+  const archiveTag = String(payload.archiveTag || `ARCHIVED_GLOBAL_RESET_${toDateOnly(nowIso())}`).trim();
+  const archiveNote = String(payload.notes || `Archived for global reset: ${archiveTag}`).trim();
+
+  const [docsResult, ledgerResult, dayPaymentsResult] = await Promise.all([
+    supabase
+      .from("documents")
+      .select("id, document_code, document_type, document_date, status, from_warehouse_id, to_warehouse_id, notes")
+      .order("document_date", { ascending: true }),
+    supabase
+      .from("stock_ledger")
+      .select("id, document_id, warehouse_id, quantity_in, quantity_out, amount"),
+    supabase
+      .from("sale_day_payments")
+      .select("id, warehouse_id")
+  ]);
+  if (docsResult.error) throw docsResult.error;
+  if (ledgerResult.error) throw ledgerResult.error;
+  const dayPayments = dayPaymentsResult.error ? [] : (dayPaymentsResult.data || []);
+
+  const preservedWarehouseId = preservedWarehouse.id;
+  const documents = docsResult.data || [];
+  const archiveDocs = [];
+  const preserveDocs = [];
+  for (const doc of documents) {
+    const docCode = String(doc.document_code || "").trim();
+    if (preservedDocCodes.has(docCode)) {
+      preserveDocs.push(doc);
+      continue;
+    }
+    const touchesPreservedWarehouse = [doc.from_warehouse_id, doc.to_warehouse_id]
+      .some((value) => String(value || "") === String(preservedWarehouseId));
+    if (touchesPreservedWarehouse) {
+      preserveDocs.push(doc);
+    } else if (isCountableDocument(doc)) {
+      archiveDocs.push(doc);
+    }
+  }
+
+  const archiveDocIds = archiveDocs.map((doc) => doc.id);
+  const preservedDocIds = new Set(preserveDocs.map((doc) => String(doc.id)));
+  const ledgerRows = ledgerResult.data || [];
+  const fullArchiveLedgerIds = ledgerRows
+    .filter((row) => archiveDocIds.includes(row.document_id))
+    .map((row) => row.id);
+  const preservedDocNonPreservedLedgerIds = ledgerRows
+    .filter((row) => preservedDocIds.has(String(row.document_id)) && String(row.warehouse_id || "") !== String(preservedWarehouseId))
+    .map((row) => row.id);
+  const ledgerIdsToZero = Array.from(new Set([...fullArchiveLedgerIds, ...preservedDocNonPreservedLedgerIds]));
+
+  if (archiveDocIds.length) {
+    const { error: archiveError } = await supabase
+      .from("documents")
+      .update({
+        status: "Cancelled",
+        notes: archiveNote,
+        updated_at: nowIso()
+      })
+      .in("id", archiveDocIds);
+    if (archiveError) throw archiveError;
+  }
+
+  if (ledgerIdsToZero.length) {
+    const { error: ledgerError } = await supabase
+      .from("stock_ledger")
+      .update({
+        quantity_in: 0,
+        quantity_out: 0,
+        amount: 0,
+        updated_at: nowIso()
+      })
+      .in("id", ledgerIdsToZero);
+    if (ledgerError) throw ledgerError;
+  }
+
+  const dayPaymentIdsToDelete = dayPayments
+    .filter((row) => String(row.warehouse_id || "") !== String(preservedWarehouseId))
+    .map((row) => row.id);
+  if (dayPaymentIdsToDelete.length) {
+    const { error: deletePaymentError } = await supabase
+      .from("sale_day_payments")
+      .delete()
+      .in("id", dayPaymentIdsToDelete);
+    if (deletePaymentError) throw deletePaymentError;
+  }
+
+  return {
+    preservedWarehouseId: preservedWarehouse.warehouse_code,
+    preservedWarehouseName: preservedWarehouse.warehouse_name,
+    preservedDocumentIds: Array.from(preservedDocCodes),
+    archivedDocuments: archiveDocs.length,
+    fullyZeroedLedgerRows: fullArchiveLedgerIds.length,
+    preservedDocumentNonPreservedLedgerRowsZeroed: preservedDocNonPreservedLedgerIds.length,
+    deletedDayPayments: dayPaymentIdsToDelete.length,
+    archivedDocumentCodes: archiveDocs.map((doc) => doc.document_code).filter(Boolean)
   };
 }
 
@@ -4642,6 +5027,8 @@ async function main(request) {
         return json(200, { ok: true, data: await documentsList(supabase) });
       case "documents.detail":
         return json(200, { ok: true, data: await documentDetail(supabase, payload) });
+      case "documents.printHtml":
+        return json(200, { ok: true, data: await documentPrintHtml(supabase, payload) });
       case "documents.create":
         return json(200, { ok: true, data: await createDocument(supabase, payload, currentUser) });
       case "documents.update":
@@ -4670,6 +5057,9 @@ async function main(request) {
       case "stock.archiveWarehouseDocumentsAndClear":
         requireAdminUser(currentUser);
         return json(200, { ok: true, data: await archiveWarehouseDocumentsAndClearStock(supabase, payload, currentUser) });
+      case "stock.archiveAllExceptPreservedWarehouse":
+        requireAdminUser(currentUser);
+        return json(200, { ok: true, data: await archiveAllExceptPreservedWarehouse(supabase, payload, currentUser) });
       case "activity.unsettled":
         return json(200, { ok: true, data: await getActivityUnsettled(supabase) });
       case "activity.complimentary":
