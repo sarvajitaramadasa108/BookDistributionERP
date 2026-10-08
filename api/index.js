@@ -2465,6 +2465,7 @@ async function resetActivitiesAndDocumentsToPreservedSet(supabase, payload, curr
   );
   if (!preserveDocumentCodes.size) throw new Error("At least one document must be preserved");
   const dryRun = payload.dryRun !== false;
+  const compact = payload.compact !== false;
   const archiveTag = String(payload.archiveTag || `ACTIVITY_DOC_RESET_${toDateOnly(nowIso())}`).trim();
 
   const [docsResult, activitiesResult, paymentsResult] = await Promise.all([
@@ -2519,6 +2520,11 @@ async function resetActivitiesAndDocumentsToPreservedSet(supabase, payload, curr
     cancelledActivities: 0,
     deletedActivityPayments: 0
   };
+
+  if (compact) {
+    delete result.documentsToDelete;
+    delete result.activitiesToDelete;
+  }
 
   if (dryRun) return result;
 
